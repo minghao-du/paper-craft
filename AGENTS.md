@@ -1,0 +1,57 @@
+# paper-craft — agent guidance
+
+## What this file is
+
+**Facts + guardrails** for working in this repo — and *only* those. There are three layers,
+and this is just one of them:
+
+- **Principles / "why"** live in the design principles section of `README.md` (inherited from
+  bipartite's CONSTITUTION: skills-are-the-product, file-based state, scope discipline). Read
+  it when making a design, scope, or quality-gate decision.
+- **Architecture / "what and why this way"** lives in `DESIGN.md` (JSONL source of truth, pure
+  TypeScript, local-first, nexus pattern, git-compatible collaboration, TypeScript skill
+  modules). Read it when making a technical architecture decision.
+- **Procedures / "how to do X"** are the `pc-*` skills. **Never catalog or describe a skill
+  here** — duplicating the auto-injected list adds nothing and silently rots. Invoke skills by
+  name; let their descriptions be canonical.
+
+What's left for *this* file: rules that must hold even when no skill is invoked, plus project
+facts no skill carries.
+
+## Stack & layout
+
+- TypeScript. CLI: `pc` (renamed from bipartite's `bip`). Storage: JSONL source of truth →
+  ephemeral index, rebuilt on `pc rebuild`. No native addons — pure TS/JS only (`DESIGN.md` §II).
+- Upstream: [matsen/bipartite](https://github.com/matsen/bipartite) (Go + shell). paper-craft
+  is a full TypeScript rewrite of the same architecture.
+- Layout (early stage — directories created as modules land):
+  `src/` source · `skills/` skill modules · `tests/` tests · `docs/` guides.
+
+## Build & style
+
+- `npm run build && ./pc --help` (once scaffolded).
+- Run `npm run lint` and `npm run typecheck` before any PR. Exported symbols get doc comments.
+- Skill prefix is `pc-`, not `bip-`.
+
+## Config & data paths
+
+- Config: `~/.config/pc/config.yml` (not `~/.config/bip/`).
+- Nexus path comes from `nexus_path` in that config. All user data lives in the nexus repo
+  (`DESIGN.md` §IV). The index cache lives at `$NEXUS_PATH/.paper-craft/cache/`.
+
+## Repo facts
+
+- This repo is in early stage — architecture design and core module rewriting are in progress.
+- Agents decide and land changes here without asking the user, under downward pressure on size:
+  a peer's suggested addition is a proposal to weigh, not a fix to apply, and deleting beats
+  adding.
+- When porting from bipartite, adapt to TypeScript idioms — don't transliterate Go or shell.
+
+## Docs conventions
+
+- A skill or agent file carries procedure an agent must follow and facts it can't get by
+  looking — no incident stories, dated measurements, or markers.
+- `README.md` stays short (overview, motivation, skill table). Detailed guides live in
+  `docs/guides/`. Skills live in `./skills/`.
+- When a change adds or alters a command, run `./pc <cmd> --help` and make the skill docs
+  match the real flags and workflow.
