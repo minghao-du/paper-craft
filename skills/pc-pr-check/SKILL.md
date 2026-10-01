@@ -1,0 +1,169 @@
+---
+name: pc-pr-check
+description: Quick PR readiness check — clean worktree, good description, squashed body. Run before /pc-pr-review.
+---
+
+# /pc-pr-check
+
+Quick sanity check before running the heavier `/pc-pr-review`.
+Catches common issues that waste review cycles.
+
+## Usage
+
+```
+/pc-pr-check
+```
+
+## Workflow
+
+### Step 1: Verify branch state
+
+Check that we're on a feature branch (not main/master):
+
+```bash
+git branch --show-current
+```
+
+If on main/master, warn and stop.
+
+### Step 2: Check for uncommitted changes
+
+```bash
+git status --short
+```
+
+If there are uncommitted changes:
+- List them clearly
+- Ask the user: "There are uncommitted changes.
+  Commit these before proceeding?"
+- **Do not proceed** until the worktree is clean or the user explicitly says to continue
+
+### Step 3: Fetch and rebase on base branch
+
+```bash
+git fetch origin
+BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "main")
+git rebase "origin/$BASE"
+```
+
+If rebase has conflicts, stop and report — do not force-resolve.
+
+If the rebase moved commits, push immediately:
+```bash
+git push --force-with-lease
+```
+
+### Step 4: Check PR exists
+
+```bash
+gh pr view --json number,title,body,state,isDraft 2>/dev/null
+```
+
+If no PR exists:
+- Tell the user and ask if they want to create one now
+- Stop here if no PR
+
+### Step 5: Evaluate PR title
+
+Check the PR title for quality:
+- Is it descriptive (not just "WIP" or a branch name)?
+- Is it under ~70 characters?
+- Does it describe the *what* not the *how*?
+
+Flag any issues and suggest improvements.
+
+### Step 6: Evaluate PR body (the critical check)
+
+Fetch the PR body and evaluate whether it reads as a **clean summary** or as **historical commit noise**.
+
+**Signs of a bad (historical/unsquashed) body:**
+- Starts with `* commit message` or `- commit message` bullet lists
+- Contains a sequence of past-tense actions that read like a git log
+- Has "Co-Authored-By" lines scattered through the body
+- Contains multiple "fix typo", "address review", "WIP" entries
+- Is auto-generated from concatenated commit messages (GitHub's default for squash merge)
+- Is empty or just whitespace
+- Accumulates one section per review round — headers like "Reviewer follow-up: ...", "Human-flagged follow-up: ...", "Update:", or a growing "History" section — even when each section is individually well-written.
+  This is the same defect as commit-message noise: the reader has to reconstruct current truth from a chronological trail instead of being told it directly.
+  Long-running PRs that went through several review rounds are the most likely to have this — check specifically for it on any PR with more than one or two rounds of feedback.
+
+**Signs of a good (squashed/summary) body:**
+- Has a `## Summary` or similar section with 1-3 bullet points explaining *what* and *why*
+- Gives enough context that a reader who hasn't seen the linked issue can follow — not just a bare diff description
+- Reads as a coherent description a reviewer can understand
+- Has a test plan or notes section if appropriate
+- Is concise but informative
+
+**Also apply `PROSE-DISCIPLINE.md`** (bipartite repo root) to the body, and **`EVIDENCE-DISCIPLINE.md`** to every number in it.
+Flag violations and offer to rewrite.
+
+**A clean, squashed body can still fail to say what the PR does** — well-written prose that names defects and never states the change.
+Two checks catch that:
+- Read the first sentence of each section in sequence; that sequence must describe the diff.
+  A heading that names a *defect* rather than the *change* is the tell:
+
+  | says the change | names only the defect |
+  |---|---|
+  | `alt_2x2_plot now asks where the cache is instead of guessing` | `alt_2x2_plot read a directory nothing writes` |
+  | `The sonnia evaluation now takes a process count` | `The pgen pool could not be capped` |
+- A correction or a deviation from the issue is content, not noise.
+  Where the branch departs from the issue it implements — the spec was wrong, or the fix differs from what the issue proposed — that gets its own sentence.
+  A reviewer approves the diff against the issue, so a silent deviation makes them approve against a spec the code no longer follows.
+
+If the body looks like historical commit noise, revision-history accumulation, or is empty:
+1. Read the actual diff to understand the changes: `git diff origin/$(gh pr view --json baseRefName -q .baseRefName)...HEAD`.
+   For a revision-history body specifically, also read the current body in full — later sections usually contain results/conclusions (recomputed numbers, resolved bugs, reconciled findings) that supersede earlier ones and must carry over into the rewrite; only the per-round framing gets dropped, not the substance.
+2. Draft a clean replacement body in this format:
+   ```
+   ## Summary
+   [1-2 sentences of context: the problem or question this addresses, for
+   a reader who knows the project but hasn't seen this issue]
+   - [1-3 bullet points describing what changed and why]
+   - [Link related issues you already know of — the issue this closes, a
+     prior PR that touched the same area — don't go searching for more]
+
+   ## Test plan
+   - [How to verify the changes work]
+
+   🤖 Generated with [Claude Code](https://claude.com/claude-code)
+   ```
+3. Update the PR body directly:
+```bash
+gh pr edit <number> --body "$(cat <<'EOF'
+<new body>
+EOF
+)"
+```
+
+### Step 7: Check draft status
+
+If the PR is marked as draft:
+- Ask: "PR is currently a draft.
+  Ready to mark as ready for review?"
+- If yes: `gh pr ready`
+
+### Step 8: Summary
+
+Print a compact checklist:
+
+```
+## PR Check
+
+- [x] On feature branch: `branch-name`
+- [x] Worktree clean
+- [x] PR exists: #123
+- [x] Title: descriptive and concise
+- [x] Body: clean summary (not commit history)
+- [x] All commits pushed
+- [ ] Draft status: still draft — mark ready when done
+
+→ Ready for /pc-pr-review
+```
+
+Or flag what needs attention before proceeding.
+
+## Notes
+
+- This is intentionally lightweight — no code review, no tests, no linting
+- Run `/pc-pr-review` after this passes for the full quality sweep
+- The body check is the most valuable part: it prevents the common mistake of merging with GitHub's default concatenated-commits body
