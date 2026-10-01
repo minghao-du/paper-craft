@@ -5,9 +5,8 @@
 **Facts + guardrails** for working in this repo — and *only* those. There are three layers,
 and this is just one of them:
 
-- **Principles / "why"** live in the design principles section of `README.md` (inherited from
-  bipartite's CONSTITUTION: skills-are-the-product, file-based state, scope discipline). Read
-  it when making a design, scope, or quality-gate decision.
+- **Principles / "why"** live in `CONSTITUTION.md` (skills-are-the-product, file-based state,
+  scope discipline). Read it when making a design, scope, or quality-gate decision.
 - **Architecture / "what and why this way"** lives in `DESIGN.md` (JSONL source of truth, pure
   TypeScript, local-first, nexus pattern, git-compatible collaboration, TypeScript skill
   modules). Read it when making a technical architecture decision.
@@ -20,10 +19,8 @@ facts no skill carries.
 
 ## Stack & layout
 
-- TypeScript. CLI: `pc` (renamed from bipartite's `bip`). Storage: JSONL source of truth →
+- TypeScript. CLI: `pc`. Storage: JSONL source of truth →
   ephemeral index, rebuilt on `pc rebuild`. No native addons — pure TS/JS only (`DESIGN.md` §II).
-- Upstream: [matsen/bipartite](https://github.com/matsen/bipartite) (Go + shell). paper-craft
-  is a full TypeScript rewrite of the same architecture.
 - Layout (early stage — directories created as modules land):
   `src/` source · `skills/` skill modules · `tests/` tests · `docs/` guides.
 
@@ -31,11 +28,11 @@ facts no skill carries.
 
 - `npm run build && ./pc --help` (once scaffolded).
 - Run `npm run lint` and `npm run typecheck` before any PR. Exported symbols get doc comments.
-- Skill prefix is `pc-`, not `bip-`.
+- Skill prefix is `pc-`.
 
 ## Config & data paths
 
-- Config: `~/.config/pc/config.yml` (not `~/.config/bip/`).
+- Config: `~/.config/pc/config.yml`.
 - Nexus path comes from `nexus_path` in that config. All user data lives in the nexus repo
   (`DESIGN.md` §IV). The index cache lives at `$NEXUS_PATH/.paper-craft/cache/`.
 
@@ -45,7 +42,7 @@ facts no skill carries.
 - Agents decide and land changes here without asking the user, under downward pressure on size:
   a peer's suggested addition is a proposal to weigh, not a fix to apply, and deleting beats
   adding.
-- When porting from bipartite, adapt to TypeScript idioms — don't transliterate Go or shell.
+- When porting upstream code, adapt to TypeScript idioms — don't transliterate Go or shell.
 
 ## Docs conventions
 

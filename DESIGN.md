@@ -1,7 +1,6 @@
 # paper-craft Design Decisions
 
-Technical architecture decisions for paper-craft — the TypeScript rewrite
-of [bipartite](https://github.com/matsen/bipartite). These are
+Technical architecture decisions for paper-craft. These are
 load-bearing choices — changing them has wide impact.
 
 ## I. JSONL Source of Truth
@@ -11,8 +10,7 @@ Indexes are ephemeral artifacts — rebuilt from JSONL via `pc rebuild`.
 Schema changes require deleting the index and rebuilding, never
 migration scripts.
 
-JSONL is chosen for git-mergeability. This is a load-bearing decision
-inherited from bipartite.
+JSONL is chosen for git-mergeability.
 
 ## II. Pure TypeScript, No Native Addons
 
@@ -44,6 +42,5 @@ for the case where multiple people push to the same nexus.
 ## VI. TypeScript Skill Modules
 
 Skills are authored as TypeScript modules — testable, debuggable, and
-type-safe — rather than Markdown + embedded Bash as in bipartite. The
-`bip-` skill prefix is renamed to `pc-`. Skill docs remain canonical:
+type-safe. The skill prefix is `pc-`. Skill docs remain canonical:
 when behavior changes, skill docs MUST update in the same PR.
