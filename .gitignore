@@ -33,3 +33,11 @@ site/
 
 # OS
 .DS_Store
+
+# Node.js
+node_modules/
+dist/
+*.tsbuildinfo
+
+# paper-craft
+/pc
