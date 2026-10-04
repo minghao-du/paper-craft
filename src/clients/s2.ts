@@ -176,3 +176,52 @@ export function s2PaperToReference(paper: S2Paper): Reference {
     s2_id: paper.paperId,
   };
 }
+
+/** S2 API response for citations/references endpoints. */
+interface S2PaperList {
+  data: Array<{ citingPaper?: S2Paper; citedPaper?: S2Paper }>;
+  next?: number;
+}
+
+/** Fetch papers that cite a given paper. */
+export async function fetchCitations(
+  paperId: string,
+  limit = 100,
+  apiKey?: string,
+): Promise<S2Paper[]> {
+  const normalized = normalizeS2Id(paperId);
+  const url = `${S2_BASE}/paper/${encodeURIComponent(normalized)}/citations?fields=${PAPER_FIELDS}&limit=${limit}`;
+
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (apiKey) headers['x-api-key'] = apiKey;
+
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new S2ApiError(`S2 API error (${response.status})`, S2ExitCode.ApiError);
+  }
+
+  const body = (await response.json()) as S2PaperList;
+  return body.data.map((d) => d.citingPaper!).filter(Boolean);
+}
+
+/** Fetch papers referenced by a given paper. */
+export async function fetchReferences(
+  paperId: string,
+  limit = 100,
+  apiKey?: string,
+): Promise<S2Paper[]> {
+  const normalized = normalizeS2Id(paperId);
+  const url = `${S2_BASE}/paper/${encodeURIComponent(normalized)}/references?fields=${PAPER_FIELDS}&limit=${limit}`;
+
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (apiKey) headers['x-api-key'] = apiKey;
+
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new S2ApiError(`S2 API error (${response.status})`, S2ExitCode.ApiError);
+  }
+
+  const body = (await response.json()) as S2PaperList;
+  return body.data.map((d) => d.citedPaper!).filter(Boolean);
+}
+

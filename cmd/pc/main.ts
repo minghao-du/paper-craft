@@ -12,6 +12,12 @@ import { registerProjectCommand } from '../../src/commands/project.js';
 import { registerRepoCommand } from '../../src/commands/repo.js';
 import { registerSearchCommand, registerListCommand, registerGetCommand } from '../../src/commands/search.js';
 import { registerS2Command } from '../../src/commands/s2/index.js';
+import { registerExportCommand } from '../../src/commands/export.js';
+import { registerImportCommand } from '../../src/commands/import.js';
+import { registerDedupeCommand } from '../../src/commands/dedupe.js';
+import { registerOpenCommand } from '../../src/commands/open.js';
+import { registerCheckCommand } from '../../src/commands/check.js';
+import { registerNewCommand, registerDiffCommand } from '../../src/commands/new.js';
 
 const VERSION = '0.1.0';
 
@@ -37,6 +43,13 @@ registerSearchCommand(program, opts);
 registerListCommand(program, opts);
 registerGetCommand(program, opts);
 registerS2Command(program, opts);
+registerExportCommand(program, opts);
+registerImportCommand(program, opts);
+registerDedupeCommand(program, opts);
+registerOpenCommand(program, opts);
+registerCheckCommand(program, opts);
+registerNewCommand(program, opts);
+registerDiffCommand(program, opts);
 
 // Parse and execute
 program.parseAsync(process.argv).catch((err: Error) => {
