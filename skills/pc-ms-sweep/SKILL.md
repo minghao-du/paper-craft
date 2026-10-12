@@ -219,7 +219,7 @@ Do not commit.
 
 ## Subagent dispatch reference
 
-See `SUBAGENT-SCAN.md` in the bipartite repo root for the shared fan-out pattern (parallel dispatch, structured output, when to re-dispatch).
+See `SUBAGENT-SCAN.md` in the paper-craft repo root for the shared fan-out pattern (parallel dispatch, structured output, when to re-dispatch).
 The eight scans above plug into that pattern.
 Re-dispatch any scan whose output is empty or shorter than 50 words — that's the "the subagent didn't look hard" failure mode.
 
@@ -279,7 +279,7 @@ Re-dispatch any scan whose output is empty or shorter than 50 words — that's t
 - Sibling skills: `/pc-ms`, `/pc-ms-poll`, `/pc-ms-tuckin`, `/pc-ms-audit`, `/pc-comment-check`, `/pc-pr-review`.
 - Subagents used: `@scientific-tex-editor`, `@journal-submission-checker`, `general-purpose`, `Explore`.
   None mandatory.
-- Subagent dispatch pattern: `SUBAGENT-SCAN.md` (bipartite repo root).
+- Subagent dispatch pattern: `SUBAGENT-SCAN.md` (paper-craft repo root).
 - Precipitating session: flu mutation rates manuscript pre-share sweep, 2026-05-14.
   Ran the eight scans by hand and caught: 7-panel-letter cascade after a figure caption change; orphan SI floats; bib duplicates; URL-trailing-slash inconsistency; `$R$` vs. `$r$` for Pearson; mutation-vs-substitution rate slippage; missing `float` package for `[H]` floats; a stale `\autoref{fig:summary}D and …` cross-reference.
   Without the parallel-scan structure, any one of these would likely have shipped.

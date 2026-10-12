@@ -89,7 +89,7 @@ for name in $(jq -r '.clone_names[]' .epic-config.json); do
 done
 ```
 
-`<this-skill's-base-directory>` is this skill's base directory as given at invocation (e.g. `/home/user/.claude/skills/pc-conductor-handoff`); the shared helper lives at `lib/spawn-intent.sh`, a sibling of every skill directory (see `skills/lib/spawn-intent.sh` in the `bipartite` repo).
+`<this-skill's-base-directory>` is this skill's base directory as given at invocation (e.g. `/home/user/.claude/skills/pc-conductor-handoff`); the shared helper lives at `lib/spawn-intent.sh`, a sibling of every skill directory (see `skills/lib/spawn-intent.sh` in the `paper-craft` repo).
 
 Pick the first idle clone **that is not the current clone**.
 The handoff should move work to a different slot so the current session can wind down cleanly.

@@ -46,7 +46,7 @@ The conductor session owns the clone pool, tmux, and host state:
 - The split is by decision type, not by issue: the conductor can run a science issue's mechanical pipeline while the epic holds the gate on any published number it touches.
 - The conductor still refuses to attribute a defect to a mechanism, rule whether a result holds, or interpret an arm's output — even when it found the defect.
 
-**Skill changes** (user, 2026-09-11): *"I want you and the EPIC agent to agree on any changes before you actually push them to bipartite."* So: conductor drafts, epic reviews, both agree, then push. A skill edit encoding a scientific judgement is the epic's call.
+**Skill changes** (user, 2026-09-11): *"I want you and the EPIC agent to agree on any changes before you actually push them to paper-craft."* So: conductor drafts, epic reviews, both agree, then push. A skill edit encoding a scientific judgement is the epic's call.
 
 ### Mark what a message is
 
@@ -404,8 +404,8 @@ A collision naming N clones on one file means N-choose-2 pairs to trial-merge; d
 
 ### Editing fleet tooling
 
-`~/.claude/skills/*` are symlinks into `~/re/bipartite/skills/`, and `~/go/bin/bip` is a symlink to `~/re/bipartite/bip`. **Any edit, `pull`, `checkout`, `rebase`, or `stash` in that worktree changes every live session's instructions immediately, with no event.** The root-level doctrine files are loaded by path from the same tree.
-- Do fleet-tool work in a separate clone of `bipartite`, and treat operations in the primary one as fleet-wide.
+`~/.claude/skills/*` are symlinks into `~/re/paper-craft/skills/`, and `~/go/bin/bip` is a symlink to `~/re/paper-craft/pc`. **Any edit, `pull`, `checkout`, `rebase`, or `stash` in that worktree changes every live session's instructions immediately, with no event.** The root-level doctrine files are loaded by path from the same tree.
+- Do fleet-tool work in a separate clone of `paper-craft`, and treat operations in the primary one as fleet-wide.
 - Before committing in a clone another session can reach, run `git diff` (whose hunks), not just `git diff --stat` (which files). Don't leave edits staged in a clone you don't own.
 - Run any long-lived shell script from an immutable copy (`cp watch.sh /tmp/watch.$$.sh && bash /tmp/watch.$$.sh`): bash reads scripts incrementally, so an in-place edit or a `git checkout` changes what a running script executes.
 

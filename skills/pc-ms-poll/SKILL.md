@@ -26,7 +26,7 @@ Local `git pull` and `make remote-fetch` (which uses `rsync` to copy FROM remote
 ## What to check
 
 Fan out one `general-purpose` subagent per entry in `tracked_repos` — single message, multiple `Agent` calls in parallel.
-Follow the dispatch pattern in `SUBAGENT-SCAN.md` (bipartite repo root).
+Follow the dispatch pattern in `SUBAGENT-SCAN.md` (paper-craft repo root).
 Per-repo granularity avoids racing on `git pull` when one repo has multiple EPICs.
 
 Brief for each subagent:

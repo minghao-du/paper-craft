@@ -98,7 +98,7 @@ Re-run this write every time `/pc-epic` starts a fresh cycle, since the address 
 This narrows Group A's redundant re-verification, not its judgment: occupancy and dependency reasoning are different questions.
 
 Dispatch two groups of `general-purpose` subagents in parallel — single message, multiple `Agent` tool calls.
-Follow the dispatch pattern in `SUBAGENT-SCAN.md` (bipartite repo root).
+Follow the dispatch pattern in `SUBAGENT-SCAN.md` (paper-craft repo root).
 Scope the fan-out to **your** EPIC; confirm the number resolves, and do not enumerate the others:
 
 ```bash

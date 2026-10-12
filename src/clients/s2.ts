@@ -48,7 +48,7 @@ export interface S2Paper {
   journal?: { name?: string; volume?: string; pages?: string };
 }
 
-/** Error codes matching bipartite conventions. */
+/** Error codes matching paper-craft conventions. */
 export const S2ExitCode = {
   NotFound: 1,
   Duplicate: 2,

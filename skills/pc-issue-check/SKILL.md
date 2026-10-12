@@ -259,7 +259,7 @@ gh pr list --state open --limit 200 --json number,files \
 #### Prose discipline
 
 10c.
-**Apply `PROSE-DISCIPLINE.md`** (bipartite repo root), and **`EVIDENCE-DISCIPLINE.md`** for every number the issue cites.
+**Apply `PROSE-DISCIPLINE.md`** (paper-craft repo root), and **`EVIDENCE-DISCIPLINE.md`** for every number the issue cites.
 Read the file and check the issue against its rules and reviewer flags.
 Flag violations as **MEDIUM**, or **HIGH** when they materially obscure the deliverable.
 Name the offending location and propose the trimmed version; for paragraph-form enumerations, write the bullet-list rewrite.

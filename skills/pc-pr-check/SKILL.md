@@ -94,7 +94,7 @@ Fetch the PR body and evaluate whether it reads as a **clean summary** or as **h
 - Has a test plan or notes section if appropriate
 - Is concise but informative
 
-**Also apply `PROSE-DISCIPLINE.md`** (bipartite repo root) to the body, and **`EVIDENCE-DISCIPLINE.md`** to every number in it.
+**Also apply `PROSE-DISCIPLINE.md`** (paper-craft repo root) to the body, and **`EVIDENCE-DISCIPLINE.md`** to every number in it.
 Flag violations and offer to rewrite.
 
 **A clean, squashed body can still fail to say what the PR does** — well-written prose that names defects and never states the change.

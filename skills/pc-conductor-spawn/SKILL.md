@@ -737,7 +737,7 @@ The `$(cat)` pattern causes zsh shell expansion errors with complex prompts.
 **Do NOT** use raw `tmux new-window` / `tmux send-keys` / `claude` commands.
 Always go through `pc spawn` which handles the full lifecycle correctly.
 
-`pc spawn`'s behaviour comes from the installed binary, not from the bipartite source. Before relying on a recent `pc` change, confirm the binary has it (`strings "$(command -v bip)" | grep -F '<new string>'`) and rebuild if not.
+`pc spawn`'s behaviour comes from the installed binary, not from the paper-craft source. Before relying on a recent `pc` change, confirm the binary has it (`strings "$(command -v bip)" | grep -F '<new string>'`) and rebuild if not.
 
 ### Step 6: Confirm
 

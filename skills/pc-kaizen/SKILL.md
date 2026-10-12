@@ -56,9 +56,9 @@ Determine where the fix belongs:
 |--------|------|---------|
 | **CLAUDE.md or AGENTS.md** (current project — edit whichever exists; never add a CLAUDE.md beside an AGENTS.md, which then stops loading) | Agent lacked project-specific context | Missing build command, file path, convention |
 | **CLAUDE.md** (global `~/.claude/CLAUDE.md`) | Agent lacked cross-project context | Personal workflow preference, tool config |
-| **Skill file** (bipartite `skills/`) | A `/skill` gave wrong or incomplete guidance | Missing flag, outdated workflow, bad example |
+| **Skill file** (paper-craft `skills/`) | A `/skill` gave wrong or incomplete guidance | Missing flag, outdated workflow, bad example |
 | **Code/docs in current repo** | Missing README, help text, or inline docs | CLI `--help` text doesn't match behavior |
-| **Code in bipartite repo** | Bug or missing feature in a pc command or skill | Skill needs new step, CLI needs better error message |
+| **Code in paper-craft repo** | Bug or missing feature in a pc command or skill | Skill needs new step, CLI needs better error message |
 | **New skill** | Repeated workflow that should be a `/command` | Multi-step process done manually every time |
 | **GitHub issue** | Improvement too large for a quick fix | Needs design discussion, multi-file refactor |
 
@@ -67,7 +67,7 @@ Determine where the fix belongs:
 **Mandatory, and skipping it is the single most common way kaizen makes things worse.** This table tells you where a fix *could* go; it does not tell you whether guidance on this already exists somewhere, possibly saying something different. Before writing anything, `grep` for the rule's existing home:
 
 ```bash
-cd ~/re/bipartite
+cd ~/re/paper-craft
 grep -rn '<the key term>' skills/ *.md          # every restatement, not just the obvious one
 ```
 
@@ -126,7 +126,7 @@ Then show the specific change—either as a diff, a new section to add, or a des
 Present options:
 
 1. **Apply now** — Make the edit directly (for small CLAUDE.md or skill changes)
-2. **Create a PR** — For changes to the bipartite repo (skills, code)
+2. **Create a PR** — For changes to the paper-craft repo (skills, code)
 3. **Write an issue** — For larger improvements that need discussion
 4. **Skip** — User disagrees with the diagnosis
 
@@ -136,9 +136,9 @@ Based on user choice:
 
 **Apply now** (CLAUDE.md or skill edits):
 - Edit the target file directly
-- For bipartite skill changes, the working tree is at `~/re/bipartite`
+- For paper-craft skill changes, the working tree is at `~/re/paper-craft`
 
-> **That working tree is shared, and it is the one at `~/re/bipartite` for every session on the machine.** There is no per-session checkout and no locking: two Claude sessions running kaizen are editing the same bytes on disk. `git` never reports a conflict, because there is only one tree — so the failure is silent.
+> **That working tree is shared, and it is the one at `~/re/paper-craft` for every session on the machine.** There is no per-session checkout and no locking: two Claude sessions running kaizen are editing the same bytes on disk. `git` never reports a conflict, because there is only one tree — so the failure is silent.
 >
 > **Before you edit**, run `git status`. Modified files you did not touch mean another session is live in here; coordinate or wait rather than writing.
 > **Before you commit**, run `git diff --cached` and confirm every hunk is yours. Per-file `git add` limits the blast radius but does not close it — if the other session edited *the same file*, staging that one path still ships its work. Never `git add -A` or `git add .` here.
@@ -146,9 +146,9 @@ Based on user choice:
 >
 > Measured 2026-09-01: two sessions each committed the other's in-flight uncommitted work under their own commit message, in opposite directions, within one hour. Both then misdiagnosed it as their own stale read — `git fetch` updates remote-tracking refs and not the working tree, which is true and was not the cause. The worst outcome was structural rather than a lost edit: one commit shipped a `pc-epic` pointer to a `PROSE-DISCIPLINE.md` section that existed only in the *other* session's uncommitted tree, so for ~20 minutes `origin/main` carried a reference to nothing and the two discriminators it replaced were unreachable. A separate `git worktree` per session would prevent the class outright — **and it was considered and declined, so don't re-propose it as an obvious fix.** The user's reasoning (2026-09-01): that day's collision rate came from an unusually intense burst of skill editing, not the steady state, and standing up a worktree pool to serve two writers who are rarely both in here is overengineering. The three guards above are the proportionate answer. Revisit only if a third concurrent writer appears.
 
-**Create a PR** (bipartite repo changes):
+**Create a PR** (paper-craft repo changes):
 
-The bipartite repo (`matsen/bipartite`) structure:
+The paper-craft repo structure:
 ```
 skills/          # Skill definitions (each skill is a directory with SKILL.md)
 cmd/             # pc binary source (Go, spf13/cobra)
@@ -160,7 +160,7 @@ agents/          # Agent definitions
 Skills are symlinked from `skills/<name>/` to `~/.claude/skills/<name>` for global availability.
 
 ```bash
-cd ~/re/bipartite
+cd ~/re/paper-craft
 git pull origin main
 git checkout -b kaizen/<short-description>
 # Make the changes
@@ -180,8 +180,8 @@ gh pr create --title "kaizen: <description>" --body "..."
   Don't refactor adjacent code
 - **One improvement per invocation**: If you see multiple issues, pick the highest-impact one and mention the others briefly
 - **Respect existing structure**: Follow the conventions already in CLAUDE.md and skill files
-- **Bipartite repo awareness**: Skills live in `~/re/bipartite/skills/`.
-  The repo is `matsen/bipartite` on GitHub
+- **Paper-craft repo awareness**: Skills live in `~/re/paper-craft/skills/`.
+  The repo is `minghao-du/paper-craft` on GitHub
 - **Spend emphasis like it is scarce, because it is.** <!-- emphasis-budget-exempt --> ⭐ ⛔ ⚠ ➡ and ALL-CAPS BOLD are a shared budget across the file, not a per-paragraph decision. **The mechanism a budget only caps: each kaizen reaches for a louder marker than the last one it sees, so the escalation is driven by the file's current state rather than by the new passage's importance — which is why it compounds and why no author notices their own step.** The numbers: `skills/pc-conductor/SKILL.md` carried **0** such markers on 2026-09-05, 13 on 09-14, 148 on 09-18, and 214 on 09-20 — one per 5.7 lines — while the file grew 2.1x in lines over the same window. `EVIDENCE-DISCIPLINE.md` went 0 → 201 across those same two dates. A marker every few lines marks nothing. Before adding one, count what is already there and decide whether your passage outranks them:
 
   ```bash

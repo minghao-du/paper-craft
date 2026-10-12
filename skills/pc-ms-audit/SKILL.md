@@ -73,7 +73,7 @@ A periodic full audit, run without the check's scope limit, covers those.
 ### Step 2: Partition the scope and fan out
 
 The primary partitions the audit scope into independent chunks, then dispatches one `general-purpose` subagent per chunk **in parallel** — single message, multiple `Agent` tool calls.
-Follow the dispatch pattern in `SUBAGENT-SCAN.md` (bipartite repo root).
+Follow the dispatch pattern in `SUBAGENT-SCAN.md` (paper-craft repo root).
 
 Partitioning rules:
 - **Whole paper** (default): one subagent per top-level Methods / Algorithms section.

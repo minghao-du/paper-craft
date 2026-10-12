@@ -69,7 +69,7 @@ For each slot the conductor interacted with this session:
    EOF
    ```
 
-`<this-skill's-base-directory>` is this skill's base directory as given at invocation (e.g. `/home/user/.claude/skills/pc-conductor-tuckin`); the shared helper lives at `lib/spawn-intent.sh`, a sibling of every skill directory (see `skills/lib/spawn-intent.sh` in the `bipartite` repo).
+`<this-skill's-base-directory>` is this skill's base directory as given at invocation (e.g. `/home/user/.claude/skills/pc-conductor-tuckin`); the shared helper lives at `lib/spawn-intent.sh`, a sibling of every skill directory (see `skills/lib/spawn-intent.sh` in the `paper-craft` repo).
 
 Update slots the conductor has direct knowledge about.
 This includes:

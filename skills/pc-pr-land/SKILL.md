@@ -155,7 +155,7 @@ Run this as **one** Bash invocation: shell variables do not survive between call
 ```bash
 LAND_DIR=$(pwd -P)
 SPAWN_INTENT=""
-for cand in ~/.claude/skills/lib/spawn-intent.sh ~/re/bipartite/skills/lib/spawn-intent.sh; do
+for cand in ~/.claude/skills/lib/spawn-intent.sh ~/re/paper-craft/skills/lib/spawn-intent.sh; do
     [ -r "$cand" ] && { SPAWN_INTENT="$cand"; break; }
 done
 if [ -f "$LAND_DIR/.epic-status.json" ]; then

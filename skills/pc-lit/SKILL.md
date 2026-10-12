@@ -1,6 +1,6 @@
 ---
 name: pc-lit
-description: Unified guidance for using the bipartite reference library CLI. Use when searching for papers, managing the library, or exploring literature via S2/ASTA.
+description: Unified guidance for using the paper-craft reference library CLI. Use when searching for papers, managing the library, or exploring literature via S2/ASTA.
 ---
 
 # Bip Reference Library

@@ -143,7 +143,7 @@ Note any uncommitted changes or recent work.
 ### Step 2: Fan out per-repo scanners
 
 For each entry in `tracked_repos`, dispatch one `general-purpose` subagent **in parallel** — single message, multiple `Agent` tool calls.
-Follow the dispatch pattern in `SUBAGENT-SCAN.md` (bipartite repo root).
+Follow the dispatch pattern in `SUBAGENT-SCAN.md` (paper-craft repo root).
 Per-repo (not per-EPIC) granularity avoids racing on `git pull` when one repo has multiple EPICs.
 
 Brief for each subagent:

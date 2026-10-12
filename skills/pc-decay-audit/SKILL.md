@@ -45,11 +45,11 @@ It produces signals; humans decide what to act on.
 
 ### Step 1: Locate state
 
-Per-repo state lives at `.bipartite/audit/` (add to `.gitignore` if not already covered).
+Per-repo state lives at `.paper-craft/audit/` (add to `.gitignore` if not already covered).
 Structure:
 
 ```
-.bipartite/audit/
+.paper-craft/audit/
   baseline.json       # the last committed-to-baseline run
   history/
     2026-04-21.json
@@ -58,7 +58,7 @@ Structure:
   config.yml          # repo-specific thresholds (optional)
 ```
 
-If `.bipartite/audit/baseline.json` does not exist, this is a first run — everything is a new metric, no deltas.
+If `.paper-craft/audit/baseline.json` does not exist, this is a first run — everything is a new metric, no deltas.
 Warn the user and suggest `--baseline`.
 
 ### Step 2: Detect languages and pick metric adapters
@@ -134,7 +134,7 @@ Optional signals (add under `--full`; more expensive):
 
 ### Step 4: Write the report
 
-Produce one markdown file at `.bipartite/audit/history/<ISO-date>.md`.
+Produce one markdown file at `.paper-craft/audit/history/<ISO-date>.md`.
 Format:
 
 ```markdown
@@ -172,7 +172,7 @@ Format:
 Reproduce any number with:
 - `<the exact rg/wc command that produced it>`
 
-Baseline: `.bipartite/audit/baseline.json` (captured <date>, commit <hash>).
+Baseline: `.paper-craft/audit/baseline.json` (captured <date>, commit <hash>).
 Skill: `/pc-decay-audit` (see skills/pc-decay-audit/SKILL.md).
 Principles: Ronacher 2025-06-12 (linked in SKILL.md).
 ```
@@ -183,8 +183,8 @@ Otherwise, print the path and let the user open it.
 
 ### Step 5: Save state
 
-Write this run's signals as JSON to `.bipartite/audit/history/<ISO-date>.json`.
-If `--baseline`, also overwrite `.bipartite/audit/baseline.json`.
+Write this run's signals as JSON to `.paper-craft/audit/history/<ISO-date>.json`.
+If `--baseline`, also overwrite `.paper-craft/audit/baseline.json`.
 
 ### Step 6: Regressions get a nudge, not a fix
 
@@ -205,7 +205,7 @@ The skill's job ends at the report.
   Subagents are only useful in step 6 if the user asks for a kaizen pass on a specific regression.
 - **Thresholds are language- and repo-specific.**
   A monster-file cutoff of 1500 LOC is reasonable for Zig with dense DP kernels; a Python webapp might use 500.
-  Store overrides in `.bipartite/audit/config.yml`.
+  Store overrides in `.paper-craft/audit/config.yml`.
 - **Don't sweep `_ignore/`, `zig-cache/`, `zig-out/`, `target/`, `build/`, `.pixi/`, `node_modules/`, `experiments/`, or `testdata/`.**
   These inflate every count without contributing signal.
 - **Signals, not verdicts.**
@@ -235,7 +235,7 @@ The skill's job ends at the report.
   `/pc-decay-audit` looks at whole-repo state, which they cannot.
 - **Not an LLM-semantic pass**: tempting to run cosine similarity across function bodies to find near-duplicates.
   Expensive, noisy, and the useful signal ("three CLIs copy-pasted the same `while (i < args.len)` loop") is better caught by a cheap `rg -l "pub fn parseArgs"` count.
-- **State in-repo, not in a DB**: `.bipartite/audit/` is committable (or gitignorable) at the user's discretion.
+- **State in-repo, not in a DB**: `.paper-craft/audit/` is committable (or gitignorable) at the user's discretion.
   Baselines live in git if kept; deltas show up in `git log`.
   No pc-side storage required.
 - **Output is markdown, not a dashboard**: agents read markdown; `less` in a popup renders it; humans can paste it into Slack.
