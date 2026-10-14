@@ -149,6 +149,7 @@ gh pr create --title "<concise title>" --body "<body>"
 **Report findings in the PR body.**
 If the work involved experiments or benchmarks, include key results (tables, numbers, conclusions) directly in the PR body.
 Don't just point at branch files — the PR body is the permanent record.
+When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed (such as a preserved path or ephemeral directory) alongside their reproduction command, environment specifications, and reproduction duration or cost.
 
 ### Step 8: Summary for the user
 

@@ -11,14 +11,31 @@ import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Prefixes exempt from media and data file cruft interception.
- * Files in these directories are intended for version control (e.g. diagrams, test fixtures).
+ * Normalizes a repository file path by converting backslashes to forward slashes,
+ * trimming whitespace, and stripping surrounding quotes from git output.
+ *
+ * @param filePath - Raw file path from git output or tool arguments.
+ * @returns Clean, normalized repository relative path.
+ */
+export function normalizeRepoPath(filePath: string): string {
+  let normalized = filePath.replace(/\\/g, '/').trim();
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+/**
+ * Prefixes exempt from media file cruft interception.
+ * Only documentation diagrams and visual assets in these directories
+ * are intended for version control.
  */
 export const EXEMPT_PREFIXES: readonly string[] = [
   'docs/',
   'assets/',
-  'tests/fixtures/',
-  'testdata/',
 ];
 
 /**
@@ -68,7 +85,7 @@ export const MEDIA_CRUFT_EXTENSIONS: readonly string[] = [
  * @returns True if the file matches cruft patterns; false if it is legitimate.
  */
 export function isCruftFile(filePath: string): boolean {
-  const normalized = filePath.replace(/\\/g, '/').replace(/^["']|["']$/g, '');
+  const normalized = normalizeRepoPath(filePath);
 
   // Any file or directory within output/ or results/ is cruft
   if (/(?:^|\/)(?:output|results)(?:\/|$)/i.test(normalized)) {
@@ -87,17 +104,20 @@ export function isCruftFile(filePath: string): boolean {
     return true;
   }
 
-  // If located in documentation or test fixture paths, media and data files are allowed
-  if (EXEMPT_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
-    return false;
-  }
-
-  // Data outputs and tabular dumps outside exempt paths are cruft
+  // Tabular and numerical data outputs are prohibited across the repo
   if (DATA_CRUFT_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
     return true;
   }
 
-  // Plot and image outputs outside exempt paths are cruft
+  // Documentation and asset paths permit media files (e.g. architecture diagrams, logos)
+  if (
+    EXEMPT_PREFIXES.some((prefix) => normalized.startsWith(prefix)) &&
+    MEDIA_CRUFT_EXTENSIONS.some((ext) => lower.endsWith(ext))
+  ) {
+    return false;
+  }
+
+  // Media outputs outside exempt paths are cruft
   if (MEDIA_CRUFT_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
     return true;
   }
@@ -124,15 +144,7 @@ export function parseGitStatusLine(line: string): { statusCode: string; path: st
     pathPart = parts[1] ?? pathPart;
   }
 
-  // Strip surrounding quotes if path was quoted by git
-  if (
-    (pathPart.startsWith('"') && pathPart.endsWith('"')) ||
-    (pathPart.startsWith("'") && pathPart.endsWith("'"))
-  ) {
-    pathPart = pathPart.slice(1, -1);
-  }
-
-  return { statusCode, path: pathPart };
+  return { statusCode, path: normalizeRepoPath(pathPart) };
 }
 
 /**

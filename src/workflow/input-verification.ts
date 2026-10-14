@@ -27,8 +27,6 @@ export interface PrerequisiteInput {
 export interface InputVerificationOptions {
   /** Base directory against which relative paths are resolved. Defaults to process.cwd(). */
   baseDir?: string;
-  /** Whether to retain angle brackets inside code backticks in formatted output. */
-  wrapAngleBrackets?: boolean;
 }
 
 /**
@@ -71,6 +69,7 @@ export function formatMissingInputNotification(
   missing: PrerequisiteInput | PrerequisiteInput[],
   options?: InputVerificationOptions,
 ): string {
+  void options;
   const items = Array.isArray(missing) ? missing : [missing];
   if (items.length === 0) {
     return '';
@@ -79,34 +78,24 @@ export function formatMissingInputNotification(
   const lines = [HALT_HEADER];
 
   for (const item of items) {
-    const rawPath = item.path.trim();
-    const rawOp = item.operation.trim();
-
-    // Preserve existing `<...>` or backticks if supplied, else format cleanly
-    let pathDisplay: string;
-    if (rawPath.startsWith('`') && rawPath.endsWith('`')) {
-      pathDisplay = rawPath;
-    } else if (rawPath.startsWith('<') && rawPath.endsWith('>')) {
-      pathDisplay = `\`${rawPath}\``;
-    } else if (options?.wrapAngleBrackets) {
-      pathDisplay = `\`<${rawPath}>\``;
-    } else {
-      pathDisplay = `\`${rawPath}\``;
+    let cleanPath = item.path.trim();
+    if (cleanPath.startsWith('`') && cleanPath.endsWith('`')) {
+      cleanPath = cleanPath.slice(1, -1);
+    }
+    if (cleanPath.startsWith('<') && cleanPath.endsWith('>')) {
+      cleanPath = cleanPath.slice(1, -1);
     }
 
-    let opDisplay: string;
-    if (rawOp.startsWith('`') && rawOp.endsWith('`')) {
-      opDisplay = rawOp;
-    } else if (rawOp.startsWith('<') && rawOp.endsWith('>')) {
-      opDisplay = `\`${rawOp}\``;
-    } else if (options?.wrapAngleBrackets) {
-      opDisplay = `\`<${rawOp}>\``;
-    } else {
-      opDisplay = `<${rawOp}>`;
+    let cleanOp = item.operation.trim();
+    if (cleanOp.startsWith('`') && cleanOp.endsWith('`')) {
+      cleanOp = cleanOp.slice(1, -1);
+    }
+    if (cleanOp.startsWith('<') && cleanOp.endsWith('>')) {
+      cleanOp = cleanOp.slice(1, -1);
     }
 
-    lines.push(`- 缺失文件及预期路径: ${pathDisplay}`);
-    lines.push(`- 依赖该文件的操作: ${opDisplay}`);
+    lines.push(`- 缺失文件及预期路径: \`<${cleanPath}>\``);
+    lines.push(`- 依赖该文件的操作: \`<${cleanOp}>\``);
   }
 
   lines.push(HALT_ACTION_PROMPT);
@@ -183,25 +172,3 @@ export function assertPrerequisiteInputs(
   }
 }
 
-/**
- * Step definition for workflow gate execution.
- */
-export interface WorkflowStep {
-  name: string;
-  execute: () => Promise<void> | void;
-}
-
-/**
- * Runs a sequence of workflow steps, stopping immediately if any step throws.
- *
- * @param steps List of workflow steps to execute sequentially.
- * @returns List of step names successfully executed.
- */
-export async function executeWorkflowSteps(steps: WorkflowStep[]): Promise<string[]> {
-  const completed: string[] = [];
-  for (const step of steps) {
-    await step.execute();
-    completed.push(step.name);
-  }
-  return completed;
-}

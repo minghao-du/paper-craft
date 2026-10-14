@@ -3,48 +3,12 @@
  *
  * Enforces zero-artifact git discipline by auditing staged files (`git diff --cached --name-only`)
  * against forbidden transient patterns, providing automatic cruft unstaging (`git reset HEAD <file>`),
- * and enforcing per-file selective staging while forbidding indiscriminate staging commands.
+ * and enforcing per-file selective staging.
  */
 
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { isCruftFile, categorizeGitStatus } from './readiness.js';
-
-/**
- * Regular expressions matching forbidden indiscriminate staging commands.
- * Commands like `git add .`, `git add -A`, and `git commit -a` bypass per-file review
- * and risk committing transient artifacts.
- */
-export const FORBIDDEN_STAGING_PATTERNS: readonly RegExp[] = [
-  /\bgit\s+add\s+(?:--all|-A|\.)(?:\s|$)/,
-  /\bgit\s+commit\s+.*(?:-[a-zA-Z]*a[a-zA-Z]*|--all)(?:\s|$)/,
-];
-
-/**
- * Checks whether a given shell command represents a forbidden indiscriminate staging or commit command.
- *
- * @param command - Command string to validate.
- * @returns True if the command is forbidden; false if permitted.
- */
-export function isForbiddenStagingCommand(command: string): boolean {
-  return FORBIDDEN_STAGING_PATTERNS.some((pattern) => pattern.test(command));
-}
-
-/**
- * Validates a staging or commit command, returning whether it is allowed and guidance if rejected.
- *
- * @param command - Command string to inspect.
- * @returns Object with `allowed` boolean and optional explanation `reason`.
- */
-export function validateStagingCommand(command: string): { allowed: boolean; reason?: string } {
-  if (isForbiddenStagingCommand(command)) {
-    return {
-      allowed: false,
-      reason: `Indiscriminate staging command "${command}" is forbidden. Use per-file \`git add <file>\` targeting only source, configuration, and documentation files instead.`,
-    };
-  }
-  return { allowed: true };
-}
+import { isCruftFile, categorizeGitStatus, normalizeRepoPath } from './readiness.js';
 
 /**
  * Options for staged diff inspection.
@@ -115,13 +79,8 @@ export function auditStagedDiff(options: StagedDiffAuditOptions = {}): StagedDif
   const cruftFiles: string[] = [];
   const legitimateFiles: string[] = [];
 
-  for (let line of rawLines) {
-    if (
-      (line.startsWith('"') && line.endsWith('"')) ||
-      (line.startsWith("'") && line.endsWith("'"))
-    ) {
-      line = line.slice(1, -1);
-    }
+  for (const rawLine of rawLines) {
+    const line = normalizeRepoPath(rawLine);
     stagedFiles.push(line);
 
     if (classifier(line)) {
@@ -202,7 +161,8 @@ export function unstageFiles(files: string[], options: { cwd?: string } = {}): s
   const cwd = options.cwd ?? process.cwd();
   const unstaged: string[] = [];
 
-  for (const file of files) {
+  for (const rawFile of files) {
+    const file = normalizeRepoPath(rawFile);
     try {
       execSync(`git reset HEAD -- ${JSON.stringify(file)}`, {
         cwd,
@@ -310,10 +270,11 @@ export function selectiveStage(
 
   if (options.files !== undefined) {
     for (const f of options.files) {
-      if (classifier(f)) {
-        skippedCruft.push(f);
+      const normalized = normalizeRepoPath(f);
+      if (classifier(normalized)) {
+        skippedCruft.push(normalized);
       } else {
-        candidates.push(f);
+        candidates.push(normalized);
       }
     }
   } else {

@@ -18,11 +18,9 @@ import {
   assertPrerequisiteInputs,
   formatMissingInputNotification,
   MissingInputHaltError,
-  executeWorkflowSteps,
   HALT_HEADER,
   HALT_ACTION_PROMPT,
   type PrerequisiteInput,
-  type WorkflowStep,
 } from '../../src/workflow/input-verification.js';
 
 describe('Missing Input Protocol', () => {
@@ -99,8 +97,8 @@ describe('Missing Input Protocol', () => {
       const lines = message.split('\n');
 
       expect(lines[0]).toBe(HALT_HEADER);
-      expect(lines[1]).toBe('- 缺失文件及预期路径: `models/classifier.joblib`');
-      expect(lines[2]).toBe('- 依赖该文件的操作: <eval_benchmark.py validation>');
+      expect(lines[1]).toBe('- 缺失文件及预期路径: `<models/classifier.joblib>`');
+      expect(lines[2]).toBe('- 依赖该文件的操作: `<eval_benchmark.py validation>`');
       expect(lines[3]).toBe(HALT_ACTION_PROMPT);
     });
 
@@ -129,10 +127,10 @@ describe('Missing Input Protocol', () => {
 
       const message = formatMissingInputNotification(inputs);
       expect(message).toContain(HALT_HEADER);
-      expect(message).toContain('- 缺失文件及预期路径: `models/net.pt`');
-      expect(message).toContain('- 依赖该文件的操作: <eval_net.py>');
-      expect(message).toContain('- 缺失文件及预期路径: `data/test.csv`');
-      expect(message).toContain('- 依赖该文件的操作: <eval_test.py>');
+      expect(message).toContain('- 缺失文件及预期路径: `<models/net.pt>`');
+      expect(message).toContain('- 依赖该文件的操作: `<eval_net.py>`');
+      expect(message).toContain('- 缺失文件及预期路径: `<data/test.csv>`');
+      expect(message).toContain('- 依赖该文件的操作: `<eval_test.py>`');
       expect(message).toContain(HALT_ACTION_PROMPT);
     });
   });
@@ -150,38 +148,13 @@ describe('Missing Input Protocol', () => {
         },
       ];
 
-      const steps: WorkflowStep[] = [
-        {
-          name: 'Step 1: Read the issue',
-          execute: () => {
-            step1ReadIssue();
-          },
-        },
-        {
-          name: 'Step 2: Input verification',
-          execute: () => {
-            assertPrerequisiteInputs(requiredInputs, { baseDir: tempDir });
-          },
-        },
-        {
-          name: 'Step 3: Create a feature branch',
-          execute: () => {
-            step3CreateBranch();
-          },
-        },
-        {
-          name: 'Step 4: Implement',
-          execute: () => {
-            step4Implement();
-          },
-        },
-      ];
+      step1ReadIssue();
 
       let thrownError: unknown;
-      let executedSteps: string[] = [];
-
       try {
-        executedSteps = await executeWorkflowSteps(steps);
+        assertPrerequisiteInputs(requiredInputs, { baseDir: tempDir });
+        step3CreateBranch();
+        step4Implement();
       } catch (err) {
         thrownError = err;
       }
@@ -192,7 +165,7 @@ describe('Missing Input Protocol', () => {
 
       // Emits standardized 3-part notification
       expect(haltErr.haltNotification).toContain(HALT_HEADER);
-      expect(haltErr.haltNotification).toContain('`checkpoints/model_best.pt`');
+      expect(haltErr.haltNotification).toContain('`<checkpoints/model_best.pt>`');
       expect(haltErr.haltNotification).toContain('<reproduce_benchmark.py>');
       expect(haltErr.haltNotification).toContain(HALT_ACTION_PROMPT);
 
@@ -200,7 +173,6 @@ describe('Missing Input Protocol', () => {
       expect(step1ReadIssue).toHaveBeenCalledTimes(1);
       expect(step3CreateBranch).not.toHaveBeenCalled();
       expect(step4Implement).not.toHaveBeenCalled();
-      expect(executedSteps).toEqual([]);
     });
 
     it('proceeds through all steps when prerequisite inputs exist', async () => {
@@ -219,44 +191,14 @@ describe('Missing Input Protocol', () => {
         },
       ];
 
-      const steps: WorkflowStep[] = [
-        {
-          name: 'Step 1: Read the issue',
-          execute: () => {
-            step1ReadIssue();
-          },
-        },
-        {
-          name: 'Step 2: Input verification',
-          execute: () => {
-            assertPrerequisiteInputs(requiredInputs, { baseDir: tempDir });
-          },
-        },
-        {
-          name: 'Step 3: Create a feature branch',
-          execute: () => {
-            step3CreateBranch();
-          },
-        },
-        {
-          name: 'Step 4: Implement',
-          execute: () => {
-            step4Implement();
-          },
-        },
-      ];
-
-      const completed = await executeWorkflowSteps(steps);
+      step1ReadIssue();
+      assertPrerequisiteInputs(requiredInputs, { baseDir: tempDir });
+      step3CreateBranch();
+      step4Implement();
 
       expect(step1ReadIssue).toHaveBeenCalledTimes(1);
       expect(step3CreateBranch).toHaveBeenCalledTimes(1);
       expect(step4Implement).toHaveBeenCalledTimes(1);
-      expect(completed).toEqual([
-        'Step 1: Read the issue',
-        'Step 2: Input verification',
-        'Step 3: Create a feature branch',
-        'Step 4: Implement',
-      ]);
     });
   });
 

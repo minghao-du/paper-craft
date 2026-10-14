@@ -5,8 +5,7 @@
  * 1. In a workspace with modified source files (src/index.ts) and untracked/staged
  *    output artifacts (output/model.joblib), only source files get staged and
  *    any cached artifact files are un-staged before commit.
- * 2. Indiscriminate staging commands (git add ., git add -A, git commit -a) are detected and forbidden.
- * 3. Pre-commit cached diff audits inspect staged files against forbidden transient patterns.
+ * 2. Pre-commit cached diff audits inspect staged files against forbidden transient patterns.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -19,8 +18,6 @@ import {
   unstageCruft,
   unstageFiles,
   selectiveStage,
-  isForbiddenStagingCommand,
-  validateStagingCommand,
   runStagedDiffAudit,
 } from '../../src/workflow/staging.js';
 
@@ -220,30 +217,6 @@ describe('Selective Staging & Pre-Commit Cached Diff Audit', () => {
     expect(audit.message).toBe('No changes staged for commit.');
   });
 
-  it('forbids indiscriminate staging commands and provides actionable remediation', () => {
-    expect(isForbiddenStagingCommand('git add .')).toBe(true);
-    expect(isForbiddenStagingCommand('git add -A')).toBe(true);
-    expect(isForbiddenStagingCommand('git add --all')).toBe(true);
-    expect(isForbiddenStagingCommand('git commit -a')).toBe(true);
-    expect(isForbiddenStagingCommand('git commit -am "wip"')).toBe(true);
-    expect(isForbiddenStagingCommand('git commit -a -m "wip"')).toBe(true);
-    expect(isForbiddenStagingCommand('git commit --all')).toBe(true);
-
-    // Legitimate selective staging commands are allowed
-    expect(isForbiddenStagingCommand('git add src/index.ts')).toBe(false);
-    expect(isForbiddenStagingCommand('git add package.json README.md')).toBe(false);
-    expect(isForbiddenStagingCommand('git commit -m "feat: selective"')).toBe(false);
-
-    // Validation helper
-    const invalidResult = validateStagingCommand('git add .');
-    expect(invalidResult.allowed).toBe(false);
-    expect(invalidResult.reason).toContain('Indiscriminate staging command "git add ." is forbidden');
-    expect(invalidResult.reason).toContain('git add <file>');
-
-    const validResult = validateStagingCommand('git add src/index.ts');
-    expect(validResult.allowed).toBe(true);
-    expect(validResult.reason).toBeUndefined();
-  });
 
   it('runStagedDiffAudit logs clean audit message to stdout', async () => {
     await mkdir(join(tempRepo, 'src'), { recursive: true });

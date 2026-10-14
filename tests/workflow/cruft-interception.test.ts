@@ -157,11 +157,16 @@ describe('Cruft Interception and Worktree Readiness Check', () => {
     expect(isCruftFile('README.md')).toBe(false);
     expect(isCruftFile('.gitignore')).toBe(false);
 
-    // Exempt directory paths
+    // Exempt directory paths (docs and assets permit documentation media only)
     expect(isCruftFile('docs/architecture.png')).toBe(false);
     expect(isCruftFile('assets/logo.svg')).toBe(false);
-    expect(isCruftFile('tests/fixtures/sample.csv')).toBe(false);
-    expect(isCruftFile('testdata/mock.tsv')).toBe(false);
+
+    // Zero-artifact boundary: tests/fixtures/ and testdata/ are NOT exempt from data/model/media cruft
+    expect(isCruftFile('tests/fixtures/sample.csv')).toBe(true);
+    expect(isCruftFile('testdata/mock.tsv')).toBe(true);
+    expect(isCruftFile('tests/fixtures/model.pt')).toBe(true);
+    expect(isCruftFile('testdata/figure.png')).toBe(true);
+    expect(isCruftFile('tests/fixtures/config.json')).toBe(false);
   });
 
   it('correctly categorizes raw git status output lines', () => {
