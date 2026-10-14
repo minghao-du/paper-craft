@@ -104,6 +104,7 @@ export interface ZoteroImportOptions {
   zoteroPath: string;
   nexusPath: string;
   dryRun: boolean;
+  libraryId?: number;
 }
 
 /** Parse a Zotero date string into { year, month, day }. */
@@ -170,6 +171,7 @@ async function extractReferences(
 ): Promise<ImportResult> {
   const nexus = opts.nexusPath;
   const path = refsPath(nexus);
+  const targetLibraryId = opts.libraryId ?? 1;
 
   // Read existing refs for dedup
   const existingRefs = await readJsonl(path, ReferenceSchema);
@@ -185,7 +187,13 @@ async function extractReferences(
 
   // Build citekey map from BBT: itemID → citekey
   const citekeyMap = new Map<number, string>();
-  const bbtStmt = bbtDb.prepare('SELECT itemID, citekey FROM citekeys');
+  let bbtStmt: ReturnType<Database['prepare']>;
+  try {
+    bbtStmt = bbtDb.prepare('SELECT itemID, citekey FROM citekeys WHERE libraryID = :libraryID');
+    bbtStmt.bind({ ':libraryID': targetLibraryId });
+  } catch {
+    bbtStmt = bbtDb.prepare('SELECT itemID, citekey FROM citekeys');
+  }
   while (bbtStmt.step()) {
     const row = bbtStmt.getAsObject() as { itemID: number; citekey: string };
     citekeyMap.set(row.itemID, row.citekey);
@@ -193,15 +201,16 @@ async function extractReferences(
   bbtStmt.free();
 
   // Query main items — exclude non-regular types (attachment=14, note=1, annotation=36)
-  // and deleted items
+  // and deleted items, scoped to the targeted library
   const itemStmt = db.prepare(`
     SELECT i.itemID, i.key AS itemKey
     FROM items i
-    WHERE i.libraryID = 1
+    WHERE i.libraryID = :libraryID
       AND i.itemTypeID NOT IN (1, 14, 36)
       AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
     ORDER BY i.itemID
   `);
+  itemStmt.bind({ ':libraryID': targetLibraryId });
 
   const rows: ZoteroRow[] = [];
   while (itemStmt.step()) {
@@ -237,6 +246,20 @@ async function extractReferences(
     WHERE ic.itemID = :itemID
     ORDER BY ic.orderIndex
   `);
+
+  // Prepare tag lookup (excluding collection hierarchies)
+  let tagStmt: ReturnType<Database['prepare']> | undefined;
+  try {
+    tagStmt = db.prepare(`
+      SELECT DISTINCT t.name
+      FROM itemTags it
+      JOIN tags t ON t.tagID = it.tagID
+      WHERE it.itemID = :itemID
+      ORDER BY t.name
+    `);
+  } catch {
+    tagStmt = undefined;
+  }
 
   let added = 0;
   let updated = 0;
@@ -275,6 +298,23 @@ async function extractReferences(
     const issue = getField('issue') || undefined;
     const pages = getField('pages') || undefined;
 
+    // Extract tags
+    let tags: string[] | undefined;
+    if (tagStmt) {
+      tagStmt.bind({ ':itemID': row.itemID });
+      const tagList: string[] = [];
+      while (tagStmt.step()) {
+        const t = tagStmt.getAsObject() as { name: string };
+        if (t.name) {
+          tagList.push(t.name);
+        }
+      }
+      tagStmt.reset();
+      if (tagList.length > 0) {
+        tags = tagList;
+      }
+    }
+
     let ref: Reference = {
       id: row.citekey,
       doi: doi,
@@ -288,6 +328,7 @@ async function extractReferences(
       published,
       pdf_path: '',
       source: { type: 'zotero', id: row.itemKey },
+      tags,
     };
 
     // Dedup: check source ID first, then DOI
@@ -314,6 +355,7 @@ async function extractReferences(
 
   valueStmt.free();
   authorStmt.free();
+  tagStmt?.free();
 
   const result: ImportResult = {
     status: opts.dryRun ? 'dry-run' : 'ok',
@@ -349,19 +391,30 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
     .requiredOption('--format <format>', 'Import format (paperpile, zotero)')
     .option('--dry-run', 'Show what would be imported without writing')
     .option('--zotero-path <path>', 'Path to Zotero data directory')
+    .option('--library <id>', 'Zotero library ID to import from (default: 1)')
     .action(
       async (
         file: string | undefined,
-        cmdOpts: { format: string; dryRun?: boolean; zoteroPath?: string },
+        cmdOpts: {
+          format: string;
+          dryRun?: boolean;
+          zoteroPath?: string;
+          library?: string;
+        },
       ) => {
         if (cmdOpts.format === 'zotero') {
           const zoteroPath = cmdOpts.zoteroPath ?? join(process.env['HOME'] ?? '', 'Zotero');
           const nexus = mustGetNexusPath();
+          const libraryId = cmdOpts.library ? parseInt(cmdOpts.library, 10) : 1;
+          if (isNaN(libraryId)) {
+            throw new Error(`Invalid library ID: ${cmdOpts.library}. Must be an integer.`);
+          }
 
           const result = await importZotero({
             zoteroPath,
             nexusPath: nexus,
             dryRun: cmdOpts.dryRun ?? false,
+            libraryId,
           });
 
           output(result, opts.human(), () =>

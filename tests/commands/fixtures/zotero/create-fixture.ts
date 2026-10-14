@@ -85,6 +85,41 @@ async function main() {
     )
   `);
 
+  zotero.run(`
+    CREATE TABLE tags (
+      tagID INTEGER PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE
+    )
+  `);
+
+  zotero.run(`
+    CREATE TABLE itemTags (
+      itemID INTEGER NOT NULL,
+      tagID INTEGER NOT NULL,
+      type INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (itemID, tagID)
+    )
+  `);
+
+  zotero.run(`
+    CREATE TABLE collections (
+      collectionID INTEGER PRIMARY KEY,
+      collectionName TEXT NOT NULL,
+      parentCollectionID INTEGER,
+      libraryID INTEGER NOT NULL DEFAULT 1,
+      key TEXT NOT NULL
+    )
+  `);
+
+  zotero.run(`
+    CREATE TABLE collectionItems (
+      collectionID INTEGER NOT NULL,
+      itemID INTEGER NOT NULL,
+      orderIndex INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (collectionID, itemID)
+    )
+  `);
+
   // Populate itemTypes
   zotero.run(`INSERT INTO itemTypes VALUES (2, 'journalArticle')`);
   zotero.run(`INSERT INTO itemTypes VALUES (4, 'conferencePaper')`);
@@ -191,6 +226,62 @@ async function main() {
   // --- Item 5: a note (should be excluded from main results) ---
   zotero.run(`INSERT INTO items VALUES (5, 1, 1, 'NOTE0001')`);
 
+  // --- Item 6: group library item (libraryID = 2) ---
+  zotero.run(`INSERT INTO items VALUES (6, 2, 2, 'GRP12345')`);
+
+  const values6 = [
+    [17, 'Language Models are Few-Shot Learners'],
+    [18, 'We demonstrate that scaling up language models greatly improves task-agnostic, few-shot performance.'],
+    [19, '33'],
+    [20, ''],
+    [21, '1877-1901'],
+    [22, '10.5555/3495724.3495883'],
+    [23, '2020-05-28'],
+    [24, 'Advances in Neural Information Processing Systems'],
+  ] as const;
+  for (const [id, val] of values6) {
+    zotero.run(`INSERT INTO itemDataValues VALUES (?, ?)`, [id, val]);
+  }
+
+  const itemData6 = [
+    [6, 1, 17], // title
+    [6, 3, 18], // abstractNote
+    [6, 4, 19], // volume
+    [6, 5, 20], // issue (empty)
+    [6, 6, 21], // pages
+    [6, 12, 22], // DOI
+    [6, 14, 23], // date
+    [6, 15, 24], // publicationTitle (venue)
+  ] as const;
+  for (const [itemID, fieldID, valueID] of itemData6) {
+    zotero.run(`INSERT INTO itemData VALUES (?, ?, ?)`, [itemID, fieldID, valueID]);
+  }
+
+  // Creators for item 6
+  zotero.run(`INSERT INTO creators VALUES (4, 'Tom', 'Brown')`);
+  zotero.run(`INSERT INTO itemCreators VALUES (6, 4, 1, 0)`);
+
+  // --- Tags ---
+  zotero.run(`INSERT INTO tags VALUES (1, 'deep-learning')`);
+  zotero.run(`INSERT INTO tags VALUES (2, 'transformer')`);
+  zotero.run(`INSERT INTO tags VALUES (3, 'few-shot')`);
+  zotero.run(`INSERT INTO tags VALUES (4, 'llm')`);
+
+  // Item 1 has tags 'deep-learning' and 'transformer'
+  zotero.run(`INSERT INTO itemTags VALUES (1, 1, 0)`);
+  zotero.run(`INSERT INTO itemTags VALUES (1, 2, 0)`);
+
+  // Item 6 (group library) has tags 'few-shot' and 'llm'
+  zotero.run(`INSERT INTO itemTags VALUES (6, 3, 0)`);
+  zotero.run(`INSERT INTO itemTags VALUES (6, 4, 0)`);
+  // Note: Item 2 has NO tags
+
+  // --- Collections ---
+  zotero.run(`INSERT INTO collections VALUES (1, 'Artificial Intelligence', NULL, 1, 'COLL0001')`);
+  zotero.run(`INSERT INTO collections VALUES (2, 'Deep Learning Hierarchy', 1, 1, 'COLL0002')`);
+  zotero.run(`INSERT INTO collectionItems VALUES (2, 1, 0)`); // item 1 in collection 2
+  zotero.run(`INSERT INTO collectionItems VALUES (1, 2, 0)`); // item 2 in collection 1
+
   // Write zotero.sqlite
   const zoteroData = zotero.export();
   await writeFile(join(__dirname, 'zotero.sqlite'), Buffer.from(zoteroData));
@@ -213,6 +304,8 @@ async function main() {
   bbt.run(`INSERT INTO citekeys VALUES (2, 'DEF67890', 1, 'devlin2019bert', 1)`);
   // Deleted item also has a citekey (should be filtered out by the query)
   bbt.run(`INSERT INTO citekeys VALUES (3, 'GHI11111', 1, 'deleted2020paper', 1)`);
+  // Group library item citekey
+  bbt.run(`INSERT INTO citekeys VALUES (6, 'GRP12345', 2, 'brown2020language', 1)`);
 
   const bbtData = bbt.export();
   await writeFile(join(__dirname, 'better-bibtex-search.sqlite'), Buffer.from(bbtData));
