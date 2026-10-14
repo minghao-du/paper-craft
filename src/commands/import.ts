@@ -13,10 +13,17 @@
 
 import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, resolve, relative, isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
 import initSqlJs, { type Database } from 'sql.js';
-import { mustGetNexusPath, refsPath } from '../utils/config.js';
+import {
+  mustGetNexusPath,
+  refsPath,
+  resolveZoteroPath,
+  getPdfRoot,
+  expandTilde,
+} from '../utils/config.js';
 import { readJsonl, writeJsonl, appendJsonl } from '../storage/jsonl.js';
 import { ReferenceSchema, mergeReferences } from '../models/reference.js';
 import type { Reference, Author } from '../models/reference.js';
@@ -101,9 +108,103 @@ export interface ImportResult {
 
 /** Options for importing from Zotero SQLite database. */
 export interface ZoteroImportOptions {
-  zoteroPath: string;
+  zoteroPath?: string;
   nexusPath: string;
   dryRun: boolean;
+  baseAttachmentPath?: string;
+  customProfilesDir?: string;
+}
+
+/**
+ * Parse `extensions.zotero.baseAttachmentPath` from `prefs.js` content.
+ */
+export function parseBaseAttachmentPath(content: string): string | undefined {
+  const match = content.match(
+    /^[ \t]*user_pref\s*\(\s*["']extensions\.zotero\.baseAttachmentPath["']\s*,\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;/m,
+  );
+  if (!match || !match[1]) return undefined;
+  const raw = match[1];
+  let val: string;
+  if (raw.startsWith('"')) {
+    try {
+      val = JSON.parse(raw);
+    } catch {
+      val = raw.slice(1, -1);
+    }
+  } else {
+    val = raw.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+  }
+  val = val.trim();
+  return val ? expandTilde(val) : undefined;
+}
+
+/**
+ * Discover `extensions.zotero.baseAttachmentPath` from `prefs.js`.
+ *
+ * Checks:
+ *   1. Direct `prefs.js` inside `zoteroPath`
+ *   2. Platform profile directories:
+ *      - macOS: `~/Library/Application Support/Zotero/Profiles/<profile>/prefs.js`
+ *      - Linux: `~/.zotero/zotero/<profile>/prefs.js`
+ *      - Windows: `%APPDATA%/Zotero/Zotero/Profiles/<profile>/prefs.js`
+ */
+export function findZoteroBaseAttachmentPath(
+  zoteroPath: string,
+  customProfilesDir?: string,
+): string | undefined {
+  // 1. Direct prefs.js in zoteroPath
+  const directPrefs = join(zoteroPath, 'prefs.js');
+  if (existsSync(directPrefs)) {
+    try {
+      const content = readFileSync(directPrefs, 'utf-8');
+      const parsed = parseBaseAttachmentPath(content);
+      if (parsed) return parsed;
+    } catch {
+      // Ignore read error and fallback to profiles
+    }
+  }
+
+  // 2. Profile directories
+  const candidateDirs: string[] = [];
+  if (customProfilesDir) {
+    candidateDirs.push(customProfilesDir);
+  } else {
+    const home = process.env['HOME'] || homedir();
+    if (process.platform === 'darwin') {
+      candidateDirs.push(join(home, 'Library', 'Application Support', 'Zotero', 'Profiles'));
+    } else if (process.platform === 'linux') {
+      candidateDirs.push(join(home, '.zotero', 'zotero'));
+    } else if (process.platform === 'win32') {
+      const appdata = process.env['APPDATA'] || join(home, 'AppData', 'Roaming');
+      candidateDirs.push(join(appdata, 'Zotero', 'Zotero', 'Profiles'));
+    }
+    // Also add fallback paths
+    candidateDirs.push(
+      join(home, 'Library', 'Application Support', 'Zotero', 'Profiles'),
+      join(home, '.zotero', 'zotero'),
+    );
+  }
+
+  for (const dir of candidateDirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const profilePrefs = join(dir, entry.name, 'prefs.js');
+          if (existsSync(profilePrefs)) {
+            const content = readFileSync(profilePrefs, 'utf-8');
+            const parsed = parseBaseAttachmentPath(content);
+            if (parsed) return parsed;
+          }
+        }
+      }
+    } catch {
+      // Ignore unreadable directory
+    }
+  }
+
+  return undefined;
 }
 
 /** Parse a Zotero date string into { year, month, day }. */
@@ -126,8 +227,9 @@ interface ZoteroRow {
 
 /** Extract references from a Zotero SQLite database with Better BibTeX citekeys. */
 export async function importZotero(opts: ZoteroImportOptions): Promise<ImportResult> {
-  const zoteroDbPath = join(opts.zoteroPath, 'zotero.sqlite');
-  const bbtDbPath = join(opts.zoteroPath, 'better-bibtex-search.sqlite');
+  const zoteroPath = resolveZoteroPath(opts.zoteroPath);
+  const zoteroDbPath = join(zoteroPath, 'zotero.sqlite');
+  const bbtDbPath = join(zoteroPath, 'better-bibtex-search.sqlite');
 
   // Validate database files exist
   if (!existsSync(zoteroDbPath)) {
@@ -144,6 +246,11 @@ export async function importZotero(opts: ZoteroImportOptions): Promise<ImportRes
     );
   }
 
+  // Discover base attachment path
+  const baseAttachmentPath =
+    opts.baseAttachmentPath ??
+    findZoteroBaseAttachmentPath(zoteroPath, opts.customProfilesDir);
+
   // Open databases read-only via sql.js (reads file into WASM memory — no lock)
   const SQL = await initSqlJs();
   const zoteroBuffer = await readFile(zoteroDbPath);
@@ -156,7 +263,7 @@ export async function importZotero(opts: ZoteroImportOptions): Promise<ImportRes
   const bbtDb: Database = new SQL.Database(bbtBuffer);
 
   try {
-    return await extractReferences(db, bbtDb, opts);
+    return await extractReferences(db, bbtDb, opts, baseAttachmentPath);
   } finally {
     db.close();
     bbtDb.close();
@@ -167,9 +274,33 @@ async function extractReferences(
   db: Database,
   bbtDb: Database,
   opts: ZoteroImportOptions,
+  baseAttachmentPath?: string,
 ): Promise<ImportResult> {
   const nexus = opts.nexusPath;
   const path = refsPath(nexus);
+  const pdfRoot = getPdfRoot(nexus);
+
+  // Query item attachments for application/pdf (excluding deleted items)
+  const attachmentMap = new Map<number, string>();
+  const hasAttTable = db.exec(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='itemAttachments'",
+  );
+  if (hasAttTable.length > 0 && hasAttTable[0].values.length > 0) {
+    const attStmt = db.prepare(`
+      SELECT ia.parentItemID, ia.path
+      FROM itemAttachments ia
+      WHERE ia.contentType = 'application/pdf'
+        AND ia.itemID NOT IN (SELECT itemID FROM deletedItems)
+      ORDER BY ia.itemID ASC
+    `);
+    while (attStmt.step()) {
+      const attRow = attStmt.getAsObject() as { parentItemID: number; path: string };
+      if (!attachmentMap.has(attRow.parentItemID) && attRow.path) {
+        attachmentMap.set(attRow.parentItemID, attRow.path);
+      }
+    }
+    attStmt.free();
+  }
 
   // Read existing refs for dedup
   const existingRefs = await readJsonl(path, ReferenceSchema);
@@ -275,6 +406,29 @@ async function extractReferences(
     const issue = getField('issue') || undefined;
     const pages = getField('pages') || undefined;
 
+    // Resolve PDF path
+    let pdf_path = '';
+    const rawAttPath = attachmentMap.get(row.itemID);
+    if (rawAttPath && pdfRoot) {
+      let fullPath: string | undefined;
+      if (rawAttPath.startsWith('attachments:')) {
+        const relPart = rawAttPath.slice('attachments:'.length);
+        if (baseAttachmentPath) {
+          fullPath = resolve(baseAttachmentPath, relPart);
+        }
+      } else if (isAbsolute(rawAttPath)) {
+        fullPath = resolve(rawAttPath);
+      }
+
+      if (fullPath) {
+        const absPdfRoot = resolve(pdfRoot);
+        const rel = relative(absPdfRoot, fullPath);
+        if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
+          pdf_path = rel.split('\\').join('/');
+        }
+      }
+    }
+
     let ref: Reference = {
       id: row.citekey,
       doi: doi,
@@ -286,7 +440,7 @@ async function extractReferences(
       issue,
       pages,
       published,
-      pdf_path: '',
+      pdf_path,
       source: { type: 'zotero', id: row.itemKey },
     };
 
@@ -355,7 +509,7 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
         cmdOpts: { format: string; dryRun?: boolean; zoteroPath?: string },
       ) => {
         if (cmdOpts.format === 'zotero') {
-          const zoteroPath = cmdOpts.zoteroPath ?? join(process.env['HOME'] ?? '', 'Zotero');
+          const zoteroPath = resolveZoteroPath(cmdOpts.zoteroPath);
           const nexus = mustGetNexusPath();
 
           const result = await importZotero({

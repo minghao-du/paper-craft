@@ -85,6 +85,20 @@ async function main() {
     )
   `);
 
+  zotero.run(`
+    CREATE TABLE itemAttachments (
+      itemID INTEGER PRIMARY KEY,
+      parentItemID INTEGER,
+      type INTEGER,
+      contentType TEXT,
+      charsetID INTEGER,
+      path TEXT,
+      syncState INTEGER,
+      storageHash TEXT,
+      storageModTime INTEGER
+    )
+  `);
+
   // Populate itemTypes
   zotero.run(`INSERT INTO itemTypes VALUES (2, 'journalArticle')`);
   zotero.run(`INSERT INTO itemTypes VALUES (4, 'conferencePaper')`);
@@ -185,16 +199,43 @@ async function main() {
   zotero.run(`INSERT INTO items VALUES (3, 2, 1, 'GHI11111')`);
   zotero.run(`INSERT INTO deletedItems VALUES (3)`);
 
-  // --- Item 4: an attachment (should be excluded from main results) ---
+  // --- Item 4: an attachment for item 1 ---
   zotero.run(`INSERT INTO items VALUES (4, 14, 1, 'ATT00001')`);
+  zotero.run(`
+    INSERT INTO itemAttachments (itemID, parentItemID, contentType, path)
+    VALUES (4, 1, 'application/pdf', 'attachments:vaswani2017attention.pdf')
+  `);
 
   // --- Item 5: a note (should be excluded from main results) ---
   zotero.run(`INSERT INTO items VALUES (5, 1, 1, 'NOTE0001')`);
+
+  // --- Item 6: a deleted attachment for item 2 ---
+  zotero.run(`INSERT INTO items VALUES (6, 14, 1, 'ATT00002')`);
+  zotero.run(`INSERT INTO deletedItems VALUES (6)`);
+  zotero.run(`
+    INSERT INTO itemAttachments (itemID, parentItemID, contentType, path)
+    VALUES (6, 2, 'application/pdf', 'attachments:deleted.pdf')
+  `);
+
+  // --- Item 7: a non-PDF attachment for item 2 ---
+  zotero.run(`INSERT INTO items VALUES (7, 14, 1, 'ATT00003')`);
+  zotero.run(`
+    INSERT INTO itemAttachments (itemID, parentItemID, contentType, path)
+    VALUES (7, 2, 'text/html', 'attachments:snapshot.html')
+  `);
 
   // Write zotero.sqlite
   const zoteroData = zotero.export();
   await writeFile(join(__dirname, 'zotero.sqlite'), Buffer.from(zoteroData));
   zotero.close();
+
+  // Write prefs.js
+  const prefsContent = [
+    '// Zotero test preferences',
+    'user_pref("extensions.zotero.baseAttachmentPath", "/test/attachments");',
+    '',
+  ].join('\n');
+  await writeFile(join(__dirname, 'prefs.js'), prefsContent);
 
   // --- Better BibTeX database ---
   const bbt = new SQL.Database();

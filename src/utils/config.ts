@@ -30,6 +30,7 @@ const NEXUS_CONFIG_FILE = 'config.yml';
 /** Global configuration stored at `~/.config/pc/config.yml`. */
 export interface GlobalConfig {
   nexus_path?: string;
+  zotero_path?: string;
   asta_api_key?: string;
   slack_bot_token?: string;
   github_token?: string;
@@ -50,12 +51,14 @@ const VALID_READERS = ['system', 'skim', 'zathura', 'evince', 'okular'] as const
 /** Expand `~` to the user's home directory. */
 export function expandTilde(path: string): string {
   if (!path.startsWith('~')) return path;
-  return join(homedir(), path.slice(1));
+  const home = process.env['HOME'] || homedir();
+  return join(home, path.slice(1));
 }
 
 /** Return the path to the global config file. Respects `XDG_CONFIG_HOME`. */
 export function globalConfigPath(): string {
-  const configHome = process.env['XDG_CONFIG_HOME'] || join(homedir(), '.config');
+  const home = process.env['HOME'] || homedir();
+  const configHome = process.env['XDG_CONFIG_HOME'] || join(home, '.config');
   return join(configHome, GLOBAL_CONFIG_DIR, GLOBAL_CONFIG_FILE);
 }
 
@@ -74,9 +77,12 @@ export function loadGlobalConfig(): GlobalConfig {
   const content = readFileSync(path, 'utf-8');
   const cfg = (parseYaml(content) as GlobalConfig) ?? {};
 
-  // Expand tilde in nexus_path
+  // Expand tilde in path fields
   if (cfg.nexus_path) {
     cfg.nexus_path = expandTilde(cfg.nexus_path);
+  }
+  if (cfg.zotero_path) {
+    cfg.zotero_path = expandTilde(cfg.zotero_path);
   }
 
   globalConfigCache = cfg;
@@ -173,7 +179,35 @@ export function loadNexusConfig(nexusPath: string): NexusConfig {
   if (!existsSync(path)) return {};
 
   const content = readFileSync(path, 'utf-8');
-  return (parseYaml(content) as NexusConfig) ?? {};
+  const cfg = (parseYaml(content) as NexusConfig) ?? {};
+  if (cfg.pdf_root) {
+    cfg.pdf_root = expandTilde(cfg.pdf_root);
+  }
+  return cfg;
+}
+
+/** Get the configured PDF root directory (env: `PC_PDF_ROOT`, then nexus config). */
+export function getPdfRoot(nexusPath: string): string {
+  const envVal = process.env['PC_PDF_ROOT'];
+  if (envVal) return expandTilde(envVal);
+  const cfg = loadNexusConfig(nexusPath);
+  return cfg.pdf_root ? expandTilde(cfg.pdf_root) : '';
+}
+
+/**
+ * Resolve Zotero data directory path with hierarchical precedence:
+ *   1. Explicit CLI argument (`cliPath`)
+ *   2. Environment variable `PC_ZOTERO_PATH`
+ *   3. Global config property `zotero_path` in `~/.config/pc/config.yml`
+ *   4. Platform default `~/Zotero`
+ */
+export function resolveZoteroPath(cliPath?: string): string {
+  if (cliPath) return expandTilde(cliPath);
+  const envPath = process.env['PC_ZOTERO_PATH'];
+  if (envPath) return expandTilde(envPath);
+  const cfg = loadGlobalConfig();
+  if (cfg.zotero_path) return expandTilde(cfg.zotero_path);
+  return expandTilde('~/Zotero');
 }
 
 /** Save the nexus-level config. */
