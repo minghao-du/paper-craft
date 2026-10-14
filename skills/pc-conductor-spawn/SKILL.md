@@ -353,9 +353,8 @@ REMOTE RUN OUTPUTS DO NOT SURVIVE YOUR OWN MERGE. Gitignored outputs on a
 remote host live only in a pooled clone that is reset after your PR lands.
 Before you request landing, copy anything a follow-up might need to
 `$CLONE_ROOT/.preserved/<slug>/` with a README (what it is, source host and
-path, which issue), and say in the PR body where it went — or commit it if
-small and it belongs in the repo, or state explicitly that it is
-regenerable and at what cost.
+path, which issue), and say in the PR body where it went, or state
+explicitly that it is regenerable and at what cost.
 
 PUSH NOTIFICATION — on the EVENT, not a file write. When you finish, stand
 down, hand off, or get blocked, `SendMessage` the conductor a one-line
