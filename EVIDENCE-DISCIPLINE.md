@@ -7,7 +7,9 @@ Apply these whenever you cite a number or write a correction: in an issue, PR, c
 - A number means something only when it is bound to a population, a unit, and a predicate. State which range, files, or runs you measured in the same sentence as the number.
 - For a fraction, state the denominator and check that a member of every category the claim covers could have entered it.
 - Check that it is derived from the data and does not just restate the configuration or a struct default. What the program actually runs is a separate claim.
-- Check that it reaches a file a reader can open. Gitignored or local-only paths don't count.
+- Distinguish code and configuration assertions from experimental measurements:
+  - For code, configuration, and architectural assertions, check that the claim reaches a file a reader can open in the repository. Gitignored or local-only paths do not count.
+  - For experimental measurements and benchmarks, authoritatively record evidence via self-contained summary tables in the PR body, citing reproduction commands, environment specs, and computational duration, rather than committing transient output files (models, raw data tables, evaluation plots) into git.
 - For "which items have property P", derive the population from P, not from the items you already had. Re-derivation cannot find a missing member.
 - A partial result licenses no direction. Wait for the whole result, or report only what has arrived and say what hasn't.
 

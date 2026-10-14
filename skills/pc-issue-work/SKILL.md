@@ -27,12 +27,35 @@ gh issue view $ARGUMENTS --comments
 
 Read both the issue body and any comments for full context.
 
-### Step 2: Brainstorm clarifying questions
+### Step 2: Input verification
 
-Think hard about the issue requirements.
-If you have any clarifying questions, **STOP and ask them before writing any code**.
+Verify that all external prerequisite dependencies and requirements are satisfied before branching or writing any code.
 
-Once everything is clear, proceed.
+#### Prerequisite input verification
+
+Inspect the issue requirements for required external inputs — trained models, weights, data tables, or external files.
+Verify that each prerequisite file exists locally on disk at its expected path.
+
+When any prerequisite input is missing:
+- **Halt immediately** before writing any code, modifying files, or creating a feature branch.
+- Never guess missing values, fabricate mock data, or launch unapproved long-running recalculations.
+- Emit the standardized 3-part interactive halt notification:
+
+```markdown
+🚨 缺少前置依赖输入文件，无法继续执行任务：
+- 缺失文件及预期路径: `<relative/path/to/file>`
+- 依赖该文件的操作: `<说明是哪个评测脚本/验证步骤需要它>`
+- 请操作: 请将该文件放置在上述指定路径，或者告知替代的 mock 方案 / 是否授权重新生成？
+```
+
+- Wait for explicit user direction before proceeding.
+
+#### Clarifying questions
+
+Raise any requirements ambiguities or architectural questions now.
+If anything is unclear, **STOP and ask clarifying questions before writing any code**.
+
+Completion criterion: every prerequisite file exists locally on disk at its expected path (or the user has explicitly resolved the halt notification with a substitute), and all requirements are clear.
 
 ### Step 3: Create a feature branch
 
@@ -58,6 +81,42 @@ Use the issue number as a branch prefix for traceability.
 - Follow CLAUDE.md guidelines for the project
 - If you start deviating significantly from the issue, **STOP and discuss**
 - Continue until the issue is done and all tests pass
+
+### Step 4b: Selective staging and pre-commit cached diff audit
+
+Stage changes explicitly per-file to maintain zero transient artifacts in git history.
+
+#### Selective staging protocol
+
+Stage modified or new files individually using per-file commands:
+
+```bash
+git add <file>
+```
+
+Target only source code, configuration files, and documentation.
+Do not use indiscriminate staging commands (`git add .`, `git add -A`, or `git commit -a`).
+Stage each intended file explicitly by name instead.
+
+#### Pre-commit cached diff audit
+
+Before creating any commit, audit the staged cache to intercept transient cruft:
+
+```bash
+git diff --cached --name-only
+```
+
+Inspect all staged paths against forbidden transient patterns (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`).
+When any staged path matches a forbidden pattern, immediately unstage it:
+
+```bash
+git reset HEAD <file>
+```
+
+Quarantine un-staged cruft files by deleting them, moving them to `_ignore/`, or adding them to `.gitignore`.
+Commit only when `git diff --cached --name-only` contains exclusively legitimate source, configuration, and documentation files.
+
+Completion criterion: every file in `git diff --cached --name-only` is verified to be legitimate source or documentation, zero transient cruft paths remain staged, and the commit clean gate passes.
 
 ### Step 5: Pre-merge check
 
@@ -90,6 +149,7 @@ gh pr create --title "<concise title>" --body "<body>"
 **Report findings in the PR body.**
 If the work involved experiments or benchmarks, include key results (tables, numbers, conclusions) directly in the PR body.
 Don't just point at branch files — the PR body is the permanent record.
+When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed (such as a preserved path or ephemeral directory) alongside their reproduction command, environment specifications, and reproduction duration or cost.
 
 ### Step 8: Summary for the user
 
