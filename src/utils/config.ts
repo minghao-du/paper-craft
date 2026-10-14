@@ -107,6 +107,8 @@ function envOrConfig(envNames: string[], configValue?: string): string {
 
 /** Get the configured nexus path. Empty if not configured. */
 export function getNexusPath(): string {
+  const envNexus = process.env['PC_NEXUS_PATH'];
+  if (envNexus) return expandTilde(envNexus);
   const cfg = loadGlobalConfig();
   return cfg.nexus_path ?? '';
 }

@@ -79,6 +79,57 @@ describe('Zotero import', () => {
     expect(devlin.published.year).toBe(2019);
   });
 
+  it('ingests native Zotero tags and excludes collection hierarchies', async () => {
+    await importZotero({
+      zoteroPath: FIXTURE_DIR,
+      nexusPath: nexusDir,
+      dryRun: false,
+    });
+
+    const refs = await readJsonl(refsPath, ReferenceSchema);
+    const vaswani = refs.find((r) => r.id === 'vaswani2017attention')!;
+    expect(vaswani.tags).toEqual(['deep-learning', 'transformer']);
+    expect(vaswani.tags).not.toContain('Deep Learning Hierarchy');
+    expect(vaswani.tags).not.toContain('Artificial Intelligence');
+
+    const devlin = refs.find((r) => r.id === 'devlin2019bert')!;
+    expect(devlin.tags).toBeUndefined();
+  });
+
+  it('defaults to personal library (libraryID = 1) and excludes group libraries', async () => {
+    const result = await importZotero({
+      zoteroPath: FIXTURE_DIR,
+      nexusPath: nexusDir,
+      dryRun: false,
+    });
+
+    expect(result.total).toBe(2);
+    const refs = await readJsonl(refsPath, ReferenceSchema);
+    expect(refs.map((r) => r.id)).toEqual(['vaswani2017attention', 'devlin2019bert']);
+  });
+
+  it('targets a custom group library via libraryId', async () => {
+    const result = await importZotero({
+      zoteroPath: FIXTURE_DIR,
+      nexusPath: nexusDir,
+      dryRun: false,
+      libraryId: 2,
+    });
+
+    expect(result.added).toBe(1);
+    expect(result.total).toBe(1);
+
+    const refs = await readJsonl(refsPath, ReferenceSchema);
+    expect(refs).toHaveLength(1);
+    const brown = refs[0];
+    expect(brown.id).toBe('brown2020language');
+    expect(brown.title).toBe('Language Models are Few-Shot Learners');
+    expect(brown.source).toEqual({ type: 'zotero', id: 'GRP12345' });
+    expect(brown.authors).toEqual([{ first: 'Tom', last: 'Brown' }]);
+    expect(brown.published.year).toBe(2020);
+    expect(brown.tags).toEqual(['few-shot', 'llm']);
+  });
+
   it('excludes deleted items, attachments, and notes', async () => {
     const result = await importZotero({
       zoteroPath: FIXTURE_DIR,
@@ -204,6 +255,37 @@ describe('Zotero import', () => {
       } finally {
         delete process.env['PC_NEXUS_PATH'];
       }
+    });
+
+    it('parses --library flag in CLI command', async () => {
+      const { Command } = await import('commander');
+      const { registerImportCommand } = await import('../../src/commands/import.js');
+
+      const program = new Command();
+      program.exitOverride();
+      registerImportCommand(program, { human: () => false });
+
+      process.env['PC_NEXUS_PATH'] = nexusDir;
+      try {
+        await program.parseAsync([
+          'node',
+          'pc',
+          'import',
+          '--format',
+          'zotero',
+          '--zotero-path',
+          FIXTURE_DIR,
+          '--library',
+          '2',
+        ]);
+      } finally {
+        delete process.env['PC_NEXUS_PATH'];
+      }
+
+      const refs = await readJsonl(refsPath, ReferenceSchema);
+      expect(refs).toHaveLength(1);
+      expect(refs[0].id).toBe('brown2020language');
+      expect(refs[0].tags).toEqual(['few-shot', 'llm']);
     });
   });
 
