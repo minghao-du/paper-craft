@@ -27,12 +27,35 @@ gh issue view $ARGUMENTS --comments
 
 Read both the issue body and any comments for full context.
 
-### Step 2: Brainstorm clarifying questions
+### Step 2: Input verification
 
-Think hard about the issue requirements.
-If you have any clarifying questions, **STOP and ask them before writing any code**.
+Verify that all external prerequisite dependencies and requirements are satisfied before branching or writing any code.
 
-Once everything is clear, proceed.
+#### Prerequisite input verification
+
+Inspect the issue requirements for required external inputs — trained models, weights, data tables, or external files.
+Verify that each prerequisite file exists locally on disk at its expected path.
+
+When any prerequisite input is missing:
+- **Halt immediately** before writing any code, modifying files, or creating a feature branch.
+- Never guess missing values, fabricate mock data, or launch unapproved long-running recalculations.
+- Emit the standardized 3-part interactive halt notification:
+
+```markdown
+🚨 缺少前置依赖输入文件，无法继续执行任务：
+- 缺失文件及预期路径: `<relative/path/to/file>`
+- 依赖该文件的操作: `<说明是哪个评测脚本/验证步骤需要它>`
+- 请操作: 请将该文件放置在上述指定路径，或者告知替代的 mock 方案 / 是否授权重新生成？
+```
+
+- Wait for explicit user direction before proceeding.
+
+#### Clarifying questions
+
+Raise any requirements ambiguities or architectural questions now.
+If anything is unclear, **STOP and ask clarifying questions before writing any code**.
+
+Completion criterion: every prerequisite file exists locally on disk at its expected path (or the user has explicitly resolved the halt notification with a substitute), and all requirements are clear.
 
 ### Step 3: Create a feature branch
 
