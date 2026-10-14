@@ -25,7 +25,7 @@ import {
   expandTilde,
 } from '../utils/config.js';
 import { readJsonl, writeJsonl, appendJsonl } from '../storage/jsonl.js';
-import { ReferenceSchema, mergeReferences } from '../models/reference.js';
+import { ReferenceSchema, mergeReferences, referencesEqual } from '../models/reference.js';
 import type { Reference, Author } from '../models/reference.js';
 import { output } from '../utils/output.js';
 
@@ -394,6 +394,7 @@ async function extractReferences(
 
   let added = 0;
   let updated = 0;
+  let skipped = 0;
   const newRefs: Reference[] = [];
   const updatedRefs = [...existingRefs];
   let hasUpdates = false;
@@ -495,9 +496,14 @@ async function extractReferences(
 
     if (existingIdx >= 0) {
       const existing = updatedRefs[existingIdx];
-      updatedRefs[existingIdx] = mergeReferences(existing, { ...ref, id: existing.id });
-      hasUpdates = true;
-      updated++;
+      const merged = mergeReferences(existing, { ...ref, id: existing.id });
+      if (referencesEqual(existing, merged)) {
+        skipped++;
+      } else {
+        updatedRefs[existingIdx] = merged;
+        hasUpdates = true;
+        updated++;
+      }
     } else {
       const id = uniqueId(existingIds, ref.id);
       existingIds.add(id);
@@ -515,14 +521,14 @@ async function extractReferences(
     status: opts.dryRun ? 'dry-run' : 'ok',
     added,
     updated,
-    skipped: 0,
+    skipped,
     total: rows.length,
   };
 
   if (!opts.dryRun) {
     if (hasUpdates) {
       await writeJsonl(path, updatedRefs.concat(newRefs));
-    } else {
+    } else if (newRefs.length > 0) {
       for (const ref of newRefs) {
         await appendJsonl(path, ref);
       }
@@ -610,7 +616,7 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
 
           let added = 0;
           let updated = 0;
-          const skipped = 0;
+          let skipped = 0;
           const newRefs: Reference[] = [];
           const updatedRefs = [...existingRefs];
           let hasUpdates = false;
@@ -630,12 +636,17 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
             if (existingIdx >= 0) {
               // Merge with existing
               const existing = updatedRefs[existingIdx];
-              updatedRefs[existingIdx] = mergeReferences(existing, {
+              const merged = mergeReferences(existing, {
                 ...ref,
                 id: existing.id,
               });
-              hasUpdates = true;
-              updated++;
+              if (referencesEqual(existing, merged)) {
+                skipped++;
+              } else {
+                updatedRefs[existingIdx] = merged;
+                hasUpdates = true;
+                updated++;
+              }
             } else {
               // New entry
               const id = uniqueId(existingIds, ref.id);
@@ -657,7 +668,7 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
           if (!cmdOpts.dryRun) {
             if (hasUpdates) {
               await writeJsonl(path, updatedRefs.concat(newRefs));
-            } else {
+            } else if (newRefs.length > 0) {
               for (const ref of newRefs) {
                 await appendJsonl(path, ref);
               }

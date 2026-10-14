@@ -495,4 +495,200 @@ describe('Zotero import', () => {
       }
     });
   });
+
+  describe('idempotent deduplication, merge, and dry-run preview', () => {
+    it('is idempotent: running import twice results in 0 additions and all skipped', async () => {
+      // First import
+      const firstResult = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+      });
+
+      expect(firstResult.added).toBe(2);
+      expect(firstResult.updated).toBe(0);
+      expect(firstResult.skipped).toBe(0);
+      expect(firstResult.total).toBe(2);
+
+      const refsAfterFirst = await readJsonl(refsPath, ReferenceSchema);
+      expect(refsAfterFirst).toHaveLength(2);
+
+      // Second import
+      const secondResult = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+      });
+
+      expect(secondResult.added).toBe(0);
+      expect(secondResult.updated).toBe(0);
+      expect(secondResult.skipped).toBe(2);
+      expect(secondResult.total).toBe(2);
+
+      const refsAfterSecond = await readJsonl(refsPath, ReferenceSchema);
+      expect(refsAfterSecond).toHaveLength(2);
+      expect(refsAfterSecond).toEqual(refsAfterFirst);
+    });
+
+    it('preserves pre-existing local notes, s2_id, and unions custom tags when updated from Zotero', async () => {
+      // Seed refs.jsonl with a pre-existing record matching Vaswani by DOI and source.id
+      const preExisting: Reference = {
+        id: 'vaswani-local-citekey',
+        doi: '10.5555/3295222.3295349',
+        title: 'Old Title',
+        authors: [{ first: 'A.', last: 'Vaswani' }],
+        abstract: 'Old abstract',
+        venue: 'Old venue',
+        published: { year: 2017 },
+        pdf_path: '',
+        source: { type: 'zotero', id: 'ABC12345' },
+        note: 'Important local notes on attention mechanisms',
+        s2_id: 's2-transformer-uuid',
+        tags: ['custom-local-tag', 'reading-list'],
+      };
+      const { appendJsonl } = await import('../../src/storage/jsonl.js');
+      await appendJsonl(refsPath, preExisting);
+
+      const result = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+      });
+
+      // 1 added (devlin), 1 updated (vaswani), 0 skipped
+      expect(result.added).toBe(1);
+      expect(result.updated).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(result.total).toBe(2);
+
+      const refs = await readJsonl(refsPath, ReferenceSchema);
+      expect(refs).toHaveLength(2);
+
+      const vaswani = refs.find((r) => r.source.id === 'ABC12345')!;
+      expect(vaswani).toBeDefined();
+      // Citekey (id) is preserved
+      expect(vaswani.id).toBe('vaswani-local-citekey');
+      // Local enrichments preserved
+      expect(vaswani.note).toBe('Important local notes on attention mechanisms');
+      expect(vaswani.s2_id).toBe('s2-transformer-uuid');
+      // Custom tags unioned with incoming Zotero tags
+      expect(vaswani.tags).toContain('custom-local-tag');
+      expect(vaswani.tags).toContain('reading-list');
+      expect(vaswani.tags).toContain('deep-learning');
+      expect(vaswani.tags).toContain('transformer');
+      // Incoming fields updated
+      expect(vaswani.title).toBe('Attention Is All You Need');
+      expect(vaswani.venue).toBe('Advances in Neural Information Processing Systems');
+      expect(vaswani.abstract).toContain('Transformer');
+
+      // Now run import again — should be completely skipped
+      const rerunResult = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+      });
+      expect(rerunResult.added).toBe(0);
+      expect(rerunResult.updated).toBe(0);
+      expect(rerunResult.skipped).toBe(2);
+    });
+
+    it('deduplicates and merges by DOI when source is not zotero', async () => {
+      // Seed with manual reference matching Vaswani DOI
+      const manualRef: Reference = {
+        id: 'vaswani-manual',
+        doi: '10.5555/3295222.3295349',
+        title: 'Attention Is All You Need',
+        authors: [{ first: 'Ashish', last: 'Vaswani' }],
+        abstract: '',
+        venue: '',
+        published: { year: 2017 },
+        pdf_path: '',
+        source: { type: 'manual', id: 'manual-doi-ref' },
+        note: 'Imported by hand',
+      };
+      const { appendJsonl } = await import('../../src/storage/jsonl.js');
+      await appendJsonl(refsPath, manualRef);
+
+      const result = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+      });
+
+      expect(result.added).toBe(1); // Devlin added
+      expect(result.updated).toBe(1); // Vaswani merged & updated
+      expect(result.skipped).toBe(0);
+
+      const refs = await readJsonl(refsPath, ReferenceSchema);
+      expect(refs).toHaveLength(2);
+      const matched = refs.find((r) => r.id === 'vaswani-manual')!;
+      expect(matched.note).toBe('Imported by hand');
+      expect(matched.source).toEqual({ type: 'zotero', id: 'ABC12345' });
+    });
+
+    it('dry-run accurately predicts added, updated, and skipped without touching refs.jsonl', async () => {
+      // 1. Dry run on empty repository
+      const dryResult1 = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: true,
+      });
+
+      expect(dryResult1.status).toBe('dry-run');
+      expect(dryResult1.added).toBe(2);
+      expect(dryResult1.updated).toBe(0);
+      expect(dryResult1.skipped).toBe(0);
+      expect(dryResult1.total).toBe(2);
+
+      let refs = await readJsonl(refsPath, ReferenceSchema);
+      expect(refs).toHaveLength(0);
+
+      // 2. Perform real import
+      const realResult = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+      });
+      expect(realResult.added).toBe(2);
+      expect(realResult.updated).toBe(0);
+      expect(realResult.skipped).toBe(0);
+
+      refs = await readJsonl(refsPath, ReferenceSchema);
+      expect(refs).toHaveLength(2);
+
+      // 3. Dry run on fully up-to-date repository
+      const dryResult2 = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: true,
+      });
+      expect(dryResult2.status).toBe('dry-run');
+      expect(dryResult2.added).toBe(0);
+      expect(dryResult2.updated).toBe(0);
+      expect(dryResult2.skipped).toBe(2);
+      expect(dryResult2.total).toBe(2);
+
+      // 4. Modify one existing record in refs.jsonl (outdated field)
+      const { writeJsonl } = await import('../../src/storage/jsonl.js');
+      refs[0].title = 'Old Outdated Title';
+      await writeJsonl(refsPath, refs);
+
+      // 5. Dry run predicts 1 updated, 1 skipped, 0 added
+      const dryResult3 = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: true,
+      });
+      expect(dryResult3.status).toBe('dry-run');
+      expect(dryResult3.added).toBe(0);
+      expect(dryResult3.updated).toBe(1);
+      expect(dryResult3.skipped).toBe(1);
+      expect(dryResult3.total).toBe(2);
+
+      // Ensure dry-run did not overwrite the modified title
+      const refsAfterDry = await readJsonl(refsPath, ReferenceSchema);
+      expect(refsAfterDry[0].title).toBe('Old Outdated Title');
+    });
+  });
 });
+
