@@ -26,17 +26,34 @@ git branch --show-current
 
 If on main/master, warn and stop.
 
-### Step 2: Check for uncommitted changes
+### Step 2: Check for uncommitted changes and intercept artifact cruft
+
+Inspect the working tree state defensively:
 
 ```bash
-git status --short
+git status --short -uall
 ```
 
-If there are uncommitted changes:
-- List them clearly
-- Ask the user: "There are uncommitted changes.
-  Commit these before proceeding?"
-- **Do not proceed** until the worktree is clean or the user explicitly says to continue
+Categorize all uncommitted entries into legitimate files and transient cruft:
+- **Legitimate source/config/doc files**: Tracked modifications or new source files intended for the repository (e.g. `src/`, `tests/`, configuration, documentation).
+- **Transient cruft and output artifacts**: Generated evaluation outputs, model checkpoints, plots, or data tables (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`, etc.).
+
+Apply the gate policy based on the categorized entries:
+
+1. **Cruft detected (BLOCK)**:
+   If any uncommitted file matches cruft patterns, intercept immediately.
+   Refuse to prompt for commit.
+   Halt gate passage with an actionable warning directing the user or agent to clean the files, ignore them in `.gitignore`, or quarantine them in `_ignore/`.
+   Never offer or execute a commit while cruft is present in the working tree.
+
+2. **Legitimate changes only**:
+   If uncommitted changes contain only legitimate source/config/doc files and zero cruft, prompt for selective per-file staging (`git add <file>`).
+   Require staging each intended file explicitly before proceeding.
+
+3. **Clean working tree (PASS)**:
+   When `git status --short` emits zero lines, the check passes.
+
+**Completion criterion**: `git status --short` returns empty, with zero uncommitted changes and zero untracked artifact cruft in the repository.
 
 ### Step 3: Fetch and rebase on base branch
 
