@@ -82,6 +82,42 @@ Use the issue number as a branch prefix for traceability.
 - If you start deviating significantly from the issue, **STOP and discuss**
 - Continue until the issue is done and all tests pass
 
+### Step 4b: Selective staging and pre-commit cached diff audit
+
+Stage changes explicitly per-file to maintain zero transient artifacts in git history.
+
+#### Selective staging protocol
+
+Stage modified or new files individually using per-file commands:
+
+```bash
+git add <file>
+```
+
+Target only source code, configuration files, and documentation.
+Do not use indiscriminate staging commands (`git add .`, `git add -A`, or `git commit -a`).
+Stage each intended file explicitly by name instead.
+
+#### Pre-commit cached diff audit
+
+Before creating any commit, audit the staged cache to intercept transient cruft:
+
+```bash
+git diff --cached --name-only
+```
+
+Inspect all staged paths against forbidden transient patterns (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`).
+When any staged path matches a forbidden pattern, immediately unstage it:
+
+```bash
+git reset HEAD <file>
+```
+
+Quarantine un-staged cruft files by deleting them, moving them to `_ignore/`, or adding them to `.gitignore`.
+Commit only when `git diff --cached --name-only` contains exclusively legitimate source, configuration, and documentation files.
+
+Completion criterion: every file in `git diff --cached --name-only` is verified to be legitimate source or documentation, zero transient cruft paths remain staged, and the commit clean gate passes.
+
 ### Step 5: Pre-merge check
 
 ```bash
