@@ -82,6 +82,9 @@ export type Reference = z.infer<typeof ReferenceSchema>;
  * the import event itself.
  */
 export function mergeReferences(existing: Reference, incoming: Reference): Reference {
+  const allTags = [...(existing.tags ?? []), ...(incoming.tags ?? [])];
+  const mergedTags = allTags.length > 0 ? Array.from(new Set(allTags)) : undefined;
+
   return {
     // Identity — always from incoming
     id: incoming.id,
@@ -103,8 +106,7 @@ export function mergeReferences(existing: Reference, incoming: Reference): Refer
       incoming.supplement_paths && incoming.supplement_paths.length > 0
         ? incoming.supplement_paths
         : existing.supplement_paths,
-    tags:
-      incoming.tags && incoming.tags.length > 0 ? incoming.tags : existing.tags,
+    tags: mergedTags,
     supersedes: incoming.supersedes || existing.supersedes,
     pmid: incoming.pmid || existing.pmid,
     pmcid: incoming.pmcid || existing.pmcid,
@@ -112,3 +114,75 @@ export function mergeReferences(existing: Reference, incoming: Reference): Refer
     s2_id: incoming.s2_id || existing.s2_id,
   };
 }
+
+/**
+ * Check if two references are identical in all fields.
+ *
+ * Treats undefined and empty/missing optional string fields as equivalent.
+ * Compares tags as sets (order-independent).
+ */
+export function referencesEqual(a: Reference, b: Reference): boolean {
+  if (
+    a.id !== b.id ||
+    a.doi !== b.doi ||
+    a.title !== b.title ||
+    a.abstract !== b.abstract ||
+    a.venue !== b.venue ||
+    (a.volume ?? '') !== (b.volume ?? '') ||
+    (a.issue ?? '') !== (b.issue ?? '') ||
+    (a.pages ?? '') !== (b.pages ?? '') ||
+    (a.note ?? '') !== (b.note ?? '') ||
+    a.pdf_path !== b.pdf_path ||
+    (a.supersedes ?? '') !== (b.supersedes ?? '') ||
+    (a.pmid ?? '') !== (b.pmid ?? '') ||
+    (a.pmcid ?? '') !== (b.pmcid ?? '') ||
+    (a.arxiv_id ?? '') !== (b.arxiv_id ?? '') ||
+    (a.s2_id ?? '') !== (b.s2_id ?? '')
+  ) {
+    return false;
+  }
+
+  if (a.source.type !== b.source.type || a.source.id !== b.source.id) {
+    return false;
+  }
+
+  if (
+    a.published.year !== b.published.year ||
+    (a.published.month ?? 0) !== (b.published.month ?? 0) ||
+    (a.published.day ?? 0) !== (b.published.day ?? 0)
+  ) {
+    return false;
+  }
+
+  if (a.authors.length !== b.authors.length) return false;
+  for (let i = 0; i < a.authors.length; i++) {
+    const aAuth = a.authors[i];
+    const bAuth = b.authors[i];
+    if (
+      aAuth.first !== bAuth.first ||
+      aAuth.last !== bAuth.last ||
+      (aAuth.orcid ?? '') !== (bAuth.orcid ?? '')
+    ) {
+      return false;
+    }
+  }
+
+  const aTags = a.tags ?? [];
+  const bTags = b.tags ?? [];
+  if (aTags.length !== bTags.length) return false;
+  const sortedA = [...aTags].sort();
+  const sortedB = [...bTags].sort();
+  for (let i = 0; i < sortedA.length; i++) {
+    if (sortedA[i] !== sortedB[i]) return false;
+  }
+
+  const aSupp = a.supplement_paths ?? [];
+  const bSupp = b.supplement_paths ?? [];
+  if (aSupp.length !== bSupp.length) return false;
+  for (let i = 0; i < aSupp.length; i++) {
+    if (aSupp[i] !== bSupp[i]) return false;
+  }
+
+  return true;
+}
+

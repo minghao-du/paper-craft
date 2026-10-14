@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ReferenceSchema, mergeReferences } from '../../src/models/reference.js';
+import { ReferenceSchema, mergeReferences, referencesEqual } from '../../src/models/reference.js';
 import type { Reference } from '../../src/models/reference.js';
 
 /** A minimal valid Reference for testing. */
@@ -103,4 +103,77 @@ describe('mergeReferences', () => {
     expect(merged.published.year).toBe(2023);
     expect(merged.published.month).toBe(6);
   });
+
+  it('unions existing and incoming tags preserving uniqueness', () => {
+    const existing = makeRef({ tags: ['local-tag', 'shared-tag'] });
+    const incoming = makeRef({ tags: ['shared-tag', 'zotero-tag'] });
+
+    const merged = mergeReferences(existing, incoming);
+    expect(merged.tags).toEqual(['local-tag', 'shared-tag', 'zotero-tag']);
+  });
+
+  it('keeps existing tags when incoming has no tags', () => {
+    const existing = makeRef({ tags: ['local-tag'] });
+    const incoming = makeRef({ tags: undefined });
+
+    const merged = mergeReferences(existing, incoming);
+    expect(merged.tags).toEqual(['local-tag']);
+  });
+
+  it('uses incoming tags when existing has no tags', () => {
+    const existing = makeRef({ tags: undefined });
+    const incoming = makeRef({ tags: ['zotero-tag'] });
+
+    const merged = mergeReferences(existing, incoming);
+    expect(merged.tags).toEqual(['zotero-tag']);
+  });
 });
+
+describe('referencesEqual', () => {
+  it('returns true for identical references', () => {
+    const a = makeRef();
+    const b = makeRef();
+    expect(referencesEqual(a, b)).toBe(true);
+  });
+
+  it('returns true when optional undefined fields match absent fields', () => {
+    const a = makeRef({ note: undefined, tags: undefined, pmid: undefined });
+    const b = makeRef();
+    delete (b as any).note;
+    delete (b as any).tags;
+    delete (b as any).pmid;
+    expect(referencesEqual(a, b)).toBe(true);
+  });
+
+  it('returns false when fields differ', () => {
+    const a = makeRef({ title: 'Title A' });
+    const b = makeRef({ title: 'Title B' });
+    expect(referencesEqual(a, b)).toBe(false);
+  });
+
+  it('returns true when tags have same elements regardless of order', () => {
+    const a = makeRef({ tags: ['tagA', 'tagB'] });
+    const b = makeRef({ tags: ['tagB', 'tagA'] });
+    expect(referencesEqual(a, b)).toBe(true);
+  });
+
+  it('returns false when tags differ', () => {
+    const a = makeRef({ tags: ['tagA'] });
+    const b = makeRef({ tags: ['tagA', 'tagB'] });
+    expect(referencesEqual(a, b)).toBe(false);
+  });
+
+  it('returns false when authors differ', () => {
+    const a = makeRef({ authors: [{ first: 'Jane', last: 'Doe' }] });
+    const b = makeRef({ authors: [{ first: 'John', last: 'Doe' }] });
+    expect(referencesEqual(a, b)).toBe(false);
+  });
+
+  it('returns false when published date differs', () => {
+    const a = makeRef({ published: { year: 2024, month: 1 } });
+    const b = makeRef({ published: { year: 2024, month: 2 } });
+    expect(referencesEqual(a, b)).toBe(false);
+  });
+});
+
+

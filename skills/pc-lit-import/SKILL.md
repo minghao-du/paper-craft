@@ -1,20 +1,56 @@
 ---
 name: pc-lit-import
-description: Import Paperpile JSON export into pc library, rebuild database, and clean up.
+description: Import references from Zotero SQLite or Paperpile JSON into pc library, rebuild database, and clean up.
 ---
 
-# Import Paperpile Library
+# Import References
 
-Import a Paperpile JSON export from `~/Downloads/` into the pc reference library.
+Import references from external tools (Zotero or Paperpile) into the `paper-craft` reference library.
 
-## Usage
+## Formats
+
+### 1. Zotero SQLite Import (Direct)
+
+Direct ingestion from local Zotero SQLite database with Better BibTeX citekeys.
 
 ```bash
-/pc-lit-import              # Auto-detect latest Paperpile JSON in ~/Downloads
-/pc-lit-import ~/path.json  # Explicit file path
+# Dry-run preview
+pc import --format zotero --dry-run --human
+
+# Import default personal library (library 1)
+pc import --format zotero --human
+
+# Custom Zotero directory or group library
+pc import --format zotero --zotero-path ~/Zotero --library 2 --human
+
+# Rebuild search index (always required after import)
+pc rebuild --human
 ```
 
-## Workflow
+Flags:
+- `--format zotero`: Ingest references directly from local Zotero SQLite database. Requires Better BibTeX.
+- `--zotero-path <path>`: Path to Zotero data directory (containing `zotero.sqlite` and `better-bibtex-search.sqlite`). Defaults to `zotero_path` in `~/.config/pc/config.yml` or standard platform locations (`~/Zotero`).
+- `--library <id>`: Zotero library ID to import from (default: `1` for personal library; use `2`, `3`, etc. for group libraries).
+- `--dry-run`: Preview additions, updates, and skips without modifying `refs.jsonl`.
+
+Always run `pc rebuild --human` after import to update the search index.
+
+### 2. Paperpile JSON Import
+
+Import a Paperpile JSON export from `~/Downloads/` into the reference library.
+
+```bash
+# Dry-run preview
+pc import --format paperpile "<file>" --dry-run --human
+
+# Import
+pc import --format paperpile "<file>" --human
+
+# Rebuild search index
+pc rebuild --human
+```
+
+## Workflow: Paperpile Export File Cleanup
 
 ### 1. Find the export file
 
@@ -34,10 +70,7 @@ Always dry-run first to show what will change:
 pc import --format paperpile "<file>" --dry-run --human
 ```
 
-Report the counts (new, updated, skipped, warnings) to the user.
-By default, entries missing required fields (title, author, published.year) are imported with sentinel placeholders (`[no title]`, `Unknown`, year `0`) and listed under `warnings` so they're not silently dropped — review the warning list and fix the affected Paperpile records when convenient.
-Entries with no useful metadata at all (no title, author, year, or DOI — typically Paperpile auto-stubs for unparsed web pages) are still skipped and counted under `skipped`.
-Pass `--strict` to revert to the old behavior of dropping any entry with a missing required field.
+Report counts (added, updated, skipped) to the user.
 
 ### 3. Import
 
@@ -46,6 +79,8 @@ pc import --format paperpile "<file>" --human
 ```
 
 ### 4. Rebuild database
+
+Always rebuild after import:
 
 ```bash
 pc rebuild --human
@@ -60,15 +95,4 @@ rm "<file>"
 ### 6. Report
 
 Summarize: new refs added, total count, file deleted.
-Notes from Paperpile are preserved and searchable via `pc search`.
-
-### 7. Recommend cleanup if warnings fired
-
-If the import reported a non-zero `warnings` count, recommend the cleanup query so the user can fix the upstream Paperpile records when convenient:
-
-```bash
-pc search --tag paperpile:incomplete
-```
-
-Every reference imported with a sentinel field (`[no title]`, `Unknown`, year `0`) is auto-tagged `paperpile:incomplete`.
-Once the user fixes the entry in Paperpile and re-imports, the next import replaces the stored reference and the tag disappears automatically, so the list shrinks until empty without any manual untagging step.
+Notes from Paperpile and Zotero are preserved and searchable via `pc search`.

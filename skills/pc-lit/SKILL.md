@@ -96,7 +96,9 @@ When invoked with arguments like `/pc-lit find <query>` or `/pc-lit <query>`:
 | Backfill missing PMCIDs from NCBI | `pc ncbi backfill --dry-run` |
 | One-off PMCID lookup | `pc ncbi pmcid DOI:10.1234/...` |
 | Fast paper search (external) | `pc asta search "query"` |
-| Find text snippets | `pc asta snippet "query"` |
+| Import from Zotero | `pc import --format zotero [--zotero-path <path>] [--library <id>] [--dry-run]` |
+| Import from Paperpile | `pc import --format paperpile <file> [--dry-run]` |
+| Rebuild search index | `pc rebuild --human` (run after import) |
 | Import projects from config | `pc project import <file>` |
 
 ## Search Strategy
