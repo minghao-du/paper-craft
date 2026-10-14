@@ -16,6 +16,9 @@ import {
   importZotero,
   findZoteroBaseAttachmentPath,
   parseBaseAttachmentPath,
+  cleanDoi,
+  parseZoteroDate,
+  reconcileReferences,
 } from '../../src/commands/import.js';
 import {
   resolveZoteroPath,
@@ -566,8 +569,8 @@ describe('Zotero import', () => {
 
       const vaswani = refs.find((r) => r.source.id === 'ABC12345')!;
       expect(vaswani).toBeDefined();
-      // Citekey (id) is preserved
-      expect(vaswani.id).toBe('vaswani-local-citekey');
+      // Citekey (id) is updated to Better BibTeX citekey
+      expect(vaswani.id).toBe('vaswani2017attention');
       // Local enrichments preserved
       expect(vaswani.note).toBe('Important local notes on attention mechanisms');
       expect(vaswani.s2_id).toBe('s2-transformer-uuid');
@@ -621,7 +624,8 @@ describe('Zotero import', () => {
 
       const refs = await readJsonl(refsPath, ReferenceSchema);
       expect(refs).toHaveLength(2);
-      const matched = refs.find((r) => r.id === 'vaswani-manual')!;
+      const matched = refs.find((r) => r.id === 'vaswani2017attention')!;
+      expect(matched).toBeDefined();
       expect(matched.note).toBe('Imported by hand');
       expect(matched.source).toEqual({ type: 'zotero', id: 'ABC12345' });
     });
@@ -690,5 +694,227 @@ describe('Zotero import', () => {
       expect(refsAfterDry[0].title).toBe('Old Outdated Title');
     });
   });
-});
 
+  describe('DOI cleaning and normalization', () => {
+    it('normalizes various DOI formats and strips URL prefixes', () => {
+      expect(cleanDoi('https://doi.org/10.1000/182')).toBe('10.1000/182');
+      expect(cleanDoi('http://doi.org/10.1000/182')).toBe('10.1000/182');
+      expect(cleanDoi('doi:10.1000/182')).toBe('10.1000/182');
+      expect(cleanDoi('doi: 10.1000/182')).toBe('10.1000/182');
+      expect(cleanDoi('DOI:10.1000/182')).toBe('10.1000/182');
+      expect(cleanDoi('  https://doi.org/10.1000/182  ')).toBe('10.1000/182');
+      expect(cleanDoi('10.1000/182')).toBe('10.1000/182');
+      expect(cleanDoi('')).toBe('');
+      expect(cleanDoi('   ')).toBe('');
+      expect(cleanDoi(undefined)).toBe('');
+      expect(cleanDoi(null)).toBe('');
+    });
+
+    it('cleans DOIs during Zotero SQLite import', async () => {
+      await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+        libraryId: 3,
+      });
+
+      const refs = await readJsonl(refsPath, ReferenceSchema);
+      const lovelace = refs.find((r) => r.id === 'lovelace2020proceedings')!;
+      expect(lovelace.doi).toBe('10.1145/proceedings');
+
+      const hopper = refs.find((r) => r.id === 'hopper2020conference')!;
+      expect(hopper.doi).toBe('10.1145/conf');
+
+      const turing = refs.find((r) => r.id === 'turing2020book')!;
+      expect(turing.doi).toBe('10.1145/book');
+    });
+  });
+
+  describe('Venue fallback mapping', () => {
+    it('falls back to proceedingsTitle, conferenceName, then bookTitle', async () => {
+      await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+        libraryId: 3,
+      });
+
+      const refs = await readJsonl(refsPath, ReferenceSchema);
+
+      // Lovelace uses proceedingsTitle
+      const lovelace = refs.find((r) => r.id === 'lovelace2020proceedings')!;
+      expect(lovelace.venue).toBe('Proceedings of ACM Conference');
+
+      // Hopper uses conferenceName
+      const hopper = refs.find((r) => r.id === 'hopper2020conference')!;
+      expect(hopper.venue).toBe('International Conference on Machine Learning');
+
+      // Turing uses bookTitle
+      const turing = refs.find((r) => r.id === 'turing2020book')!;
+      expect(turing.venue).toBe('Foundations of Computer Science');
+    });
+  });
+
+  describe('Robust date parsing', () => {
+    it('parses numeric and delimited dates', () => {
+      expect(parseZoteroDate('2017-06-12')).toEqual({ year: 2017, month: 6, day: 12 });
+      expect(parseZoteroDate('2020/05/28')).toEqual({ year: 2020, month: 5, day: 28 });
+      expect(parseZoteroDate('2020.05.28')).toEqual({ year: 2020, month: 5, day: 28 });
+      expect(parseZoteroDate('2019-03')).toEqual({ year: 2019, month: 3, day: undefined });
+      expect(parseZoteroDate('2019')).toEqual({ year: 2019 });
+    });
+
+    it('parses textual month-year dates', () => {
+      expect(parseZoteroDate('May 2020')).toEqual({ year: 2020, month: 5 });
+      expect(parseZoteroDate('September, 2018')).toEqual({ year: 2018, month: 9 });
+      expect(parseZoteroDate('May 15, 2020')).toEqual({ year: 2020, month: 5, day: 15 });
+      expect(parseZoteroDate('15 May 2020')).toEqual({ year: 2020, month: 5, day: 15 });
+      expect(parseZoteroDate('2020 May')).toEqual({ year: 2020, month: 5 });
+      expect(parseZoteroDate('2020 May 15')).toEqual({ year: 2020, month: 5, day: 15 });
+    });
+
+    it('parses seasons, approximate years, and handles edge cases without NaN', () => {
+      expect(parseZoteroDate('Spring 2021')).toEqual({ year: 2021 });
+      expect(parseZoteroDate('c. 1998')).toEqual({ year: 1998 });
+      expect(parseZoteroDate('')).toEqual({ year: 0 });
+      expect(parseZoteroDate('   ')).toEqual({ year: 0 });
+      expect(parseZoteroDate(undefined)).toEqual({ year: 0 });
+      expect(parseZoteroDate(null)).toEqual({ year: 0 });
+      expect(parseZoteroDate('Invalid Date String')).toEqual({ year: 0 });
+    });
+
+    it('correctly ingests textual dates from Zotero SQLite library 3', async () => {
+      await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+        libraryId: 3,
+      });
+
+      const refs = await readJsonl(refsPath, ReferenceSchema);
+      const lovelace = refs.find((r) => r.id === 'lovelace2020proceedings')!;
+      expect(lovelace.published).toEqual({ year: 2020, month: 5 });
+
+      const hopper = refs.find((r) => r.id === 'hopper2020conference')!;
+      expect(hopper.published).toEqual({ year: 2020, month: 5, day: 28 });
+
+      const turing = refs.find((r) => r.id === 'turing2020book')!;
+      expect(turing.published).toEqual({ year: 2020, month: 5, day: 15 });
+    });
+  });
+
+  describe('Better BibTeX citekey merge & reconciliation', () => {
+    it('updates reference ID to incoming Better BibTeX citekey on merge', async () => {
+      // Seed with existing reference having an old custom citekey
+      const existingRef: Reference = {
+        id: 'old-custom-citekey',
+        doi: '10.5555/3295222.3295349',
+        title: 'Original Title',
+        authors: [{ first: 'Ashish', last: 'Vaswani' }],
+        abstract: 'Original abstract',
+        venue: 'Original venue',
+        published: { year: 2017 },
+        pdf_path: '',
+        source: { type: 'manual', id: 'manual-id-1' },
+      };
+      const { appendJsonl } = await import('../../src/storage/jsonl.js');
+      await appendJsonl(refsPath, existingRef);
+
+      const result = await importZotero({
+        zoteroPath: FIXTURE_DIR,
+        nexusPath: nexusDir,
+        dryRun: false,
+      });
+
+      expect(result.updated).toBe(1);
+      const refs = await readJsonl(refsPath, ReferenceSchema);
+      const updated = refs.find((r) => r.doi === '10.5555/3295222.3295349')!;
+      expect(updated.id).toBe('vaswani2017attention');
+      expect(updated.source).toEqual({ type: 'zotero', id: 'ABC12345' });
+    });
+
+    it('avoids collision when incoming citekey matches another existing reference ID', () => {
+      const existingRefs: Reference[] = [
+        {
+          id: 'vaswani2017attention',
+          doi: '10.1111/different-paper',
+          title: 'Different Paper',
+          authors: [{ first: 'Other', last: 'Author' }],
+          abstract: '',
+          venue: '',
+          published: { year: 2017 },
+          pdf_path: '',
+          source: { type: 'manual', id: 'diff-1' },
+        },
+        {
+          id: 'existing-target',
+          doi: '10.5555/3295222.3295349',
+          title: 'Vaswani Target',
+          authors: [{ first: 'Ashish', last: 'Vaswani' }],
+          abstract: '',
+          venue: '',
+          published: { year: 2017 },
+          pdf_path: '',
+          source: { type: 'manual', id: 'vaswani-old' },
+        },
+      ];
+
+      const incomingRefs: Reference[] = [
+        {
+          id: 'vaswani2017attention', // Same citekey as different paper
+          doi: '10.5555/3295222.3295349',
+          title: 'Attention Is All You Need',
+          authors: [{ first: 'Ashish', last: 'Vaswani' }],
+          abstract: '',
+          venue: '',
+          published: { year: 2017 },
+          pdf_path: '',
+          source: { type: 'zotero', id: 'ABC12345' },
+        },
+      ];
+
+      const reconciled = reconcileReferences(existingRefs, incomingRefs, { updateIdOnMerge: true });
+      expect(reconciled.updated).toBe(1);
+      // Because 'vaswani2017attention' was already taken by diff-1, target gets unique id with suffix
+      const target = reconciled.updatedRefs.find((r) => r.source.id === 'ABC12345')!;
+      expect(target.id).toBe('vaswani2017attention-2');
+    });
+
+    it('preserves existing ID for Paperpile imports when updateIdOnMerge is false', () => {
+      const existingRefs: Reference[] = [
+        {
+          id: 'curated-citekey-2020',
+          doi: '10.1234/test',
+          title: 'Existing Title',
+          authors: [{ first: 'Alice', last: 'Smith' }],
+          abstract: '',
+          venue: '',
+          published: { year: 2020 },
+          pdf_path: '',
+          source: { type: 'paperpile', id: 'pp-1' },
+        },
+      ];
+
+      const incomingRefs: Reference[] = [
+        {
+          id: 'Smith2020', // Generated fallback
+          doi: '10.1234/test',
+          title: 'Updated Title',
+          authors: [{ first: 'Alice', last: 'Smith' }],
+          abstract: '',
+          venue: '',
+          published: { year: 2020 },
+          pdf_path: '',
+          source: { type: 'paperpile', id: 'pp-1' },
+        },
+      ];
+
+      const reconciled = reconcileReferences(existingRefs, incomingRefs, {
+        updateIdOnMerge: false,
+      });
+      expect(reconciled.updated).toBe(1);
+      expect(reconciled.updatedRefs[0].id).toBe('curated-citekey-2020');
+      expect(reconciled.updatedRefs[0].title).toBe('Updated Title');
+    });
+  });
+});

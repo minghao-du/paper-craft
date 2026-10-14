@@ -151,6 +151,9 @@ async function main() {
     [12, 'DOI'],
     [14, 'date'],
     [15, 'publicationTitle'],
+    [16, 'proceedingsTitle'],
+    [17, 'conferenceName'],
+    [18, 'bookTitle'],
   ] as const;
   for (const [id, name] of fields) {
     zotero.run(`INSERT INTO fields VALUES (?, ?)`, [id, name]);
@@ -249,7 +252,10 @@ async function main() {
 
   const values6 = [
     [17, 'Language Models are Few-Shot Learners'],
-    [18, 'We demonstrate that scaling up language models greatly improves task-agnostic, few-shot performance.'],
+    [
+      18,
+      'We demonstrate that scaling up language models greatly improves task-agnostic, few-shot performance.',
+    ],
     [19, '33'],
     [20, ''],
     [21, '1877-1901'],
@@ -315,6 +321,75 @@ async function main() {
   zotero.run(`INSERT INTO collectionItems VALUES (2, 1, 0)`); // item 1 in collection 2
   zotero.run(`INSERT INTO collectionItems VALUES (1, 2, 0)`); // item 2 in collection 1
 
+  // --- Item 9: conference paper using proceedingsTitle in library 3 ---
+  zotero.run(`INSERT INTO items VALUES (9, 4, 3, 'PROC0001')`);
+  const values9 = [
+    [25, 'Proceedings Paper Title'],
+    [26, 'Proceedings of ACM Conference'],
+    [27, 'https://doi.org/10.1145/proceedings'],
+    [28, 'May 2020'],
+  ] as const;
+  for (const [id, val] of values9) {
+    zotero.run(`INSERT INTO itemDataValues VALUES (?, ?)`, [id, val]);
+  }
+  const itemData9 = [
+    [9, 1, 25], // title
+    [9, 16, 26], // proceedingsTitle (venue fallback)
+    [9, 12, 27], // DOI (with https://doi.org/)
+    [9, 14, 28], // date ("May 2020")
+  ] as const;
+  for (const [itemID, fieldID, valueID] of itemData9) {
+    zotero.run(`INSERT INTO itemData VALUES (?, ?, ?)`, [itemID, fieldID, valueID]);
+  }
+  zotero.run(`INSERT INTO creators VALUES (5, 'Ada', 'Lovelace')`);
+  zotero.run(`INSERT INTO itemCreators VALUES (9, 5, 1, 0)`);
+
+  // --- Item 10: conference paper using conferenceName in library 3 ---
+  zotero.run(`INSERT INTO items VALUES (10, 4, 3, 'CONF0001')`);
+  const values10 = [
+    [29, 'Conference Paper Title'],
+    [30, 'International Conference on Machine Learning'],
+    [31, 'doi: 10.1145/conf'],
+    [32, '2020/05/28'],
+  ] as const;
+  for (const [id, val] of values10) {
+    zotero.run(`INSERT INTO itemDataValues VALUES (?, ?)`, [id, val]);
+  }
+  const itemData10 = [
+    [10, 1, 29], // title
+    [10, 17, 30], // conferenceName (venue fallback)
+    [10, 12, 31], // DOI (with doi: prefix)
+    [10, 14, 32], // date ("2020/05/28")
+  ] as const;
+  for (const [itemID, fieldID, valueID] of itemData10) {
+    zotero.run(`INSERT INTO itemData VALUES (?, ?, ?)`, [itemID, fieldID, valueID]);
+  }
+  zotero.run(`INSERT INTO creators VALUES (6, 'Grace', 'Hopper')`);
+  zotero.run(`INSERT INTO itemCreators VALUES (10, 6, 1, 0)`);
+
+  // --- Item 11: book section using bookTitle in library 3 ---
+  zotero.run(`INSERT INTO items VALUES (11, 2, 3, 'BOOK0001')`);
+  const values11 = [
+    [33, 'Book Chapter Title'],
+    [34, 'Foundations of Computer Science'],
+    [35, '  http://doi.org/10.1145/book  '],
+    [36, '15 May 2020'],
+  ] as const;
+  for (const [id, val] of values11) {
+    zotero.run(`INSERT INTO itemDataValues VALUES (?, ?)`, [id, val]);
+  }
+  const itemData11 = [
+    [11, 1, 33], // title
+    [11, 18, 34], // bookTitle (venue fallback)
+    [11, 12, 35], // DOI (with http:// and whitespace)
+    [11, 14, 36], // date ("15 May 2020")
+  ] as const;
+  for (const [itemID, fieldID, valueID] of itemData11) {
+    zotero.run(`INSERT INTO itemData VALUES (?, ?, ?)`, [itemID, fieldID, valueID]);
+  }
+  zotero.run(`INSERT INTO creators VALUES (7, 'Alan', 'Turing')`);
+  zotero.run(`INSERT INTO itemCreators VALUES (11, 7, 1, 0)`);
+
   // Write zotero.sqlite
   const zoteroData = zotero.export();
   await writeFile(join(__dirname, 'zotero.sqlite'), Buffer.from(zoteroData));
@@ -347,6 +422,10 @@ async function main() {
   bbt.run(`INSERT INTO citekeys VALUES (3, 'GHI11111', 1, 'deleted2020paper', 1)`);
   // Group library item citekey
   bbt.run(`INSERT INTO citekeys VALUES (6, 'GRP12345', 2, 'brown2020language', 1)`);
+  // Group library 3 item citekeys (for venue fallback, date parsing, and DOI cleaning tests)
+  bbt.run(`INSERT INTO citekeys VALUES (9, 'PROC0001', 3, 'lovelace2020proceedings', 1)`);
+  bbt.run(`INSERT INTO citekeys VALUES (10, 'CONF0001', 3, 'hopper2020conference', 1)`);
+  bbt.run(`INSERT INTO citekeys VALUES (11, 'BOOK0001', 3, 'turing2020book', 1)`);
 
   const bbtData = bbt.export();
   await writeFile(join(__dirname, 'better-bibtex-search.sqlite'), Buffer.from(bbtData));
