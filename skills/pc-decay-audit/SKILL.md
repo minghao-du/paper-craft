@@ -28,7 +28,7 @@ None of these are catastrophic on any single PR.
 Over months they compound.
 `/pc-decay-audit` is a cheap, reproducible sweep that makes the compounding visible.
 
-`/pc-decay-audit` is NOT a PR reviewer (use `/pc-pr-review`), NOT a code reviewer for a diff (use `@clean-code-reviewer`), and NOT an architectural verdict.
+`/pc-decay-audit` is NOT a PR reviewer (use `/pc-pr-review`), NOT a code reviewer for a diff (use `/pc-review-clean-code`), and NOT an architectural verdict.
 It produces signals; humans decide what to act on.
 
 ## Usage
@@ -231,7 +231,7 @@ The skill's job ends at the report.
 
 ## Why this shape
 
-- **Not a PR reviewer**: `/pc-pr-review` and `@clean-code-reviewer` handle per-diff review.
+- **Not a PR reviewer**: `/pc-pr-review` and `/pc-review-clean-code` handle per-diff review.
   `/pc-decay-audit` looks at whole-repo state, which they cannot.
 - **Not an LLM-semantic pass**: tempting to run cosine similarity across function bodies to find near-duplicates.
   Expensive, noisy, and the useful signal ("three CLIs copy-pasted the same `while (i < args.len)` loop") is better caught by a cheap `rg -l "pub fn parseArgs"` count.

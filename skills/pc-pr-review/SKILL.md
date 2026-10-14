@@ -28,18 +28,18 @@ First, check for a project-specific checklist:
 
 Examine the repository to determine what checks apply:
 
-| Indicator | Project Type | Agents to Use |
-|-----------|--------------|---------------|
-| `workflow/*.smk` or `Snakefile` | Snakemake pipeline | `snakemake-pipeline-expert` |
-| `*.py` files in `src/` or project root | Python project | `clean-code-reviewer` + `code-reuse-reviewer` |
-| `build.zig` or `*.zig` files in `src/` | Zig project | `zig-code-reviewer` |
-| `go.mod` | Go project | `clean-code-reviewer` + `code-reuse-reviewer` |
-| `package.json` | Node.js project | `clean-code-reviewer` + `code-reuse-reviewer` |
+| Indicator | Project Type | Skills to Follow |
+|-----------|--------------|------------------|
+| `workflow/*.smk` or `Snakefile` | Snakemake pipeline | `pc-pipeline-snakemake` |
+| `*.py` files in `src/` or project root | Python project | `pc-review-clean-code` + `pc-review-code-reuse` |
+| `build.zig` or `*.zig` files in `src/` | Zig project | `pc-review-zig` |
+| `go.mod` | Go project | `pc-review-clean-code` + `pc-review-code-reuse` |
+| `package.json` | Node.js project | `pc-review-clean-code` + `pc-review-code-reuse` |
 
 The two reviewers operate in **different modes** and complement each other — run them in parallel:
 
-- `clean-code-reviewer` reads the diff and evaluates each hunk against clean-code principles (naming, function size, single responsibility, DRY-within-hunk).
-- `code-reuse-reviewer` surveys the surrounding codebase *first*, then audits the diff for missed reuse of existing constants, helpers, conventions, and patterns.
+- `pc-review-clean-code` reads the diff and evaluates each hunk against clean-code principles (naming, function size, single responsibility, DRY-within-hunk).
+- `pc-review-code-reuse` surveys the surrounding codebase *first*, then audits the diff for missed reuse of existing constants, helpers, conventions, and patterns.
   Its mandatory output tables (inline-import audit vs `pyproject.toml`; function-pair overlap audit) catch things a diff-only reviewer cannot see.
 
 Multiple types can apply (e.g., Snakemake + Python).
@@ -92,15 +92,15 @@ git diff origin/<base>...HEAD --name-only | xargs -I{} sh -c 'test -f "{}" && st
 
 Flag anything suspicious for user confirmation before proceeding.
 
-### Step 4: Run Agent Reviews (in parallel when possible)
+### Step 4: Run Reviews (in parallel when possible)
 
 **For Snakemake projects:**
-- Launch `snakemake-pipeline-expert` agent to review workflow structure, rule organization, and best practices
+- Follow the `pc-pipeline-snakemake` skill to review workflow structure, rule organization, and best practices
 
 **For all projects with code changes:**
-- Launch `clean-code-reviewer` agent on modified source files (not tests)
-- **In parallel**, launch `code-reuse-reviewer` agent on the same branch — it surveys the surrounding codebase first to catch missed reuse of existing patterns, constants, helpers, and conventions.
-  The two agents have different mandates (clean-code principles vs. pattern adherence) and report independently.
+- Follow the `pc-review-clean-code` skill on modified source files (not tests)
+- **In parallel**, follow the `pc-review-code-reuse` skill on the same branch — it surveys the surrounding codebase first to catch missed reuse of existing patterns, constants, helpers, and conventions.
+  The two skills have different mandates (clean-code principles vs. pattern adherence) and report independently.
 
 ### Step 4.5: Scientific Conclusion Skeptic (conditional)
 
@@ -113,7 +113,7 @@ Examine the PR title, body, and diff for signals that the PR reports a scientifi
 - Claims about method effectiveness, algorithmic limitations, or model comparisons
 - Surprising or strong negative results (e.g., 0% or 100% rates)
 
-**If any scientific conclusion is detected**, launch the `surprising-conclusion-skeptic` agent (Opus model) with this prompt:
+**If any scientific conclusion is detected**, follow the `pc-skeptic` skill with this prompt:
 
 ```
 Review PR #<number> on branch <branch> for scientific credibility.
@@ -174,7 +174,7 @@ Grepping alone is insufficient—tests need semantic analysis to detect:
 - Tests with `pytest.skip` that should have real implementations
 - Tests that silently catch exceptions instead of letting them propagate
 
-**Launch a `clean-code-reviewer` agent specifically for test files:**
+**Follow the `pc-review-clean-code` skill specifically for test files:**
 
 ```
 Review the test files in tests/ for test quality issues:

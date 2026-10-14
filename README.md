@@ -77,48 +77,48 @@ paper-craft reimplements all bipartite skills in TypeScript, renaming the `bip-`
 | `pc-conductor-prepare-reboot` (`bip-conductor-prepare-reboot`) | State preservation before host reboot |
 | `pc-conductor-recover` (`bip-conductor-recover`) | Recovery after reboot |
 
-### Agent Subsystems
+### Specialized Review & Support Skills
 
 #### Code Review
 
-| Agent | Purpose |
+| Skill | Purpose |
 |-------|---------|
-| `clean-code-reviewer` | Reviews code for clean-code principles: single responsibility, clear naming, fail-fast, type safety, DRY |
-| `code-reuse-reviewer` | Audits diffs for adherence to existing repo patterns; catches redefined constants, reimplemented helpers, missed abstractions |
-| `zig-code-reviewer` | Reviews Zig code for memory safety, data-oriented design, allocator discipline, and idiomatic error handling |
+| `pc-review-clean-code` | Reviews code for clean-code principles: single responsibility, clear naming, fail-fast, type safety, DRY |
+| `pc-review-code-reuse` | Audits diffs for adherence to existing repo patterns; catches redefined constants, reimplemented helpers, missed abstractions |
+| `pc-review-zig` | Reviews Zig code for memory safety, data-oriented design, allocator discipline, and idiomatic error handling |
 
 #### Manuscript / TeX
 
-| Agent | Purpose |
+| Skill | Purpose |
 |-------|---------|
-| `scientific-tex-editor` | Edits LaTeX manuscripts for prose clarity, structure, and academic flow |
-| `tex-grammar-checker` | Line-by-line grammar checking on LaTeX documents, preserving commands and math syntax |
-| `tex-verb-tense-checker` | Audits LaTeX manuscripts for verb tense accuracy and consistency across sections |
-| `topic-sentence-stickler` | Audits LaTeX manuscripts to ensure every paragraph opens with a strong topic sentence |
-| `journal-submission-checker` | Pre-submission manuscript audits: repository accessibility, preprint updates, bibliographic completeness |
-| `pdf-proof-reader` | Sentence-by-sentence proofreading on journal PDF page proofs |
-| `pdf-question-answerer` | Answers scientific questions and extracts methodology, data, and figures from PDF documents |
+| `pc-tex-editor` | Edits LaTeX manuscripts for prose clarity, structure, and academic flow |
+| `pc-tex-grammar` | Line-by-line grammar checking on LaTeX documents, preserving commands and math syntax |
+| `pc-tex-verb-tense` | Audits LaTeX manuscripts for verb tense accuracy and consistency across sections |
+| `pc-tex-topic-sentence` | Audits LaTeX manuscripts to ensure every paragraph opens with a strong topic sentence |
+| `pc-submission-checker` | Pre-submission manuscript audits: repository accessibility, preprint updates, bibliographic completeness |
+| `pc-pdf-proofreader` | Sentence-by-sentence proofreading on journal PDF page proofs |
+| `pc-pdf-qa` | Answers scientific questions and extracts methodology, data, and figures from PDF documents |
 
 #### Visualization & Math
 
-| Agent | Purpose |
+| Skill | Purpose |
 |-------|---------|
-| `plot-reviewer` | Reviews Python visualization code for publication quality and proportional ink principles |
-| `math-pr-summarizer` | Analyzes statistical/computational PRs and drafts companion Markdown with LaTeX equations |
+| `pc-review-plot` | Reviews Python visualization code for publication quality and proportional ink principles |
+| `pc-math-summarizer` | Analyzes statistical/computational PRs and drafts companion Markdown with LaTeX equations |
 
 #### Workflow / Orchestration
 
-| Agent | Purpose |
+| Skill | Purpose |
 |-------|---------|
-| `issue-lead` | Evaluates worker progress from file-based state alone; escalates only when human judgment is needed |
-| `surprising-conclusion-skeptic` | Interrogates strong or negative claims before they propagate |
+| `pc-issue-lead` | Evaluates worker progress from file-based state alone; escalates only when human judgment is needed |
+| `pc-skeptic` | Interrogates strong or negative claims before they propagate |
 
 #### Pipeline
 
-| Agent | Purpose |
+| Skill | Purpose |
 |-------|---------|
-| `nextflow-pipeline-expert` | Reviews and optimizes Nextflow DSL2 workflows according to nf-core best practices |
-| `snakemake-pipeline-expert` | Reviews and optimizes Snakemake pipelines for modularity, validation, and reproducibility |
+| `pc-pipeline-nextflow` | Reviews and optimizes Nextflow DSL2 workflows according to nf-core best practices |
+| `pc-pipeline-snakemake` | Reviews and optimizes Snakemake pipelines for modularity, validation, and reproducibility |
 
 ### Workflow Coordination (Cross-Cutting)
 

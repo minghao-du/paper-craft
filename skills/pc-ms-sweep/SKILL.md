@@ -9,7 +9,7 @@ allowed-tools: Agent, Bash, Read, Glob, Grep, Edit, Write
 Pre-share or pre-submission polish sweep of a TeX manuscript.
 Run from a TeX repository when you want to look the manuscript over carefully before sending it to a colleague or to a journal.
 
-This is **not** a code-vs-paper audit (`/pc-ms-audit`), **not** a cold-start dashboard (`/pc-ms`), and **not** a writing-style review on its own (`@scientific-tex-editor`).
+This is **not** a code-vs-paper audit (`/pc-ms-audit`), **not** a cold-start dashboard (`/pc-ms`), and **not** a writing-style review on its own (`pc-tex-editor`).
 It is the cross-cutting manuscript sweep that runs many small, mechanical scans in parallel, plus a literature-gap check and a submission-hygiene check, and then talks through the findings with the user interactively.
 
 The output style mirrors a careful colleague reading the manuscript with you: a conversational punch list, not a markdown report.
@@ -31,7 +31,7 @@ Only the writing-style review can be narrowed with `--since`.
 ## Core principle
 
 **Many small, focused scans beat one big "review my paper."**
-A single scientific-tex-editor invocation against the whole paper will skim.
+A single `pc-tex-editor` invocation against the whole paper will skim.
 Eight specialist subagents running in parallel — each with one job and a tight output format — produce a tighter, higher-precision punch list and don't waste primary-agent context on intermediate reasoning.
 The primary's job is to consolidate, dedupe, and bin findings into "real fix," "judgment call," and "noise" for the user to triage.
 
@@ -72,7 +72,7 @@ Sequential dispatch defeats the purpose.
 
 The eight scans:
 
-#### Scan 1 — Writing review (`scientific-tex-editor`)
+#### Scan 1 — Writing review (`pc-tex-editor`)
 
 Brief the agent on the manuscript path(s), whether `--since <ref>` was passed, and any project-specific style rules (semantic line breaks, citation style, etc. — read from the project's `CLAUDE.md` if one exists).
 Cap output around 400 words.
@@ -150,7 +150,7 @@ Aim for high precision over recall: the user does not want to read about 40 tang
 Five strong candidates beat fifty weak ones.
 If the agent finds nothing relevant, say so.
 
-#### Scan 8 — Submission hygiene (`journal-submission-checker`)
+#### Scan 8 — Submission hygiene (`pc-submission-checker`)
 
 Check:
 - Every GitHub / external repository referenced in the manuscript is publicly accessible (curl/WebFetch each URL).
@@ -277,7 +277,7 @@ Re-dispatch any scan whose output is empty or shorter than 50 words — that's t
 ## References
 
 - Sibling skills: `/pc-ms`, `/pc-ms-poll`, `/pc-ms-tuckin`, `/pc-ms-audit`, `/pc-comment-check`, `/pc-pr-review`.
-- Subagents used: `@scientific-tex-editor`, `@journal-submission-checker`, `general-purpose`, `Explore`.
+- Skills / subagents used: `pc-tex-editor`, `pc-submission-checker`, `general-purpose`, `Explore`.
   None mandatory.
 - Subagent dispatch pattern: `SUBAGENT-SCAN.md` (paper-craft repo root).
 - Precipitating session: flu mutation rates manuscript pre-share sweep, 2026-05-14.

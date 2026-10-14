@@ -300,7 +300,7 @@ When drafting new results or methods text:
 2. Read the current manuscript to understand style, notation, and structure
 3. Present the key points as a **bullet-point summary** and ask the user which to include and where in the manuscript they belong
 4. After confirmation, draft the paragraph(s) in LaTeX
-5. Run the `@scientific-tex-editor` agent on the new text for style review
+5. Follow the `pc-tex-editor` skill on the new text for style review
 6. Present the edited draft for final approval before inserting into the TeX file
 
 ## Remote server awareness

@@ -151,10 +151,9 @@ Based on user choice:
 The paper-craft repo structure:
 ```
 skills/          # Skill definitions (each skill is a directory with SKILL.md)
-cmd/             # pc binary source (Go, spf13/cobra)
-internal/        # pc binary source (Go internal packages)
+src/             # pc binary source
+tests/           # Test suites
 docs/            # Guides and documentation
-agents/          # Agent definitions
 ```
 
 Skills are symlinked from `skills/<name>/` to `~/.claude/skills/<name>` for global availability.

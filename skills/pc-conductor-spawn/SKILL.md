@@ -378,7 +378,7 @@ STOPPING POINTS — When you reach a natural stopping point:
 2. Update .epic-status.json with phase, summary, stop_reason
 3. Spawn the issue-lead subagent for evaluation:
 
-   Use the Agent tool with subagent_type issue-lead and prompt:
+   Follow the `pc-issue-lead` skill (as an evaluator subagent) with prompt:
    Evaluate progress on issue #N in this clone. Follow your
    full evaluation protocol: read .epic-status.json,
    .epic-worklog.md, the issue body, commits, PR, and any

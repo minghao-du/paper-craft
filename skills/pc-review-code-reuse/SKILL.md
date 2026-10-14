@@ -1,13 +1,14 @@
 ---
-name: code-reuse-reviewer
-description: "Use this agent when you want a code review focused specifically on adherence to existing codebase patterns and effective reuse of prior art — distinct from a general clean-code review. Run it alongside `clean-code-reviewer` before submitting a PR. It fans out per-file sub-agents and flags redefined constants, reimplemented helpers, and skipped abstractions."
-model: sonnet
-color: orange
+name: pc-review-code-reuse
+description: Audit a diff for missed reuse of existing constants, helpers, conventions, and patterns in the codebase
+disable-model-invocation: true
 ---
 
-You review whether new code adheres to the patterns, conventions, and prior art that already exist in the codebase. `clean-code-reviewer` runs in parallel and covers naming, function size, single responsibility, and the like.
+# /pc-review-code-reuse
 
-**Survey before judging.** Explore the codebase for prior art, including a complete read of every materially-changed file, before you read the diff in detail (read the diff first and the new code "makes sense" on its own terms, hiding the existing function it should have called). Grep alone misses a sibling function 80 lines above, so sub-agents read each touched file in full.
+Review whether new code adheres to the patterns, conventions, and prior art that already exist in the codebase. `pc-review-clean-code` runs in parallel and covers naming, function size, single responsibility, and the like.
+
+**Survey before judging.** Read every materially-changed file end-to-end *before* reading the diff in detail. Reading the diff first lets new code "make sense" on its own terms, hiding the existing function it should have called. Grep alone misses a sibling function 80 lines above — read each touched file in full.
 
 ## Methodology
 
@@ -15,12 +16,8 @@ You review whether new code adheres to the patterns, conventions, and prior art 
 
 2. **Identify materially-changed files:** any file with >40 lines changed, any new file, any file touching an interface/abstract class, and dependency manifests (`package.json`, `tsconfig.json`, …) if touched.
 
-3. **Fan out: dispatch one sub-agent per materially-changed file, in parallel** (multiple Agent calls in one message). Use `subagent_type=Explore`, or `general-purpose` for deeper reasoning. If the Agent tool is unavailable (e.g. nested-subagent context), make parallel `Read` calls on the same files instead; do not skip the per-file pass.
+3. **Read each materially-changed file end-to-end.** For each file, produce this exact report — fill in every section even if empty:
 
-   Give each sub-agent this prompt:
-
-   > Read `<file>` end-to-end. Produce this exact report — fill in every section even if empty:
-   >
    > **1. Module-level constants** (every `^[A-Z_][A-Z_0-9]* *=` at column 0, with line number and value):
    > **2. Module-level functions/classes** (name, line, one-sentence purpose):
    > **3. Inline imports** (every dynamic `import(...)` or `require(...)` appearing inside a function/method body — give the package name, the line, and the containing function):
@@ -29,6 +26,8 @@ You review whether new code adheres to the patterns, conventions, and prior art 
    > **6. Interface / abstract class declarations** (any `interface Foo` or `abstract class Foo`, with line and method signatures):
    >
    > Output the file's "shape" and the structured audit fields — not opinions. Don't review; just describe what's there. Hit every field.
+
+   When possible, read multiple files in parallel.
 
 4. **Cross-reference the reports.** Run each pass explicitly:
 
@@ -61,13 +60,13 @@ You review whether new code adheres to the patterns, conventions, and prior art 
    - Does it break a project convention: path handling (`path.resolve` / `import.meta.dirname` vs absolute paths), config access (project helpers vs `process.env`), logging, error handling, retries, import style?
    - Does it follow the conventions documented in `AGENTS.md`, `CONSTITUTION.md`, `DESIGN.md`, or README files?
 
-6. **Cite prior art for every finding** as `file:line` or `file:function`. A finding with no prior art belongs to `clean-code-reviewer`.
+6. **Cite prior art for every finding** as `file:line` or `file:function`. A finding with no prior art belongs to `pc-review-clean-code`.
 
-## Output format
+## Output Format
 
 **Survey summary** (3–8 bullets): the patterns, constants, helpers, and conventions that bear on this diff.
 
-**Fan-out coverage** (one line per file): the files you dispatched sub-agents on.
+**Fan-out coverage** (one line per file): the files read end-to-end.
 
 **Inline-import audit table** (4c): every inline import, or "none".
 
@@ -83,7 +82,7 @@ You review whether new code adheres to the patterns, conventions, and prior art 
 
 **Smaller observations** (non-blocking): reuse and consistency nits.
 
-## Out of scope
+## Out of Scope
 
 - Naming, function size, single responsibility, and general clean-code principles, unless they intersect a reuse or consistency issue.
 - Missing error handling, missing tests, or correctness bugs, unless they follow from a pattern violation.

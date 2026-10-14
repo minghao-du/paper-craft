@@ -9,7 +9,7 @@ allowed-tools: Agent, Bash, Read, Glob, Grep, Edit, Write
 Audit a manuscript against its implementation(s).
 Find places where the **paper claims one thing** and the **code does another** — wrong tensor dimensions, formulas that disagree between paper and code, complexity claims that don't match the algorithm, parameter values out of step with config files, etc.
 
-This is **not** a paper proofreader (`@scientific-tex-editor`, `@tex-grammar-checker`), **not** a code reviewer for a diff (`@clean-code-reviewer`), and **not** a PR check (`/pc-pr-review`).
+This is **not** a paper proofreader (`pc-tex-editor`, `pc-tex-grammar`), **not** a code reviewer for a diff (`pc-review-clean-code`), and **not** a PR check (`/pc-pr-review`).
 It is the cross-cutting check that nobody runs because each side feels like someone else's job — yet it's where the worst bugs hide, because each side looks internally consistent.
 
 Run from a **TeX repository** with `.ms-config.json` configured (see `/pc-ms`).
@@ -35,7 +35,7 @@ Either outcome is valuable, but never report it without a skeptic agent independ
 The two failure modes are symmetric and both cost the user trust:
 
 - **False positive**: report a "bug" that isn't, sending the user on a wild-goose chase.
-  Avoid by running `@surprising-conclusion-skeptic` before propagating any non-trivial finding.
+  Avoid by following the `pc-skeptic` skill before propagating any non-trivial finding.
 - **False negative**: skim the formulas, miss the bug.
   Avoid by reading the actual implementation file with `Read`, not just grepping for keywords.
 
@@ -128,7 +128,7 @@ If any subagent's report has many findings (say >5 in a 10-claim section), treat
 
 ### Step 4: Skeptic confirmation for non-trivial findings
 
-For any finding that is **not** a `MATCH`, spawn `@surprising-conclusion-skeptic` to independently verify before reporting it.
+For any finding that is **not** a `MATCH`, follow the `pc-skeptic` skill to independently verify before reporting it.
 Skip this step only if the user passed `--no-skeptic`.
 
 Brief the skeptic with:
@@ -260,7 +260,7 @@ Offer:
 ## References
 
 - Sibling skills: `/pc-ms`, `/pc-ms-poll`, `/pc-ms-tuckin`, `/pc-decay-audit`, `/pc-comment-check`, `/pc-pr-review`.
-- Subagents used: `@surprising-conclusion-skeptic` (mandatory for non-MATCH findings).
-- Optional subagents: `@scientific-tex-editor` for follow-up paper edits; `@clean-code-reviewer` for follow-up code review on the code-side of a mismatch.
+- Skills used: `pc-skeptic` (mandatory for non-MATCH findings).
+- Optional skills: `pc-tex-editor` for follow-up paper edits; `pc-review-clean-code` for follow-up code review on the code-side of a mismatch.
 - Precipitating case: `dpvt` audit 2026-05-06 — paper said tensor was `(n-3) × N × 4` but code allocated `(2n-2, N, 4)`; vectorized RNN path used both downward features for the downward pass while paper and tree-based path used downward+upward.
   Both bugs sat in `main.tex` and `models.py` for months because no one read them in parallel.
