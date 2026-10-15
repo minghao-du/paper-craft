@@ -105,10 +105,37 @@ function envOrConfig(envNames: string[], configValue?: string): string {
 
 // -- Nexus path resolution --
 
-/** Get the configured nexus path. Empty if not configured. */
+/**
+ * Walk up from the starting directory to find a `.paper-craft` repository directory.
+ * Returns the absolute directory path containing `.paper-craft`, or null if not found.
+ */
+export function findNexusUp(startDir?: string): string | null {
+  const callerDir = process.env['INIT_CWD'] || process.env['PWD'] || process.cwd();
+  let curr = startDir ?? callerDir;
+  while (true) {
+    const candidate = join(curr, NEXUS_DIR);
+    if (existsSync(candidate)) {
+      try {
+        if (statSync(candidate).isDirectory()) {
+          return curr;
+        }
+      } catch {
+        // Continue walking up if permission error or dangling link
+      }
+    }
+    const parent = dirname(curr);
+    if (parent === curr) break;
+    curr = parent;
+  }
+  return null;
+}
+
+/** Get the configured nexus path. Prioritizes PC_NEXUS_PATH, then local .paper-craft directory, then global config. */
 export function getNexusPath(): string {
   const envNexus = process.env['PC_NEXUS_PATH'];
   if (envNexus) return expandTilde(envNexus);
+  const localNexus = findNexusUp();
+  if (localNexus) return localNexus;
   const cfg = loadGlobalConfig();
   return cfg.nexus_path ?? '';
 }
