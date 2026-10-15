@@ -1,0 +1,7 @@
+# Snakemake runtime cache and metadata
+.snakemake/
+
+# Generated execution data tiers
+processed/
+results/
+logs/
