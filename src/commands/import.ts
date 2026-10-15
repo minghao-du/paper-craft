@@ -262,6 +262,7 @@ export interface ZoteroImportOptions {
   nexusPath: string;
   dryRun: boolean;
   libraryId?: number;
+  collection?: string;
   baseAttachmentPath?: string;
   customProfilesDir?: string;
 }
@@ -622,17 +623,53 @@ async function extractReferences(
   }
   bbtStmt.free();
 
+  // If collection filter specified, look up collectionID
+  let targetCollectionId: number | undefined;
+  if (opts.collection) {
+    const collStmt = db.prepare(`
+      SELECT collectionID
+      FROM collections
+      WHERE libraryID = :libraryID AND LOWER(collectionName) = LOWER(:name)
+    `);
+    collStmt.bind({ ':libraryID': targetLibraryId, ':name': opts.collection.trim() });
+    if (collStmt.step()) {
+      const res = collStmt.getAsObject() as { collectionID: number };
+      targetCollectionId = res.collectionID;
+    }
+    collStmt.free();
+    if (targetCollectionId === undefined) {
+      throw new Error(`Zotero collection not found: "${opts.collection}"`);
+    }
+  }
+
   // Query main items — exclude non-regular types (attachment=14, note=1, annotation=36)
-  // and deleted items, scoped to the targeted library
-  const itemStmt = db.prepare(`
+  // and deleted items, scoped to the targeted library (and optional collection)
+  const itemSql =
+    targetCollectionId !== undefined
+      ? `
+    SELECT i.itemID, i.key AS itemKey
+    FROM items i
+    JOIN collectionItems ci ON ci.itemID = i.itemID
+    WHERE i.libraryID = :libraryID
+      AND ci.collectionID = :collectionID
+      AND i.itemTypeID NOT IN (1, 14, 36)
+      AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
+    ORDER BY i.itemID
+  `
+      : `
     SELECT i.itemID, i.key AS itemKey
     FROM items i
     WHERE i.libraryID = :libraryID
       AND i.itemTypeID NOT IN (1, 14, 36)
       AND i.itemID NOT IN (SELECT itemID FROM deletedItems)
     ORDER BY i.itemID
-  `);
-  itemStmt.bind({ ':libraryID': targetLibraryId });
+  `;
+  const itemStmt = db.prepare(itemSql);
+  const itemBinds: Record<string, number> = { ':libraryID': targetLibraryId };
+  if (targetCollectionId !== undefined) {
+    itemBinds[':collectionID'] = targetCollectionId;
+  }
+  itemStmt.bind(itemBinds);
 
   const rows: ZoteroRow[] = [];
   while (itemStmt.step()) {
@@ -812,6 +849,7 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
     .option('--dry-run', 'Show what would be imported without writing')
     .option('--zotero-path <path>', 'Path to Zotero data directory')
     .option('--library <id>', 'Zotero library ID to import from (default: 1)')
+    .option('--collection <name>', 'Zotero collection name to import from')
     .action(
       async (
         file: string | undefined,
@@ -820,6 +858,7 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
           dryRun?: boolean;
           zoteroPath?: string;
           library?: string;
+          collection?: string;
         },
       ) => {
         if (cmdOpts.format === 'zotero') {
@@ -835,6 +874,7 @@ export function registerImportCommand(program: Command, opts: { human: () => boo
             nexusPath: nexus,
             dryRun: cmdOpts.dryRun ?? false,
             libraryId,
+            collection: cmdOpts.collection,
           });
 
           output(result, opts.human(), () =>
