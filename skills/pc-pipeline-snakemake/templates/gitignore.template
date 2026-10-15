@@ -1,6 +1,10 @@
 # Snakemake runtime cache and metadata
 .snakemake/
 
+# Python virtual environment & bytecode cache
+.venv/
+__pycache__/
+
 # Generated execution data tiers
 processed/
 results/
