@@ -27,7 +27,9 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 │   ├── scripts/                 # Standalone execution scripts (Python / R / Bash)
 │   │   └── parse_output.py
 │   └── report/                  # HTML report captions and markdown descriptions
-├── data/                        # Raw, immutable input data (read-only; never written to by rules)
+├── tests/                       # Minimal synthetic fixtures & unit tests for local smoke testing & CI (tracked in Git)
+│   └── data/                    # Toy input datasets (subsampled fastq/tables; few KB to MB)
+├── data/                        # Raw, immutable input data (production; read-only; never written to by rules)
 ├── processed/                   # Intermediate staged artifacts (cleaned, aligned, intermediate tables; gitignored)
 ├── results/                     # Final deliverables (publication figures, summary tables, reports; gitignored)
 ├── logs/                        # Standard output & error logs partitioned per rule (gitignored)
@@ -58,6 +60,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 ### 4. Environments & Reproducibility
 - **Rule-Level Isolation**: Declare isolated environment definitions per rule via `conda: "envs/foo.yaml"` or `container:`. Pin explicit software versions inside environment files.
 - **Automated Linting & Formatting**: Format files using `snakefmt` and run `snakemake --lint` to verify adherence to syntax standards.
+- **Local Smoke Testing & Fixtures**: Provide synthetic or subsampled input datasets in `tests/data/` paired with `config/test.yaml`. Decouple DAG and script verification from HPC compute: local execution of `snakemake -n --configfile config/test.yaml` must resolve without requiring production datasets or cluster scheduling.
 
 ## Workflows
 
@@ -65,12 +68,12 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 
 When generating a new Snakemake workflow or expanding an existing one:
 
-1. **Scaffold Directory Tree**: Create standard directories (`config/`, `workflow/rules/`, `workflow/envs/`, `workflow/scripts/`, `data/`, `processed/`, `results/`, `logs/`, `summary/`).
-2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `processed/`, `results/`, and `logs/` are gitignored while `summary/` is tracked.
+1. **Scaffold Directory Tree**: Create standard directories (`config/`, `workflow/rules/`, `workflow/envs/`, `workflow/scripts/`, `tests/data/`, `data/`, `processed/`, `results/`, `logs/`, `summary/`).
+2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `processed/`, `results/`, and `logs/` are gitignored while `tests/` and `summary/` are tracked.
 3. **Configure & Schema**:
    - Read [schema.yaml](templates/schema.yaml) as a reference to write `config/schema.yaml`.
    - Write `config/config.yaml` with required paths and execution parameters matching the schema.
-   - Write `config/test.yaml` paired with synthetic test fixtures in `test/`.
+   - Write `config/test.yaml` pointing to synthetic test fixtures in `tests/data/`.
 4. **Author Modular Rules**:
    - Read [rule.smk](templates/rule.smk) as a syntax reference for directive formatting (`temp()`, `log:`, stream redirection).
    - Read [summary.md](templates/summary.md) for the stage summary receipt card schema.
@@ -78,14 +81,14 @@ When generating a new Snakemake workflow or expanding an existing one:
    - Author domain logic in `workflow/rules/*.smk` using tiered paths (`processed/`, `results/`, `logs/`, `summary/`). Ensure each analytical stage has a terminal aggregation rule that generates its receipt in `summary/{stage}.md`.
 5. **Verification**: Run `snakemake -n --configfile config/test.yaml` followed by `snakemake --lint`.
 
-**Completion Criterion**: Directory tree conforms to standard layout; `snakemake -n` completes with a valid DAG; `snakemake --lint` produces 0 warnings or errors.
+**Completion Criterion**: Directory tree conforms to standard layout; `tests/data/` contains minimal test fixtures; `snakemake -n --configfile config/test.yaml` completes with a valid DAG; `snakemake --lint` produces 0 warnings or errors.
 
 ### Branch 2: Workflow Audit & Refactoring (Auditing)
 
 When reviewing or optimizing an existing Snakemake pipeline:
 
 1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and analytical stages produce tracked receipts in `summary/`.
-2. **Check Parameter Validation**: Verify presence of `schema.yaml` and startup schema validation. Identify unvalidated config accesses.
+2. **Check Parameter Validation & Smoke Testing**: Verify presence of `schema.yaml` with startup validation, and confirm presence of `config/test.yaml` paired with `tests/data/` fixtures for zero-compute local validation.
 3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`.
 4. **Check Environment Pinning**: Verify per-rule `conda` or container specifications and check for unpinned dependencies.
    *(Guardrail: Do NOT read any template files in `templates/` during Steps 1–4).*
