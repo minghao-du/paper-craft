@@ -623,6 +623,31 @@ async function extractReferences(
   }
   bbtStmt.free();
 
+  // Also read citationKey field directly from zotero.sqlite (Zotero 7 / BBT native field)
+  try {
+    const ckFieldStmt = db.prepare("SELECT fieldID FROM fields WHERE fieldName = 'citationKey'");
+    if (ckFieldStmt.step()) {
+      const ckField = ckFieldStmt.getAsObject() as { fieldID: number };
+      const ckStmt = db.prepare(`
+        SELECT id.itemID, idv.value AS citekey
+        FROM itemData id
+        JOIN itemDataValues idv ON idv.valueID = id.valueID
+        WHERE id.fieldID = :fieldID
+      `);
+      ckStmt.bind({ ':fieldID': ckField.fieldID });
+      while (ckStmt.step()) {
+        const r = ckStmt.getAsObject() as { itemID: number; citekey: string };
+        if (r.citekey && !citekeyMap.has(r.itemID)) {
+          citekeyMap.set(r.itemID, r.citekey.trim());
+        }
+      }
+      ckStmt.free();
+    }
+    ckFieldStmt.free();
+  } catch {
+    // citationKey field may not exist in older Zotero schemas
+  }
+
   // If collection filter specified, look up collectionID
   let targetCollectionId: number | undefined;
   if (opts.collection) {
