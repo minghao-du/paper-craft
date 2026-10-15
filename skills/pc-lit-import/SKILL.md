@@ -31,6 +31,7 @@ Flags:
 - `--format zotero`: Ingest references directly from local Zotero SQLite database. Requires Better BibTeX.
 - `--zotero-path <path>`: Path to Zotero data directory (containing `zotero.sqlite` and `better-bibtex-search.sqlite`). Defaults to `zotero_path` in `~/.config/pc/config.yml` or standard platform locations (`~/Zotero`).
 - `--library <id>`: Zotero library ID to import from (default: `1` for personal library; use `2`, `3`, etc. for group libraries).
+- `--collection <name>`: Zotero collection name to import from (scopes import to a specific collection/folder).
 - `--dry-run`: Preview additions, updates, and skips without modifying `refs.jsonl`.
 
 Always run `pc rebuild --human` after import to update the search index.
