@@ -45,7 +45,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 - **Log Directive Contract**: Every non-trivial rule must specify a `log:` directive partitioned by rule name and wildcard (e.g., `log: "logs/{rule}/{sample}.log"`). In `shell:`, capture standard streams explicitly: `> {log} 2>&1`.
 - **Intermediate Artifacts (`processed/`)**: Route all intermediate and staged transformations to `processed/`. Mark temporary artifacts with `temp()` so Snakemake removes them immediately after downstream consumers finish.
 - **Deliverables (`results/`)**: Route final analytical summaries, plots, and reports to `results/`. Apply `protected()` on high-cost terminal deliverables to guard against accidental deletion.
-- **Stage Summary Receipts (`summary/`)**: Each analytical stage or module must produce a lightweight, machine-generated markdown receipt in `summary/{stage}.md` via its stage aggregation rule. Unlike `processed/` and `results/`, `summary/` is explicitly tracked in Git, decoupling compute-heavy environments from local inspection. It captures 4 standard sections (Executive Summary, Attrition & Data Shape, Downstream Interface Contract with Schema & Head Preview, and Deliverables & Figures; see [summary.md](templates/summary.md)). All paths inside summaries must use project-root-relative paths.
+- **Stage Summary Receipts (`summary/`)**: Each analytical stage must produce a brief completion receipt in `summary/{stage}.md` via its aggregation rule. Tracked in Git, decoupling compute-heavy environments from local inspection. A receipt proves completion and summarizes conclusions — it points to where data lives, never reproduces it. Follow the 3-section skeleton in [summary.md](templates/summary.md): **Summary** (pass/fail + 1–2 sentence key finding + runtime), **Shape** (key counts in one line), **Outputs** (file paths with format). Raw diagnostic dicts, seed arrays, and full schema dumps belong in data files, not receipts. All paths use project-root-relative form.
 - **Immutability of `data/` and `workflow/`**: Treat `data/` as read-only. Confine all output definitions strictly within `processed/`, `results/`, `logs/`, or `summary/`. Never write outputs to `workflow/`.
 
 ### 2. Fail-fast Parameter Validation
@@ -84,9 +84,9 @@ When generating a new Snakemake workflow or expanding an existing one:
 4. **Author Modular Rules & Scripts**:
    - Read [rule.smk](templates/rule.smk) as a syntax reference for both `conda:` binary rules and `uv run` Python rules.
    - Read [script.py](templates/script.py) as a syntax reference for isolated Python scripts with PEP 723 inline dependency metadata.
-   - Read [summary.md](templates/summary.md) for the stage summary receipt card schema.
+   - Read [summary.md](templates/summary.md) for the receipt skeleton.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
-   - Author domain logic in `workflow/rules/*.smk` using tiered paths (`processed/`, `results/`, `logs/`, `summary/`). Ensure each analytical stage has a terminal aggregation rule that generates its receipt in `summary/{stage}.md`.
+   - Author domain logic in `workflow/rules/*.smk` using tiered paths (`processed/`, `results/`, `logs/`, `summary/`). Each analytical stage has a terminal aggregation rule that writes a brief receipt to `summary/{stage}.md` — conclusions and pointers only.
 5. **Verification**: Run `uv run snakemake [-n --configfile config/test.yaml]` (adding `--software-deployment-method conda` if Conda rules are present) followed by `uv run snakemake --lint`.
 
 **Completion Criterion**: Directory tree conforms to standard layout with root `pyproject.toml`; `tests/data/` contains minimal test fixtures; `uv run snakemake -n --configfile config/test.yaml` (with `--software-deployment-method conda` when Conda rules exist) completes with a valid DAG; `uv run snakemake --lint` produces 0 warnings or errors.
