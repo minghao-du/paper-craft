@@ -82,6 +82,16 @@ Use the repo to fill in concrete details:
 3. **Existing issues**: Run `gh issue list -R <repo> --limit 20 --json number,title` to check for duplicates or related open issues
 4. **Project docs**: Check for `CONSTITUTION.md`, `DESIGN.md`, or `experiments/CLAUDE.md` in the repo for conventions
 
+### Step 3b: Settle the Snakemake file structure (conditional)
+
+If the next-action creates, expands, or refactors a Snakemake workflow, invoke `/pc-pipeline-snakemake` ([skill source](../pc-pipeline-snakemake/SKILL.md)) before drafting, with an explicit **planning-only** scope: apply its directory layout and quality standards to the issue design; leave scaffolding, implementation, and execution checks to the implementation task.
+
+Inspect any existing workflow and settle the paths and responsibilities of all files affected by this issue, using that skill as the single source of truth for layout conventions.
+In Step 4, record the design in a **File structure** subsection of **Proposed implementation**: a project-root-relative tree of the affected files, annotated with each file's responsibility and intended change, plus generated-output path patterns for the affected stages.
+Keep the authored-file changes consistent with **Files to modify**, and distinguish generated outputs from files to edit.
+
+**Completion criterion**: Every in-scope file change and stage output has a settled path or wildcard pattern and a defined responsibility.
+
 ### Step 4: Draft the issue file
 
 Write `ISSUE-<slug>.md` in the current working directory.
