@@ -10,4 +10,4 @@
 
 ## Outputs
 
-- `{path/to/output}`: {format}
+- `{processed/or/results}/{stage_name}/{path/to/output}`: {format}; {one sentence describing content or purpose}

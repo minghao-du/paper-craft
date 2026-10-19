@@ -33,11 +33,25 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 │   └── data/                    # Toy input datasets (subsampled fastq/tables; few KB to MB)
 ├── data/                        # Raw, immutable input data (production; read-only; never written to by rules)
 ├── processed/                   # Intermediate staged artifacts (cleaned, aligned, intermediate tables; gitignored)
+│   └── quantification/
+│       ├── counts/
+│       └── normalized/
 ├── results/                     # Final deliverables (publication figures, summary tables, reports; gitignored)
+│   └── quantification/
+│       ├── figures/
+│       ├── tables/
+│       └── reports/
 ├── logs/                        # Standard output & error logs partitioned per rule (gitignored)
 ├── summary/                     # Stage-level text receipts & interface contracts for human & agent (tracked in Git)
+│   └── quantification.md
 └── resources/                   # (Optional) Shared reference files, genomic indexes, or databases
 ```
+
+### Stage Output Organization
+
+- Group both roots by analytical stage: `processed/<stage>/` and `results/<stage>/`. Use the same stage name in both roots and `summary/<stage>.md` wherever that stage produces artifacts.
+- Within a stage, group intermediates by domain meaning (e.g., `counts/`, `normalized/`) and deliverables by kind (e.g., `figures/`, `tables/`, `reports/`). Create only directories with actual outputs; a few files of one kind may live directly under the stage.
+- Give each artifact one canonical location. Distinguish samples, comparisons, and parameter variants in paths; use the same filename stem for different formats of the same artifact (e.g., `treatment_vs_control.volcano.pdf` and `.png`). Choose descriptive names rather than `misc/`, `temp/`, or `final_v2/`; adapt filename syntax to the project.
 
 ## Quality Standards
 
@@ -45,7 +59,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 - **Log Directive Contract**: Every non-trivial rule must specify a `log:` directive partitioned by rule name and wildcard (e.g., `log: "logs/{rule}/{sample}.log"`). In `shell:`, capture standard streams explicitly: `> {log} 2>&1`.
 - **Intermediate Artifacts (`processed/`)**: Route all intermediate and staged transformations to `processed/`. Mark temporary artifacts with `temp()` so Snakemake removes them immediately after downstream consumers finish.
 - **Deliverables (`results/`)**: Route final analytical summaries, plots, and reports to `results/`. Apply `protected()` on high-cost terminal deliverables to guard against accidental deletion.
-- **Stage Summary Receipts (`summary/`)**: Each analytical stage must produce a brief completion receipt in `summary/{stage}.md` via its aggregation rule. Tracked in Git, decoupling compute-heavy environments from local inspection. A receipt proves completion and summarizes conclusions — it points to where data lives, never reproduces it. Follow the 3-section skeleton in [summary.md](templates/summary.md): **Summary** (pass/fail + 1–2 sentence key finding + runtime), **Shape** (key counts in one line), **Outputs** (file paths with format). Raw diagnostic dicts, seed arrays, and full schema dumps belong in data files, not receipts. All paths use project-root-relative form.
+- **Stage Summary Receipts (`summary/`)**: Each analytical stage must produce a brief completion receipt in `summary/{stage}.md` via its aggregation rule. Tracked in Git, decoupling compute-heavy environments from local inspection. A receipt proves completion and summarizes conclusions — it points to where data lives, never reproduces it. Follow the 3-section skeleton in [summary.md](templates/summary.md): **Summary** (pass/fail + 1–2 sentence key finding + runtime), **Shape** (key counts in one line), **Outputs** (file paths, format, and one sentence describing content or purpose). Raw diagnostic dicts, seed arrays, and full schema dumps belong in data files, not receipts. All paths use project-root-relative form.
 - **Immutability of `data/` and `workflow/`**: Treat `data/` as read-only. Confine all output definitions strictly within `processed/`, `results/`, `logs/`, or `summary/`. Never write outputs to `workflow/`.
 
 ### 2. Fail-fast Parameter Validation
@@ -86,7 +100,7 @@ When generating a new Snakemake workflow or expanding an existing one:
    - Read [script.py](templates/script.py) as a syntax reference for isolated Python scripts with PEP 723 inline dependency metadata.
    - Read [summary.md](templates/summary.md) for the receipt skeleton.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
-   - Author domain logic in `workflow/rules/*.smk` using tiered paths (`processed/`, `results/`, `logs/`, `summary/`). Each analytical stage has a terminal aggregation rule that writes a brief receipt to `summary/{stage}.md` — conclusions and pointers only.
+   - Author domain logic in `workflow/rules/*.smk` using tiered paths (`processed/`, `results/`, `logs/`, `summary/`) and the Stage Output Organization conventions above. Each analytical stage has a terminal aggregation rule that writes a brief receipt to `summary/{stage}.md` — conclusions and pointers only.
 5. **Verification**: Run `uv run snakemake [-n --configfile config/test.yaml]` (adding `--software-deployment-method conda` if Conda rules are present) followed by `uv run snakemake --lint`.
 
 **Completion Criterion**: Directory tree conforms to standard layout with root `pyproject.toml`; `tests/data/` contains minimal test fixtures; `uv run snakemake -n --configfile config/test.yaml` (with `--software-deployment-method conda` when Conda rules exist) completes with a valid DAG; `uv run snakemake --lint` produces 0 warnings or errors.
@@ -95,7 +109,7 @@ When generating a new Snakemake workflow or expanding an existing one:
 
 When reviewing or optimizing an existing Snakemake pipeline:
 
-1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and analytical stages produce tracked receipts in `summary/`.
+1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and analytical stages produce tracked receipts in `summary/`. Check Stage Output Organization conventions and that receipt output entries explain content or purpose.
 2. **Check Parameter Validation & Smoke Testing**: Verify presence of `schema.yaml` with startup validation, and confirm presence of `config/test.yaml` paired with `tests/data/` fixtures for zero-compute local validation.
 3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`.
 4. **Check Environment Pinning (Conda & uv)**:

@@ -4,7 +4,7 @@ rule align_reads:
         reads=f"{config.get('data_dir', 'data')}/{{sample}}.fastq.gz",
         reference=config["reference_genome"],
     output:
-        bam=temp("processed/aligned/{sample}.bam"),
+        bam=temp("processed/alignment/{sample}.bam"),
     log:
         "logs/align_reads/{sample}.log",
     threads: 8
@@ -21,9 +21,9 @@ rule align_reads:
 # --- Pattern B: Python script executed via uv run (PEP 723 isolated metadata) ---
 rule process_matrix:
     input:
-        counts="processed/aligned/{sample}.bam",
+        counts="processed/alignment/{sample}.bam",
     output:
-        metrics=temp("processed/metrics/{sample}.parquet"),
+        metrics=temp("processed/quantification/counts/{sample}.parquet"),
     log:
         "logs/process_matrix/{sample}.log",
     threads: 4
@@ -35,3 +35,10 @@ rule process_matrix:
         """
         uv run {params.script} --input {input.counts} --output {output.metrics} > {log} 2>&1
         """
+
+
+# Terminal output path examples for the quantification stage:
+# results/quantification/figures/{sample}.counts.pdf
+# results/quantification/tables/{sample}.counts.tsv
+# results/quantification/reports/overview.html
+# Aggregation receipt: summary/quantification.md
