@@ -31,19 +31,20 @@ Record only the platform-specific connection and workspace fields actually neede
 
 Add or update one sentence in the project-root `AGENTS.md`:
 
-> Before running scientific computations, read [.paper-craft/compute.md](.paper-craft/compute.md) and use its configured backend and platform skill.
+> Before executing project commands in any phase (including check, review, and delegated work), read [.paper-craft/compute.md](.paper-craft/compute.md) and enforce its remote execution boundary for all tests and business code.
 
 On creation or rerun, preserve unrelated configuration and update the existing policy and pointer in place.
 Reconcile existing routing instructions into the canonical policy while retaining platform-specific references.
 Report any incompatible project requirement instead of leaving contradictory instructions active.
 If Git ignores either generated file, report that it will not travel with the project; preserve the user's ignore rules.
 
-**Done:** The policy contains a definition for every selected backend, pending items identify the affected routes, and `AGENTS.md` has one compute-policy pointer.
+**Done:** The policy preserves the template's execution boundary, contains a definition for every selected backend, and identifies pending items by affected route; `AGENTS.md` has one compute-policy pointer covering every phase and subagent.
 
 ## 3. Verify and report
 
 Check that the pointer resolves, each route resolves to a backend definition or is explicitly unconfigured, selected platform skills are available, and referenced project files exist.
 Check that required backend fields are filled, pending items block the affected routes, and no credentials or template placeholders remain.
+Verify that the policy routes tests and business code remotely even during check and review, permits local lint/typecheck/build only within that boundary, and requires an explicit exception for local execution of tests or business code.
 
 Use the selected platform skill's bounded, noninteractive, read-only connection/authentication checks where available.
 Stop after inspection even if the platform skill's normal workflow continues into execution.

@@ -2,10 +2,13 @@
 
 ## Execution boundary
 
-Edit source locally; inspect files and run lightweight code checks locally.
-Run scientific computations, including data processing, simulations, training, and evaluation, through the remote routes below.
-Before each computation, identify its CPU/GPU requirement and read the selected platform skill.
-If a route is unconfigured, its skill is missing, or its backend is inaccessible, stop that computation and report what is needed.
+Run all tests and business code through the configured remote routes below, including scientific computations, verification scripts that import project modules, and minimal reproductions.
+This boundary applies in every phase, including check and review, and to every subagent; task size and duration do not change the execution location.
+Edit and inspect files locally; lint, typecheck, and build may run locally only when they execute neither tests nor business code.
+Before running a command, inspect its entry point and hooks to determine what it actually executes; route commands that execute tests or business code remotely regardless of their name.
+Before each remote execution, identify its CPU/GPU requirement and read the selected platform skill.
+If a route is unconfigured, its skill or required environment is missing, or its backend is inaccessible, stop the affected execution and report what is needed; never fall back to local execution.
+Local execution of tests or business code requires explicit user authorization for that scope or an explicit exception recorded in this policy; other skills' check instructions do not grant an exception.
 Use the configured route until the user changes it; GPU requirements must not silently fall back to CPU or a local accelerator.
 
 ## Routes
