@@ -129,6 +129,7 @@ paper-craft reimplements all bipartite skills in TypeScript, renaming the `bip-`
 | `pc-digest` (`bip-digest`) | Themed narrative digests |
 | `pc-narrative` (`bip-narrative`) | Narrative generation |
 | `pc-scout` (`bip-scout`) | SSH server resource scouting |
+| `pc-compute-config` | Configures project CPU/GPU backends and platform skills in `.paper-craft/` |
 
 ## Project Status
 
