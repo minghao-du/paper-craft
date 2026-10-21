@@ -125,6 +125,7 @@ cat .ms-config.json
 ```
 
 Read `misc/session-onboarding.md` and `CLAUDE.md`.
+Read the project's root `RESEARCH-PLAN.md` if present.
 Durable session state lives in the repo; `/pc-ms-tuckin` Step 4 is the contract for what goes where.
 The onboarding doc carries what the paper is and is not, the peer sessions and their remits, the working disciplines, and the open threads; take it as the baseline for what is done vs. in flight.
 

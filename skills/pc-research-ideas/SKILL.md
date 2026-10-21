@@ -12,6 +12,8 @@ discussion in chat; do not automatically create notes, issues, or other records.
 
 ## 1. Establish the paper corpus
 
+Read the project's root `RESEARCH-PLAN.md` if present.
+
 Use the user's selected files or paper sections as the evidence boundary. Otherwise,
 discover papers in the specified project directory, or the current project when
 unambiguous, and state which files this discussion will use. Ask for a choice when
