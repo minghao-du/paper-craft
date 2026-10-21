@@ -56,6 +56,7 @@ paper-craft reimplements all bipartite skills in TypeScript, renaming the `bip-`
 | `pc-ms-poll` (`bip-ms-poll`) | Poll manuscript session state |
 | `pc-lit` (`bip-lit`) | Literature retrieval and discussion |
 | `pc-research-ideas` | Manual research discussion grounded in selected project papers |
+| `pc-research-plan` | Manually creates or updates a project-root research overview and phased plan |
 | `pc-lit-import` (`bip-lit-import`) | Paperpile literature import |
 | `pc-issue-file` (`bip-issue-file`) | Issue creation and filing |
 | `pc-issue-check` (`bip-issue-check`) | Issue compliance checking |
