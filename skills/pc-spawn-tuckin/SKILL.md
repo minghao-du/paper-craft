@@ -5,7 +5,7 @@ description: Persist a plain (non-EPIC) spawn session's state before context res
 
 # /pc-spawn-tuckin
 
-Flush a `pc spawn` worker's state to durable storage before a context reset or session end.
+Flush an assigned worker's state to durable storage before a context reset or session end.
 Run this when context is getting long or before stopping.
 
 This is the write-side counterpart to `/pc-spawn-resume` (which reads what this writes) and the single-slot, non-EPIC counterpart to `/pc-conductor-tuckin` (which persists the fleet's view across many slots).
@@ -82,6 +82,6 @@ If it's a few commits into early exploration, leave it as a branch — don't for
 
 ### Step 5: Continuation prompt
 
-Write the continuation prompt to `_ignore/CONTINUE-spawn.md` and echo it, per `docs/guides/continuation-prompt.md`.
+Write the continuation prompt to `_ignore/CONTINUE-spawn.md` and echo it, per [the continuation contract](../lib/continuation.md).
 For this session: start in the clone/worktree, run `/pc-spawn-resume`, and the durable state is the PR (its body and comments) or, if none exists yet, the pushed branch.
 Then: safe to reset context.

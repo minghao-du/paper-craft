@@ -38,6 +38,3 @@ site/
 node_modules/
 dist/
 *.tsbuildinfo
-
-# paper-craft
-/pc

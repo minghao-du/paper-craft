@@ -1,12 +1,15 @@
 ---
 name: pc-conductor-spawn
-description: Spawn a Claude session in a clone for an EPIC issue
+description: Spawn an issue worker in a clone or worktree through tmux and the selected agent runner
 ---
 
 # /pc-conductor-spawn
 
-Spawn a Claude Code session in a tmux window to work on a GitHub issue.
-The worker runs inside a **ralph-loop** with an **issue-lead subagent** that evaluates progress at stopping points.
+Read [the shared runtime and workflow contract](../lib/workflow.md) before using helper commands or runtime-specific tools.
+Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
+
+Spawn the selected agent runner in a tmux window to work on a GitHub issue.
+The worker follows the iteration and **issue-lead** stopping-point protocol below; the Ralph plugin is one Claude Code implementation, not a requirement for other runners.
 
 This is fleet-conductor machinery: it executes a spawn, annotating it with live fleet facts the topic side (`/pc-epic`) cannot see.
 See "Where the prompt comes from" below for the epic/conductor split.
@@ -30,13 +33,16 @@ Most of the time `/pc-epic` has already decided an issue is ready and written th
 Check there first, under **either** naming convention live in that directory — `<N>.md` (current) or `spawn-<N>.txt` (older):
 
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
-INTENT=$(find_spawn_intent "$CLONE_ROOT" <N>)
-[ -n "$INTENT" ] && cat "$INTENT"
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
+if INTENT=$(pc workflow intent find <N> --config "$CONFIG" --path); then
+  cat "$INTENT"
+else
+  rc=$?; [ "$rc" -eq 1 ] || exit "$rc"   # absent intent is distinct from lookup failure
+fi
 ```
 
-`<this-skill's-base-directory>` is this skill's base directory as given at invocation (e.g. `/home/user/.claude/skills/pc-conductor-spawn`); the shared helper lives at `lib/spawn-intent.sh`, a sibling of every skill directory. Don't narrow the lookup to one filename pattern.
+Use the absolute authoritative conductor config in every shell invocation; worker snapshots are refused.
 
 - **Intent file present**: it is the base for the `IMPORTANT CONTEXT` section of Step 4's prompt — don't re-derive what it already says.
   Check it against live fleet state (Step 2b) and append fleet facts it structurally couldn't know: which host/clone is actually free, a concurrent worker editing an overlapping file, a build running on a target remote host.
@@ -68,9 +74,9 @@ Read `clone_root` and `local_worktrees` from `.epic-config.json`.
 
 If clone-name not specified, find an idle clone: on `main`, clean, no live tmux pane in its directory, no `.epic-status.json`, no hold:
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
-OCCUPIED=$(tmux list-panes -a -F '#{pane_current_path}' 2>/dev/null) || OCCUPIED=""
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
+OCCUPIED=$(tmux list-panes -a -F '#{pane_current_path}') || { echo "Cannot inspect tmux occupancy" >&2; exit 2; }
 for name in $(jq -r '.clone_names[]' .epic-config.json); do
   dir="$CLONE_ROOT/$name"
   [ "$(git -C "$dir" branch --show-current 2>/dev/null)" = "main" ] || continue
@@ -85,7 +91,9 @@ for name in $(jq -r '.clone_names[]' .epic-config.json); do
 done
 ```
 
-If `tmux` fails, `OCCUPIED` is empty and every clone looks free. Selection is best-effort; `pc spawn`'s refusal to launch into a directory a live pane occupies (Step 5) is the invariant.
+A failed tmux query blocks selection.
+This list only identifies candidates: include pane subdirectories, check holds, background jobs and all directory owners before treating one as available; recheck immediately before Step 5.
+There is no implemented `pc spawn` guard to rely on.
 
 Don't rank idle clones by build-cache size; it records history, not whether the next build hits. If clones are otherwise equivalent, pick arbitrarily.
 If all busy, offer to create a new clone using a name from `new_clone_names` in the config.
@@ -97,8 +105,8 @@ Branch name is `<N>-<slug>` where `<slug>` is the first 4 words of the issue tit
 
 Check if slot already exists:
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 SLOT="$CLONE_ROOT/issue-<N>"
 if [ -d "$SLOT" ]; then
   # Worktree exists — check for active tmux window
@@ -106,12 +114,15 @@ if [ -d "$SLOT" ]; then
     echo "Active session already running for <N>-issue-<N> — attach to it instead"
     exit 0
   else
-    echo "Worktree exists, no active session — will resume"
+    echo "Worktree exists; ownership unknown — verify prior owners and jobs before resuming"
+    exit 2
   fi
 else
   # Check for leftover branch from a previous failed attempt
   if git branch --list "<N>-*" | grep -q .; then
-    git branch -D $(git branch --list "<N>-*" | tr -d ' ')
+    git branch --list "<N>-*"
+    echo "Existing branches need ownership and unmerged-work checks before reuse" >&2
+    exit 2
   fi
   # Create worktree from the main repo (conductor's working directory)
   git worktree add "$SLOT" -b <N>-<slug>
@@ -120,25 +131,25 @@ fi
 
 ### Step 2: Prepare slot and clean stale state
 
-Preserve the prior assignment's state, then clear all three stale-state files: `.epic-status.json`, `.epic-worklog.md`, and `.claude/ralph-loop.local.md`. Clear them only if the preserve did not fail. Deletes use `find <absolute-path> -delete`, never `rm`. A `$` in the same command as `rm` trips Claude Code's destructive-removal guard, which bypass mode does not suppress. And cwd does not persist between Bash calls in an agent thread.
+Preserve the prior assignment's state and verify its archive before clearing stale status/worklog files for a confirmed fresh assignment.
+Ownership and terminal gates from `/pc-conductor` must already be satisfied; unknown occupancy blocks checkout changes and deletion.
+The CLI preserves originals; inspect the returned manifest and compare the archived files before any separately authorized cleanup.
+In the Claude Code + Ralph branch only, also retire its verified inactive `.claude/ralph-loop.local.md` and follow that harness's deletion constraints.
+Use absolute paths or set cwd in each shell invocation.
 
 **Clone mode**:
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 cd "$CLONE_ROOT/<clone>"
-git checkout main && git pull --ff-only origin main
-DEST=$(preserve_epic_state "$(pwd -P)" "$CLONE_ROOT" "before reassigning this clone to a new issue.")
-rc=$?
-if [ "$rc" -eq 0 ]; then
-    echo "Preserved prior assignment's worklog+status to $DEST"
-elif [ "$rc" -eq 2 ]; then
-    echo "PRESERVATION FAILED: cp did not succeed -- stop and investigate before deleting anything" >&2
+if [ -f .epic-status.json ]; then
+  pc workflow preserve --dir "$CLONE_ROOT/<clone>" --reason "before reassigning this clone" --config "$CONFIG" || exit 2
+elif [ -f .epic-worklog.md ]; then
+  echo "Orphaned worklog: preserve and investigate before reuse" >&2; exit 2
 fi
-if [ "$rc" -ne 2 ]; then
-    find "$CLONE_ROOT/<clone>" -maxdepth 1 \( -name '.epic-status.json' -o -name '.epic-worklog.md' \) -delete
-    find "$CLONE_ROOT/<clone>/.claude" -maxdepth 1 -name 'ralph-loop.local.md' -delete 2>/dev/null
-fi
+# Inspect the returned archive/manifest and verify release before separately authorized cleanup.
+# Originals remain until those checks succeed; do not continue preparation while they are unresolved.
+# Only then fast-forward this exclusively owned checkout and clear the verified prior assignment state.
 # Stale build artifact, independent of the preserve (see "Stale binaries" below).
 find "$CLONE_ROOT/<clone>/zig-out/bin" -maxdepth 1 -name 'phyz' -delete 2>/dev/null
 ```
@@ -148,27 +159,23 @@ find "$CLONE_ROOT/<clone>/zig-out/bin" -maxdepth 1 -name 'phyz' -delete 2>/dev/n
 **Worktree mode**: resolve `CLONE_ROOT` *before* `cd "$SLOT"`, in the same command — `.epic-config.json` is not inside a linked worktree, and resolving after the `cd` yields an empty root silently:
 
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 cd "$SLOT"
-DEST=$(preserve_epic_state "$(pwd -P)" "$CLONE_ROOT" "before a fresh restart on the same issue.")
-rc=$?
-if [ "$rc" -eq 0 ]; then
-    echo "Preserved prior attempt's worklog+status to $DEST"
-elif [ "$rc" -eq 2 ]; then
-    echo "PRESERVATION FAILED: cp did not succeed -- stop and investigate before deleting anything" >&2
+if [ -f "$SLOT/.epic-status.json" ]; then
+  pc workflow preserve --dir "$SLOT" --reason "before a fresh restart on the same issue" --config "$CONFIG" || exit 2
+elif [ -f "$SLOT/.epic-worklog.md" ]; then
+  echo "Orphaned worklog: preserve and investigate before restart" >&2; exit 2
 fi
-if [ "$rc" -ne 2 ]; then
-    find "$SLOT" -maxdepth 1 \( -name '.epic-status.json' -o -name '.epic-worklog.md' \) -delete
-    find "$SLOT/.claude" -maxdepth 1 -name 'ralph-loop.local.md' -delete 2>/dev/null
-fi
-find "$SLOT/zig-out/bin" -maxdepth 1 -name 'phyz' -delete 2>/dev/null
+# Verify the archive and exclusive ownership before separately authorized clearing of stale state.
 ```
 
 **Resuming a clone parked mid-issue** (branch and worklog deliberately kept): delete `.epic-status.json` anyway. It is instructions, not context — `lead_guidance` outranks the launch prompt, so a stale "stand down" makes the worker stand down on arrival. Keep the worklog. Do **not** delete `zig-out/bin/phyz` here: on a parked slot that binary can be the provenance of an artifact the branch already committed. Instead tell the slot to rebuild before re-verifying.
 
 ```bash
-find "$SLOT" -maxdepth 1 -name '.epic-status.json' -delete   # keep .epic-worklog.md and zig-out/
+pc workflow preserve --dir "$SLOT" --reason "before clearing obsolete guidance on resume" --config "$CONFIG"
+# Verify success and release first; clear only obsolete status in separately authorized cleanup.
+# Keep .epic-worklog.md and zig-out/.
 ```
 
 **Stale binaries.** A pre-existing `zig-out/bin/phyz` reports its build-time commit, not the clone's `HEAD`, and a stale one returns confident wrong numbers. Two remedies cover each other's blind spots: the prep-step delete above (fresh assignments only), and the check in the brief (Step 4, "For code changes"). The delete is scoped to that one binary on purpose; add bench binaries on their own line if wanted.
@@ -205,8 +212,8 @@ If an intent file exists, this is a cross-check against the live issue body, not
 
 ### Step 4: Compose the prompt
 
-The prompt has two parts: (1) the work instructions passed as the initial message to `claude` via `--prompt-file`, and (2) a ralph-loop invocation that the worker runs as its first action.
-The ralph-loop prompt is kept SHORT (no special characters) — just a reminder to continue.
+The prompt has two parts: (1) work instructions delivered through the selected runner's supported input method, and (2) the iteration/stopping-point protocol.
+For Claude Code with Ralph installed, its loop reminder stays SHORT; other runners execute the same gates through their supported continuation mechanism.
 
 The `IMPORTANT CONTEXT` section at the bottom is where the two sources combine: start from the epic's intent file when one exists, correct it per Step 2b, then append fleet facts only the conductor can see.
 Spend the measurement here rather than in later corrections, which race the worker: hash the inputs the issue names, resolve every bare path against the real tree, locate the tools the work needs and report their versions.
@@ -231,8 +238,11 @@ When you change a gating rule, sweep the slots already running under the old one
 ````
 You are working on GitHub issue #N TITLE.
 
-First, run this command to start the iteration loop:
+Follow the iteration and stopping-point protocol below using your runner's supported continuation mechanism.
+Only for Claude Code with the Ralph plugin, start its loop with:
 /ralph-loop:ralph-loop --completion-promise 'ISSUE WORK COMPLETE' --max-iterations 20 Continue working on the task. Read .epic-status.json and .epic-worklog.md for context. Output ISSUE WORK COMPLETE in promise tags when done.
+Other runners must still perform every issue-lead and quality gate; if an independent evaluator cannot be started through tmux or native tools, leave that gate pending rather than self-certifying it.
+Tool names such as SendMessage/ListAgents below denote the Claude branch; use only supported, authorized native equivalents and persist undelivered notifications in the worklog and FINAL RECAP.
 
 EPIC STATUS PROTOCOL — You MUST follow this:
 1. At session start, write .epic-status.json (see format below)
@@ -292,7 +302,7 @@ Do not quietly reconcile a contradiction in either direction.
 HUMAN INTERRUPT — The AUTONOMY rule governs YOUR decisions, not the
 human steering. If a human interrupts to ask a question, discuss, or
 change direction, that supersedes the loop: PAUSE it FIRST
-(/ralph-loop:cancel-ralph, or rm .claude/ralph-loop.local.md) so the
+(for Claude + Ralph: /ralph-loop:cancel-ralph; otherwise the runner's supported pause) so the
 stop hook stops re-injecting "continue working", then engage. Do NOT
 grind stale work between their messages just to satisfy the hook. When
 the discussion resolves, either RESTART the loop with an updated prompt
@@ -326,7 +336,7 @@ If you launch a long-running experiment:
    tool's own status), keep `set -o pipefail` through any pipe, and never
    wrap the probe in `|| echo`. For a remote probe, check the status of the
    whole `ssh` call from outside it.
-4. Each ralph-loop iteration: run check_cmd, if not ready end the turn
+4. Each supported continuation iteration: run check_cmd, if not ready end the turn
 5. After 3 consecutive check failures, set stop_reason to
    mechanical-blocker and invoke the lead
 
@@ -342,7 +352,7 @@ a nested `"` in `-m "..."` truncates the message and breaks the `&&` chain.
 After pushing, confirm the push landed (`git ls-remote origin <branch>`
 matches `git rev-parse HEAD`), not just that the command ran.
 
-rm AND $ — KEEP THEM OUT OF THE SAME COMMAND. Claude Code's destructive-
+CLAUDE CODE BRANCH ONLY — rm AND $: KEEP THEM OUT OF THE SAME COMMAND. Its destructive-
 removal guard fires when a command contains both `$` (anywhere) and the
 word rm/rmdir, bypass mode does not suppress it, and an unattended worker
 stops at its prompt. Use literal absolute paths with no `$`, or
@@ -444,7 +454,7 @@ COMPLETION: When done (or when lead says completed):
 
    IF YOU RESUME WORK AFTER THIS POINT, RE-CREATE `.epic-status.json` FIRST,
    naming the issue and a live phase: the conductor's reclaim gate and
-   `pc fleet watch` key on the file existing. Commit and push before
+   slot observation key on the file existing. Commit and push before
    verifying — the clone is pooled.
 
    LANDING DELEGATION: <quote the recorded standing user delegation for
@@ -649,8 +659,8 @@ Now read the issue and begin work:
 
 **Next to any build or run command you put in the prompt** (not in a separate warnings section), add:
 ```
-- This exact command string is in YOUR OWN argv (a pc spawn worker's prompt IS
-  its command line), so `pgrep -f` or `ps | grep` on ANY fragment of it matches
+- This exact command string may be in YOUR OWN argv (depending on the runner's
+  prompt input), so `pgrep -f` or `ps | grep` on ANY fragment of it can match
   your own session and a wait loop built from it can never exit. Poll a PID you
   captured at launch (`$!`), or just let a backgrounded Bash re-invoke you.
 ```
@@ -698,51 +708,31 @@ The check compares code between the two commits (`src build.zig build.zig.zon`, 
 
 ### Step 5: Launch tmux window
 
-Write the composed prompt to a temp file, then use `pc spawn` with
-`--prompt-file` to pass it. This avoids shell expansion issues with
-quotes, braces, and special characters in the prompt.
+Write the composed prompt to a file and use the selected runner's documented prompt-input method.
+The current CLI does not implement `pc spawn`; a prepared prompt is not a launched worker.
+Keep the original placement and lifecycle guards explicit:
 
-`pc spawn` refuses to launch into a directory a live tmux pane already
-occupies (exits non-zero with `refusing: a tmux pane is already live in
-<dir>`), so a clone claimed between Step 1 and here is caught at the spawn
-itself — no second agent can land in one checkout. If you hit that refusal,
-pick another idle clone. Pass `--force` only when you deliberately want a
-second session in the same directory.
+1. Resolve the authoritative config and exact slot directory.
+2. Recheck tmux pane paths, including subdirectories, holds and all directory owners immediately before launch.
+   Unknown occupancy blocks reuse; allocate an exclusively owned new slot or leave the brief prepared.
+3. Create the tmux window named `<N>-<clone-name>` or `<N>-issue-<N>` in that exact directory.
+   Use the actual runner executable and arguments established from its installed help, with explicit user authorization for the task.
+   Treat prompt content as data; prefer supported prompt-file input and avoid shell-interpolated multiline text.
+4. Record the returned pane identifier and verify both the directory and actual runner startup.
+   The existence of a tmux pane alone does not establish that a runner received the brief or began work.
+5. If no suitable launch path is available or verification fails, report `prepared` or `launch-failed` and keep intent queued.
 
-```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
-
-# Write prompt to temp file (conductor does this, NOT via shell expansion)
-# Use the Write tool to create /tmp/spawn-<N>.txt with the full prompt
-
-# Clone mode: --name is NNN-clone (e.g. "281-cedar")
-pc spawn --prompt-file /tmp/spawn-<N>.txt \
-  --dir "$CLONE_ROOT/<clone-name>" \
-  --name "<N>-<clone-name>"
-
-# Worktree mode: --name is NNN-issue-NNN (e.g. "281-issue-281")
-pc spawn --prompt-file /tmp/spawn-<N>.txt \
-  --dir "$CLONE_ROOT/issue-<N>" \
-  --name "<N>-issue-<N>"
-```
-
-**IMPORTANT**: Always use `--prompt-file`, never `--prompt "$(cat file)"`.
-The `$(cat)` pattern causes zsh shell expansion errors with complex prompts.
-
-**Do NOT** use raw `tmux new-window` / `tmux send-keys` / `claude` commands.
-Always go through `pc spawn` which handles the full lifecycle correctly.
-
-`pc spawn`'s behaviour comes from the installed binary, not from the paper-craft source. Before relying on a recent `pc` change, confirm the binary has it (`strings "$(command -v bip)" | grep -F '<new string>'`) and rebuild if not.
+Native harness launch tools may supply an equivalent checked session instead of a tmux terminal when available.
+Never bypass these ownership, input and confirmation checks by improvising an unchecked launch.
 
 ### Step 6: Confirm
 
 If launch succeeded and an intent file (`$INTENT` from Step 3) was used, mark it consumed now — don't delete it, and verify the move, since an unmoved brief reads as pending forever:
 
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-mark_spawn_intent_consumed "$INTENT"
-ls "$CLONE_ROOT/.spawn-prompts/consumed/<N>.md"
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+pc workflow intent consume <N> --config "$CONFIG"
+# Require exit 0 and verify the returned JSON path; archives use unique subdirectories.
 ```
 
 The directory lives outside every clone's git, so deletion there is unrecoverable; moving it aside lets `/pc-conductor-tuckin` report it as consumed.
@@ -750,7 +740,11 @@ The directory lives outside every clone's git, so deletion there is unrecoverabl
 An epic can append to `.spawn-prompts/<N>.md` after you consumed it, recreating a fragment in the live queue. Tell a delta from a re-brief by content — a brief opens with an `EPIC:` header, a delta does not:
 
 ```bash
-if [ -f "$CLONE_ROOT/.spawn-prompts/consumed/$N.md" ] \
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
+N=123   # replace with the assigned issue number
+CONSUMED=$(find "$CLONE_ROOT/.spawn-prompts/consumed" -type f \( -name "$N.md" -o -name "spawn-$N.txt" \) -print -quit)
+if [ -n "$CONSUMED" ] \
    && ! grep -qiE '^\**EPIC\**:? *#?[0-9]+' "$CLONE_ROOT/.spawn-prompts/$N.md"; then
   echo "DELTA, not a brief"     # deliver it; do NOT spawn from it
 else
@@ -776,8 +770,8 @@ If none is running, suggest starting one; workers also report back on their own.
 
 **Clone mode** — create a new clone and register it:
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json) || { echo "FATAL: cannot resolve clone_root" >&2; exit 1; }
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 [ -n "$CLONE_ROOT" ] && [ -d "$CLONE_ROOT" ] || { echo "FATAL: clone_root '$CLONE_ROOT' missing" >&2; exit 1; }
 REPO=$(jq -r .github_repo .epic-config.json)
 cd "$CLONE_ROOT"
@@ -787,9 +781,10 @@ git clone "git@github.com:$REPO.git" <new-name>
 
 Then all of:
 
-1. **Add the name to `clone_names` in `.epic-config.json`.** `pc spawn` doesn't consult it, but Step 1's selection and the conductor's scans do; an unregistered clone is invisible.
-2. **Trust the directory before spawning into it.** A fresh clone opens on Claude Code's folder-trust dialog, which queues the prompt. If you answer it from the conductor, read which option is highlighted first (`grep -nE 'No, exit|Yes, I trust'` the pane) and send `Down` before `Enter` when `No, exit` is highlighted — never a blind `Enter`.
-3. **Restart `pc fleet watch`.** It enumerates slots at startup only. From the conductor clone, `kill $(fleet_watchers)` (from `lib/spawn-intent.sh`), then start it as in `/pc-conductor` Step 7. `fleet_watchers` matches argv and this conductor's cwd, so it neither matches a worker's prompt nor kills another fleet's watcher.
+1. **Add the name to `clone_names` in the authoritative `.epic-config.json`.** Step 1 and the conductor's scans use it; an unregistered clone is invisible.
+2. **Verify the selected runner can use the directory before spawning into it.** In the Claude Code branch, a fresh clone can open its folder-trust dialog, which queues the prompt. If you answer it from the conductor, read which option is highlighted first (`grep -nE 'No, exit|Yes, I trust'` the pane) and send `Down` before `Enter` when `No, exit` is highlighted — never a blind `Enter`.
+3. **Refresh slot observation.** Re-run `/pc-conductor`'s scan after registration.
+   If a supported external monitor enumerates only at startup, restart only its recorded owned identity and verify the new slot is covered; this CLI does not yet implement `pc fleet watch`.
 
 **Worktree mode** — no registration needed; worktrees are created on demand in Step 1 and named `issue-<N>`.
 
@@ -797,18 +792,16 @@ Then all of:
 
 **Clone mode** — if a clone is on a non-main branch:
 1. Check if there's an open PR: `gh pr list --head <branch>`
-2. If merged/closed: `git checkout main && git pull --ff-only`
+2. If merged/closed: run `pc fleet reclaim-check --dir <slot> --config <authoritative-config>` and all `/pc-conductor` terminal, ownership and preservation gates before any separately authorized checkout change.
 3. If open: warn user — they may want to resume
 
 **Worktree mode** — when an issue's PR is merged:
-```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
-git worktree remove "$CLONE_ROOT/issue-<N>"
-git branch -d <N>-short-desc
+```sh
+pc fleet reclaim-check --dir /absolute/path/to/pool/issue-<N> --config /absolute/path/to/conductor/.epic-config.json
 ```
-If the worktree has uncommitted changes, use `--force`.
-Check for an open PR first — don't remove a worktree with unmerged work.
+Leave the worktree intact while this read-only check is blocked.
+Before separately authorized removal, verify the PR is merged, preserve state, confirm all owners/jobs released and account for all uncommitted and unmerged work.
+Use ordinary non-forced removal; a refusal is a reason to investigate, not discard work.
 
 ## Gitignore reminder
 
@@ -821,7 +814,7 @@ Target project repos should gitignore these files (add to `.gitignore`):
 ```
 
 `.epic-status.json` and `.epic-worklog.md` live in each clone/worktree.
-`.epic-notifications.log` and `.epic-decisions.md` live in the conductor cwd (written by `pc fleet watch` and by the conductor itself).
+`.epic-notifications.log` and `.epic-decisions.md` live in the conductor cwd (written by a supported observer and by the conductor itself).
 None should be checked in.
 
 ## Conventions
@@ -832,4 +825,4 @@ Tmux windows named `NNN-YYY` where NNN is the issue number and YYY is the clone/
 ## Layout config (issue #149)
 
 `.epic-config.json` keeps working.
-The newer global `layout:` block in `~/.config/pc/config.yml` configures worktree mode for non-EPIC `pc spawn`; see `docs/guides/layout.md`.
+Use the authoritative `.epic-config.json` for clone/worktree layout; this CLI does not implement the upstream global `layout:` launcher.

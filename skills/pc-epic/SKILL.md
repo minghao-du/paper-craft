@@ -5,6 +5,9 @@ description: EPIC topic strategy — GitHub issue/PR triage, EPIC body compositi
 
 # /pc-epic
 
+Read [the shared runtime and workflow contract](../lib/workflow.md) before using helper commands or runtime-specific tools.
+Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
+
 Topic-scoped strategy for EPIC-based multi-clone orchestration: program state, issue/PR triage, EPIC body composition, and the semantic judgment calls a topic-agnostic fleet scanner structurally cannot make (a model-semantics change landing mid-sweep, a deletion in one issue that a sibling issue's patch depends on).
 Fleet mechanics — clone/tmux inventory, staleness checks, spawning, pruning of clone-side artifacts — belong to `/pc-conductor`.
 The two roles coordinate over `SendMessage` and a shared `.spawn-prompts/` directory (see Step 6); they do not need to be the same session, though they may run side-by-side in one tmux host.
@@ -51,7 +54,7 @@ Cross-session messages are nudges, not transcripts: lead with the decision or th
 - **Run a skeptic subagent on your own artifacts**: before claiming a question answered, and before filing an issue you wrote yourself.
 - **Before repeating who found something**, check the attribution against the log or the PR; it is the part of a claim nobody tests.
 - **Before escalating a question to the user, ask whether its answers lead to different actions.** If both lead to the same action, do not escalate.
-  Put a question for the user as one line in your report, page them per `/pc-conductor`'s "Paging the user", park only that item, and keep working the rest. Never use `AskUserQuestion` here: until the user answers, no peer message reaches you.
+  Put a question for the user as one line in your report, page them per `/pc-conductor`'s "Paging the user", park only that item, and keep working the rest. Use the current harness's supported user-input mechanism and continue independent work while waiting.
 
 ## Configuration
 
@@ -94,10 +97,12 @@ Re-run this write every time `/pc-epic` starts a fresh cycle, since the address 
 - Resolve `CLONE_ROOT`, read `$CLONE_ROOT/.conductor-session` for the conductor's self-registered address, and `SendMessage` it a request for its current slot→issue occupancy table (with each slot's **phase**) and its negative list (decisions already taken against an action — see `/pc-conductor`'s Step 5).
 - **Scope**: Group A may skip its per-item `gh issue view` confirmation only for items on a slot in an in-progress phase (`coding`, `exploring`, `testing`, `awaiting-results`, `quality-gate`). Always confirm `completed`/`needs-human` slots and anything the table doesn't cover — a slot can finish and its issue close before the slot is cleaned up.
 - **Fallback**: if `.conductor-session` is absent or the send fails, dispatch Group A unscoped. Do not block waiting for a conductor that may never exist.
+  Missing runtime messaging leaves occupancy unknown and blocks placement, not the independent issue analysis.
 
 This narrows Group A's redundant re-verification, not its judgment: occupancy and dependency reasoning are different questions.
 
-Dispatch two groups of `general-purpose` subagents in parallel — single message, multiple `Agent` tool calls.
+Dispatch the two scanner groups through supported independent agents when available; `Agent`/`general-purpose` is the Claude branch.
+For another runner, preserve the same group scopes and checks through tmux/native helpers, or perform the read-only scans sequentially if delegation is unavailable.
 Follow the dispatch pattern in `SUBAGENT-SCAN.md` (paper-craft repo root).
 Scope the fan-out to **your** EPIC; confirm the number resolves, and do not enumerate the others:
 
@@ -226,14 +231,14 @@ Only a `FINAL` relay — or a decision reached directly in this session — auth
 For each issue judged ready — unblocked per Step 3, no unresolved conflict per Step 4a/4b, **and holding no live slot in the conductor's occupancy table** — draft the semantic brief and write it to:
 
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
-mkdir -p "$CLONE_ROOT/.spawn-prompts"
-# Use the Write tool to create "$CLONE_ROOT/.spawn-prompts/<N>.md" with the brief
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
+# Write the brief to a file inside the configured project, then queue without overwriting intent.
+pc workflow intent write <N> --prompt-file /absolute/path/to/project/brief.md --config "$CONFIG"
 ```
 
-`<this-skill's-base-directory>` is this skill's base directory as given at invocation (e.g. `/home/user/.claude/skills/pc-epic`); the shared helper lives at `lib/spawn-intent.sh`, a sibling of every skill directory.
-`clone_root` is tilde-form; `resolve_clone_root` expands it.
+Use the absolute authoritative conductor config in every shell invocation; worker snapshots are refused.
+`pc workflow root` expands configured tilde paths and validates the authoritative project/pool.
 
 **Every brief opens with an `EPIC: <N>` line.** `/pc-conductor-spawn` requires it, and it is how the conductor counts live slots by EPIC.
 
@@ -241,7 +246,8 @@ mkdir -p "$CLONE_ROOT/.spawn-prompts"
 
 **Naming note**: an older convention names files `spawn-<N>.txt`. `/pc-conductor-spawn` checks for either; use `<N>.md` for new intent and don't rename existing files.
 
-This directory lives outside every clone's git and is the handoff point to `/pc-conductor-spawn`, which reads it, checks it against live fleet state, appends the fleet facts only it can see, and executes after user confirmation.
+This directory lives outside every clone's git and is the handoff point to `/pc-conductor-spawn`, which reads it, checks it against live fleet state, appends the fleet facts only it can see, and launches through the selected runner after the applicable authorization and occupancy gates.
+Without verified startup, report prepared and keep intent queued.
 
 **What a brief contains:**
 - **Only what the issue does not say.** Point at the issue's scope sections rather than restating them — open the issue before writing a brief, every time.
@@ -378,5 +384,5 @@ Key sections to maintain:
 ## Layout config (issue #149)
 
 `.epic-config.json`'s `clone_root` / `clone_names` / `local_worktrees` keep working untouched.
-The newer way to configure worktree mode (for non-EPIC `pc spawn` use) is the `layout:` block in `~/.config/pc/config.yml` — see `docs/guides/layout.md`.
+Use the authoritative `.epic-config.json` for clone/worktree layout; this CLI does not implement the upstream global `layout:` launcher.
 EPIC orchestration still reads `.epic-config.json` for now.

@@ -33,7 +33,8 @@ facts no skill carries.
 ## Config & data paths
 
 - Config: `~/.config/pc/config.yml`.
-- Nexus path comes from `nexus_path` in that config. All user data lives in the nexus repo
+- Nexus path comes from `nexus_path` in that config. Research data lives in the nexus repo;
+  workflow state may also live under explicitly configured project/clone roots
   (`DESIGN.md` §IV). The index cache lives at `$NEXUS_PATH/.paper-craft/cache/`.
 
 ## Repo facts

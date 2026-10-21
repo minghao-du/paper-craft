@@ -1,0 +1,12 @@
+#!/bin/sh
+PC_ENTRY=$0
+while [ -L "$PC_ENTRY" ]; do
+  PC_BASE=$(CDPATH= cd "$(dirname "$PC_ENTRY")" && pwd -P) || exit 1
+  PC_LINK=$(readlink "$PC_ENTRY") || exit 1
+  case "$PC_LINK" in
+    /*) PC_ENTRY=$PC_LINK ;;
+    *) PC_ENTRY=$PC_BASE/$PC_LINK ;;
+  esac
+done
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$PC_ENTRY")" && pwd -P) || exit 1
+exec "$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/cmd/pc/main.ts" "$@"

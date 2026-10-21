@@ -56,19 +56,16 @@ Use `--all` to disable filtering entirely.
 
 After checkin shows activity, spawn tmux windows for items that need review:
 
-```bash
-pc spawn matsengrp/repo#123              # By reference
-pc spawn https://github.com/org/repo/pull/42   # By URL
-pc spawn matsengrp/repo#123 --prompt "Rebase and fix conflicts"  # Custom prompt
-```
+Use `/pc-conductor-spawn` for the issue's brief, placement and checked tmux launch with the selected runner.
+The current CLI does not implement `pc spawn`; retain a prepared brief if launch is unavailable.
 
 Each window:
 - Opens in the correct local repo clone
-- Launches Claude Code with context about the issue/PR
+- Launches the selected agent runner with context about the issue/PR
 - Named by repo and number (e.g., `repo#123`)
 
-Tmux window existence = item under review.
-Close the window when done.
+Record the pane identifier and confirm the runner actually started the review.
+Retire only the owned pane after its work and dependent jobs finish; a window alone is not evidence of a live reviewer.
 
 ## Board triage (optional)
 

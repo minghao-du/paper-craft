@@ -5,6 +5,9 @@ description: Land a PR branch — squash merge, clean up local and remote branch
 
 # /pc-pr-land
 
+Read [the shared runtime and workflow contract](../lib/workflow.md) before using helper commands or runtime-specific tools.
+Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
+
 Squash-merge the current branch's PR and clean up.
 
 ## Usage
@@ -16,7 +19,7 @@ Squash-merge the current branch's PR and clean up.
 
 ## Worktree mode
 
-If `pc spawn` created the working tree as a linked git worktree (because the user opted into the global `layout: { mode: worktree }` block in `~/.config/pc/config.yml`), this skill detects that in Step 7a and performs the base-branch pull from the primary clone, then removes the worktree in Step 8 before deleting the branch.
+If the worker runs in a linked Git worktree, this skill detects that in Step 7a and performs the base-branch pull from the primary clone, then removes the worktree in Step 8 before deleting the branch.
 In the common clone-mode case (no `layout:` block) every step runs as it always has — the worktree detection is a no-op.
 
 ## Where to stand
@@ -35,13 +38,10 @@ If the ancestor test fails (the base moved, e.g. mid-batch), the default is to r
 
 Do this only for a worker that has ended (`stop_reason: awaiting-human-merge`, session idle). A live worker holding a landing delegation lands its own PR. If that clone is a fleet slot, reclaim it through `/pc-conductor`, which runs the issue-lead's terminal ceremony before preserving (Step 7a here would delete the status file the ceremony keys on).
 
-Check for co-tenancy:
-
-```sh
-for p in $(pgrep -x claude); do readlink /proc/$p/cwd; done | /usr/bin/grep -cE "^$PWD(/|$)"
-```
-
-More than 1 means co-tenancy. The count is a floor: it cannot see a session that `cd`s into this clone inside its Bash calls. For read-only inspection of a PR, prefer `git show <sha>:<path>` with `gh pr view <N> --json headRefOid`; `git fetch origin pull/N/head:<branch>` silently leaves an existing local branch at its old SHA (use `-f`).
+Check for co-tenancy using tmux pane paths, recorded ownership and the selected runner's supported process/session evidence.
+On Linux with Claude Code, process inspection may include its exact executable and `/proc` cwd; that cannot establish vacancy for other runners or OSes.
+Unknown ownership blocks checkout changes and cleanup.
+For read-only inspection of a PR, prefer `git show <sha>:<path>` with `gh pr view <N> --json headRefOid`; fetching into an existing local branch needs explicit ref-update handling.
 
 ## Workflow
 
@@ -154,44 +154,28 @@ Run this as **one** Bash invocation: shell variables do not survive between call
 
 ```bash
 LAND_DIR=$(pwd -P)
-SPAWN_INTENT=""
-for cand in ~/.claude/skills/lib/spawn-intent.sh ~/re/paper-craft/skills/lib/spawn-intent.sh; do
-    [ -r "$cand" ] && { SPAWN_INTENT="$cand"; break; }
-done
+CONFIG=/absolute/path/to/conductor/.epic-config.json
 if [ -f "$LAND_DIR/.epic-status.json" ]; then
-    [ -n "$SPAWN_INTENT" ] || { echo "STOP: spawn-intent.sh not found; nothing preserved" >&2; exit 1; }
-    source "$SPAWN_INTENT"
-    if [ -f "$LAND_DIR/.epic-config.json" ]; then
-        CLONE_ROOT=$(resolve_clone_root "$LAND_DIR/.epic-config.json") || { echo "STOP: clone_root unresolvable" >&2; exit 1; }
-    else
-        CLONE_ROOT=$(dirname "$LAND_DIR"); echo "WARNING: no .epic-config.json; preserving into $CLONE_ROOT" >&2
-    fi
-    DEST=$(preserve_epic_state "$LAND_DIR" "$CLONE_ROOT" "at land of PR #<N> (\"<title>\").")
-    rc=$?
-    if [ "$rc" -eq 0 ] && [ -n "$(find "$DEST" -maxdepth 1 -type f -size +0c 2>/dev/null)" ]; then
-        find "$LAND_DIR" -maxdepth 1 \( -name '.epic-status.json' -o -name '.epic-worklog.md' \) -delete
-        find "$LAND_DIR/.claude" -maxdepth 1 -name 'ralph-loop.local.md' -delete 2>/dev/null
-        gh pr comment <N> --body "🤖 EPIC worklog preserved to \`$DEST\`." \
-          || echo "WARNING: preserved to $DEST but the PR comment failed; report the path" >&2
-        echo "Preserved to $DEST"
-    else
-        echo "STOP: preservation did not verify (rc=$rc); originals left in place" >&2
-    fi
-fi
-if PRIMARY=$(pc worktree primary 2>/dev/null); then
-    echo "Landing from worktree $LAND_DIR (primary: $PRIMARY)"
-    cd "$PRIMARY"
+    RESULT=$(pc workflow preserve --dir "$LAND_DIR" --reason "at land of PR <N>" --config "$CONFIG") || exit 2
+    DEST=$(printf '%s\n' "$RESULT" | jq -er 'select(.status == "preserved") | .path') || exit 2
+    test -s "$DEST/manifest.json" || exit 2
+    echo "Preserved to $DEST; inspect manifest and compare originals before cleanup"
+    # Record the verified archive path on the PR; a failed comment does not undo preservation.
 fi
 ```
 
-The destination is always `<clone_root>/.preserved/`, never inside the clone. If this step printed STOP, resolve it before continuing. The PR comment is how a conductor tells a preserved land from a bypassed one.
+The destination is `<clone_root>/.preserved/`, outside the slot being retired.
+The CLI retains originals on success and failure; preserve, verify and establish exclusive ownership before any separately authorized removal.
+A failed or incomplete archive stops cleanup, and the verified path must be recorded on the PR.
 
-`pc worktree primary` exits 0 and prints the primary clone path **only** when the current directory is a linked worktree.
-In every other case (primary clone, non-pc checkout, non-git directory) it exits non-zero with no stdout — `$PRIMARY` remains empty and the `cd` is skipped.
-
-If `$PRIMARY` was set, Steps 7 and 7.5 below run in the primary clone; otherwise they run in `$LAND_DIR` exactly as today.
+Use `git worktree list --porcelain` and the current checkout's Git metadata to identify a linked worktree and the primary checkout; the portable CLI does not implement `pc worktree primary`.
+If the primary is separately owned, leave it unchanged rather than switching into it.
+Only when `$PRIMARY` has been resolved and its ownership verified may Steps 7 and 7.5 run there; otherwise stay in `$LAND_DIR` and report pending cleanup.
 
 ### Step 7: Return to base branch and pull
+
+For a fleet slot, run `pc fleet reclaim-check --dir <slot> --config <authoritative-config>` first and leave checkout changes blocked while it reports unresolved evidence.
+For any other checkout, exclusive ownership and verified preservation are prerequisites.
 
 ```bash
 git checkout <base>
@@ -208,10 +192,10 @@ test "$(git rev-parse HEAD^{tree})" = "$(git rev-parse <gated-sha>^{tree})"
 
 **Skip this step if Step 7a already `cd`'d to the primary** — Step 7 has already pulled it.
 
-If you landed from a scratch clone (EPIC worker, `pc spawn` without worktree mode, or any working copy that isn't the canonical one in `sources.yml`), the primary clone is now behind `origin/<base>`.
+If you landed from a scratch clone or any working copy that is not the authoritative project checkout, the primary clone is now behind `origin/<base>`.
 Pull it forward so the canonical checkout matches `main`.
 
-1. Resolve the primary clone path the way `pc spawn` does (mirrors `flow.ResolveRepoPath`: `nexus_path` from `~/.config/pc/config.yml`, repo from `git remote get-url origin`, then `sources.yml` + `config.yml` paths).
+1. Resolve the primary checkout from the actual Git worktree metadata or authoritative conductor config and verify all owners released it before updating it.
    If `$(pwd -P)` already equals it, or the repo isn't listed, skip this step.
 
 2. `git -C "$PRIMARY" pull --ff-only`.
@@ -226,11 +210,12 @@ If Step 7a found that you were landing from a linked worktree, remove the worktr
 
 ```bash
 if [ -n "$PRIMARY" ] && [ -n "$LAND_DIR" ] && [ "$LAND_DIR" != "$PRIMARY" ]; then
-    pc worktree remove "$LAND_DIR"
+    git worktree remove "$LAND_DIR"   # only after verified ownership, preservation and work accounting
 fi
 ```
 
-`pc worktree remove` defaults to `--force`, which is required because the squash-merge leaves the worktree carrying commits unreachable from the merged branch.
+Use ordinary non-forced Git removal; a refusal preserves the worktree for investigation.
+The portable CLI does not perform automatic reclaim, and unknown ownership or unaccounted work blocks branch deletion as well.
 Then delete the local branch:
 
 ```bash
@@ -246,15 +231,17 @@ If not, also run: `git push origin --delete <branch>`
 git status --porcelain
 ```
 
-If any untracked or modified files remain on main:
+If any untracked or modified files remain on main, account for them before separately authorized cleanup; retain verified workflow originals while ownership or cleanup is unresolved:
 - Move them to `_ignore/$(date -I)-landing/` (create the directory if needed)
 - Report what was moved
 
-The goal is a **totally clean `git status`** on main when landing is done.
+The goal is a clean owned checkout after verified preservation; when cleanup remains blocked, report the retained files and actual branch rather than moving them to manufacture cleanliness.
 
 ### Step 10: Confirm
 
-Report: "Landed #42.
+Report only verified outcomes, including cleanup blocked or retained files when applicable; the following is a successful-cleanup example:
+
+"Landed #42.
 On `<base>`, up to date, worktree clean.
 Branch `<branch>` deleted."
 If any files were moved to `_ignore/`, list them.

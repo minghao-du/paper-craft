@@ -27,10 +27,14 @@ pc never phones home.
 
 ## IV. Nexus Pattern
 
-All user data lives in a single git-backed nexus repository. Path comes
+Research data lives in a single git-backed nexus repository. Path comes
 from `~/.config/pc/config.yml` → `nexus_path`. The nexus is a git
-repo — all data is versioned and shareable. pc MUST NOT write outside
-the nexus or its own config directory.
+repo — research data is versioned and shareable.
+Workflow state may also be written inside the project and clone pool explicitly
+configured by the authoritative `.epic-config.json`: task briefs, slot state,
+holds and verified archives.
+Paths are resolved physically and writes must stay inside these configured roots.
+Other pc data stays in the nexus or pc's own config directory.
 
 ## V. Git-Compatible Collaboration
 
@@ -44,3 +48,18 @@ for the case where multiple people push to the same nexus.
 Skills are authored as TypeScript modules — testable, debuggable, and
 type-safe. The skill prefix is `pc-`. Skill docs remain canonical:
 when behavior changes, skill docs MUST update in the same PR.
+
+## VII. Runtime-Independent Workflows
+
+Workflow logic uses TypeScript, Git and files behind the `pc` CLI.
+JSON output and exit codes are the shared contract for any agent that can read
+files and execute commands, regardless of model or harness.
+Fleet terminal orchestration may depend on tmux as shared infrastructure.
+The agent runner is selected independently: tmux manages terminal sessions,
+while the runner supplies its own invocation, prompt input and reset behavior.
+Claude Code is not a required runner.
+Native messaging and runner-specific session APIs are optional capabilities.
+Git/file commands remain usable without starting a terminal session.
+An unavailable occupancy check means unknown, never free.
+Automatic reclaim remains blocked until occupancy and all preservation and
+completion checks are verified; the portable CLI provides read-only evidence.

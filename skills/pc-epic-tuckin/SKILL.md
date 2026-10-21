@@ -56,7 +56,7 @@ Only what survives both gates gets a destination:
 - **Housekeeping**: EPIC body headroom, known recurring conflicts, skill changes landed this session.
 
 **The prompt** is what you write to `_ignore/CONTINUE-epic-<N>.md` (keyed by EPIC number, as the guide requires) and print for the user.
-Its path, its under-a-page shape, and the rule that every action item carries its falsifier inline are `docs/guides/continuation-prompt.md`; the next session loads it with `/pc-continue`.
+Its path, its under-a-page shape, and the rule that every action item carries its falsifier inline are [the continuation contract](../lib/continuation.md); the next session loads it with `/pc-continue`.
 On top of that, the EPIC prompt adds the `/pc-epic <N>` invocation, a one-line pointer to `CONTINUATION-<N>.md` (the long file above), and **the two or three traps that would cost the most if rediscovered** — put those in the prompt itself, not only in the file, since they are what a fresh session gets wrong before it has read anything.
 
 **Record approvals as `approved at <SHA>`, never as a state.** "Approved by both" is true when written and becomes misleading the moment anyone pushes. Same class of defect: a fact that expires silently.

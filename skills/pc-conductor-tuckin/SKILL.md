@@ -5,6 +5,9 @@ description: Persist fleet-side clone/slot state before context reset
 
 # /pc-conductor-tuckin
 
+Read [the shared runtime and workflow contract](../lib/workflow.md) before using helper commands or runtime-specific tools.
+Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
+
 Flush fleet state — clone/slot status, pending spawn intent — to durable storage before a context reset or session end.
 Run this when context is getting long or before stopping.
 
@@ -24,16 +27,17 @@ Topic-side state (EPIC bodies, findings, decisions) is `/pc-epic-tuckin`'s job, 
 They are written at cold start and at handover, and nothing else re-checks them — a tuckin is the moment they are most likely to be wrong, since a role often changes hands shortly before a context reset.
 
 ```bash
-source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-CLONE_ROOT=$(resolve_clone_root .epic-config.json)
+CONFIG=/absolute/path/to/conductor/.epic-config.json
+CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 for f in .conductor-session .epic-session; do echo "$f: $(cat "$CLONE_ROOT/$f" 2>/dev/null)"; done
 ```
 
-Cross-check each name against `ListAgents`:
+Cross-check each name through the selected runner's supported session API (`ListAgents` in the Claude branch), when available:
 
 - **Names a live session** — correct, leave it alone.
 - **Names this session under an old name** — rewrite it with the current name.
-- **Names a session that no longer appears** — that role is vacant. Report it in Step 5 rather than nominating a successor; who takes a role is the user's call.
+- **Names a session that no longer appears** — investigate the recorded owner; absence alone means unknown, not vacant.
+  Report verified vacancy or unknown separately in Step 5 rather than nominating a successor; who takes a role is the user's call.
 
 **Address slots by clone directory, not by session name.**
 `ListAgents` renames a session when it is resumed — `birch` becomes `birch-61`, and a send to the bare name fails with a disambiguation error.
@@ -55,8 +59,8 @@ For each slot the conductor interacted with this session:
 1. Check if the slot's `.epic-status.json` is stale or missing
 2. If the conductor has newer information (e.g., a slot finished, got blocked, or changed phase), update the file:
    ```bash
-   source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-   CLONE_ROOT=$(resolve_clone_root .epic-config.json)
+   CONFIG=/absolute/path/to/conductor/.epic-config.json
+   CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
    cat > "$CLONE_ROOT/<slot>/.epic-status.json" << 'EOF'
    {
      "issue": <N>,
@@ -69,7 +73,7 @@ For each slot the conductor interacted with this session:
    EOF
    ```
 
-`<this-skill's-base-directory>` is this skill's base directory as given at invocation (e.g. `/home/user/.claude/skills/pc-conductor-tuckin`); the shared helper lives at `lib/spawn-intent.sh`, a sibling of every skill directory (see `skills/lib/spawn-intent.sh` in the `paper-craft` repo).
+Use the absolute authoritative conductor config in every shell invocation; worker snapshots are refused.
 
 Update slots the conductor has direct knowledge about.
 This includes:
@@ -94,7 +98,7 @@ Report both groups so the next conductor session (or the user) knows what's actu
 ### Step 3.5: Environment check
 
 Conditions that bite the next session and are invisible to `git`/`tmux`/`gh`.
-Run these; don't reason about whether they're likely.
+Run the host-appropriate equivalents; the following commands are Linux examples, not assumptions about the selected model.
 
 ```bash
 ps -eo pid,etime,rss,comm --sort=-rss | head -5   # long-lived process, outsized RSS
@@ -141,7 +145,7 @@ Print a summary:
 ```
 ## Tuckin Complete
 
-- Roles: conductor = <name> (verified live) | epic = <name> (verified live | VACANT — last named <name>, no longer in ListAgents)
+- Roles: conductor = <name> (verified live) | epic = <name> (verified live | verified vacant | unknown — evidence <source>)
 - Slot status updated: cedar, issue-295
 - Queued spawn intent: i302 (retry logic)
 - Consumed spawn intent: i298 (already launched, moved to consumed/)
@@ -153,6 +157,6 @@ Topic-side state (EPIC bodies) is unaffected by this — run
 
 ### Step 6: Continuation prompt
 
-Write the continuation prompt to `_ignore/CONTINUE-conductor.md` and echo it, per `docs/guides/continuation-prompt.md`.
+Write the continuation prompt to `_ignore/CONTINUE-conductor.md` and echo it, per [the continuation contract](../lib/continuation.md).
 For this session: start in the fleet working directory, run `/pc-conductor`, and the durable state is the slot files and queued spawn intents this tuckin wrote under the clone pool.
 Then: safe to reset context.

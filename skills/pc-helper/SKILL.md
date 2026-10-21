@@ -1,13 +1,16 @@
 ---
 name: pc-helper
-description: Start, message, resume, and shut down a long-lived helper session — a `claude --bg` peer that survives the primary's compaction and restarts, can message any session, and that the user can attach to. Includes a sweep for leftover helpers. Use when side work (a long gate, a trial build, a cross-session review) would otherwise block the primary's attention.
+description: Start, coordinate, resume and retire a durable helper through tmux or a supported background runner when work must outlive the primary session
 ---
 
 # /pc-helper
 
-A helper is a separate Claude session that you, the primary, start in the background and later shut down.
+Read [the shared runtime and workflow contract](../lib/workflow.md) before using helper commands or runtime-specific tools.
+Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
+
+A helper is a separate agent session that you, the primary, start in tmux or a supported background runner and later shut down.
 It is not an `Agent` subagent: a subagent lives inside your process, reports only to you, and dies with you.
-A helper has its own context window, keeps running through your compaction or restart, messages any session by name, and the user can attach to it.
+A helper has its own context window, keeps running through your compaction or restart, records results durably and optionally messages supported sessions, and the user can attach to it.
 Reach for a subagent when the work fits in one call and only you need the answer; reach for a helper when it outlives your turn or talks to other sessions.
 
 ## Usage
@@ -19,6 +22,9 @@ Reach for a subagent when the work fits in one call and only you need the answer
 ```
 
 ## Facts this skill depends on
+
+The following command flags, identifiers and transcript paths describe the Claude Code background branch only.
+For other runners, use the same home/ownership/result/retirement rules with their documented tmux startup, resume and stop behavior.
 
 - `claude --bg` sessions ignore the shell's `CLAUDE_CODE_OAUTH_TOKEN` and authenticate from the `env` token in `~/.claude/settings.json`, which the account switch in matsen/setup writes.
 - A `--resume` keeps none of the original flags, so every resume passes them again.
@@ -39,11 +45,11 @@ Reach for a subagent when the work fits in one call and only you need the answer
 - **Every helper owns a home directory, `$HELPERS/<name>/`.**
   Its `result.md`, every extra checkout it makes, and every file it cites as evidence live there, so `stop` and `sweep` see all of it.
 - **The helper works in a directory of its own.**
-  Never a checkout another live session works in: `/pc-issue-work` sends a co-tenant's branch work into a worktree, and `reclaim_slot` stops with `NOT FREE` while any process is still in the slot.
+  Never a checkout another live session works in: `/pc-issue-work` sends a co-tenant's branch work into a worktree, and the reclaim protocol blocks reuse while any owner or job still uses the slot.
   A pooled clone is allowed only when it is available and you hold it first (start, step 2).
   A `--bg` helper has no tmux window, so the hold is the only thing that marks the clone as in use.
 - **A worker in a pooled slot does not start helpers.**
-  Its helper's checkouts would hang off the slot's repo, and `reclaim_slot` neither removes nor reports them, so they would outlive the slot.
+  Its helper's checkouts would hang off the slot's repo, and the portable reclaim check cannot retire them, so they would outlive the slot.
   Ask the epic or the conductor to start one instead.
 - **Delete with `find <path> -delete`, never `rm`.**
   A `$` in the same command as `rm` trips Claude Code's destructive-removal guard, which bypass mode does not suppress.
@@ -52,7 +58,7 @@ Reach for a subagent when the work fits in one call and only you need the answer
 ## Records
 
 ```bash
-HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
+HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
 # $HELPERS/<short-id>.json   written by the primary at start:
 #   {"id","session_id","name","primary","home","dir","dir_kind":"worktree|held-clone","hold"}
 # $HELPERS/<name>/           the helper's home
@@ -62,11 +68,11 @@ HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
 ## start
 
 1. **Name it and make its home.**
-   Your own name is the first line of `ListAgents` ("This session is `<name>` …").
+   Use the assigned primary identifier or the selected runner's exact returned identity (`ListAgents`' own row in the Claude branch).
    The helper is `<primary>-<role>`.
    If `ListAgents` shows that name or `$HELPERS/<primary>-<role>` already exists, pick another role word.
    ```bash
-   HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
+   HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
    HOME_DIR="$HELPERS/<primary>-<role>"
    mkdir -p "$HOME_DIR"
    ```
@@ -80,16 +86,16 @@ HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
      git -C <repo> worktree add --detach "$DIR" origin/main
      ```
      It branches there itself (for example via `/pc-issue-work`), as the checkout's only session.
-   - Gates or builds that need a built environment (a `.pixi` env, a vendored binary), where a fresh worktree would pay a full install first: a conductor or epic session that manages a clone pool can lend it an `available` pooled clone (as `/pc-conductor` Step 5 classifies it), held so spawn selection and `pc spawn` skip it, `KIND=held-clone`:
+   - Gates or builds that need a built environment (a `.pixi` env, a vendored binary), where a fresh worktree would pay a full install first: a conductor or epic session that manages a clone pool can lend it an `available` pooled clone (as `/pc-conductor` Step 5 classifies it), held so spawn selection and every launch path must skip it, `KIND=held-clone`:
      ```bash
-     source "$(dirname "<this-skill's-base-directory>")/lib/spawn-intent.sh"
-     CLONE_ROOT=$(resolve_clone_root .epic-config.json)
+     CONFIG=/absolute/path/to/conductor/.epic-config.json
+     CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
      HOLD="$CLONE_ROOT/.holds/<clone>"
      mkdir -p "$CLONE_ROOT/.holds" && echo "helper <primary>-<role>" > "$HOLD"
      DIR="$CLONE_ROOT/<clone>"
      ```
      Run it from your own checkout, where `.epic-config.json` lives.
-     `<this-skill's-base-directory>` is this skill's base directory as given at invocation; `lib/spawn-intent.sh` is a sibling of every skill directory.
+     Use the authoritative conductor config; the shared CLI resolves and validates its paths.
      Write the hold before anything else touches the clone, then confirm the clone is still `available`; if it is not, delete the hold and pick another.
 
 3. **Write the brief.**
@@ -100,7 +106,11 @@ HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
    - leave a held clone clean and on `main`;
    - no merging, no pushing to main, no other checkouts, no helpers of its own.
 
-4. **Start it** from `$DIR`, in your own permission mode:
+4. **Start it** from `$DIR`, within the current task authorization.
+   **Tmux branch:** launch the selected runner with its documented input options, record its returned pane as `ID` and any actual native session identifier as `SID`, and verify the directory and startup.
+   A native session id may be absent in this branch; keep the pane identity distinct from agent liveness.
+   If launch is unavailable, leave the brief prepared and do not record a running helper.
+   **Claude Code background branch:** use the following only when that runner supports these options, preserving the current permission mode:
    ```bash
    ARGS=(-n "<primary>-<role>" --permission-mode <your-mode>)
    OUT=$(cd "$DIR" && claude --bg "${ARGS[@]}" "<brief>" 2>&1)
@@ -119,7 +129,9 @@ HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
        > "$HELPERS/$ID.json"
    ```
 
-6. **Confirm messages flow both ways.**
+6. **Confirm reports flow both ways.**
+   In the tmux/file branch, verify the first result in `result.md` and record any pending correction there; native messages additionally require a supported authorized channel.
+   The following message/log checks apply to the Claude background branch:
    Wait for its first report, then send it something and wait for the answer — a real first task serves as the ping, so reserve a content-free one for when you have nothing to send yet.
    If either is missing after a few minutes, read `claude logs <id>` and report to the user.
    A `failed` state in `claude agents --json --all` most often means the wrong account; a silent helper, a held message.
@@ -129,7 +141,7 @@ HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
 `stop`, `sweep`, and a later turn start from the record, not from shell variables left over from `start`:
 
 ```bash
-HELPERS="${XDG_STATE_HOME:-$HOME/.local/state}/pc/helpers"
+HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
 R=$(jq -r --arg n "<primary>-<role>" 'select(.name==$n) | input_filename' "$HELPERS"/*.json)
 ```
 
@@ -141,7 +153,7 @@ Read `id`, `session_id`, `home`, `dir`, `dir_kind`, and `hold` from `$R` with `j
 - `SendMessage` to its name; its replies arrive as cross-session messages.
 - Read `result.md` in its home first; each round it finished has a section there.
   Resume it only for a new round or a question the file does not answer.
-- If it is missing from `ListAgents`, it has stopped.
+- In the Claude background branch, a missing `ListAgents` row requires checking the recorded job before concluding it stopped.
   Resume it with the message as the prompt, rebuilding `ARGS` exactly as in start step 4:
   ```bash
   OUT=$(cd "$DIR" && claude --bg --resume "$SID" "${ARGS[@]}" "<message>" 2>&1)
@@ -155,7 +167,9 @@ Read `id`, `session_id`, `home`, `dir`, `dir_kind`, and `hold` from `$R` with `j
 
 1. Ask it to wrap up: commit and push anything it owns, append its last section to `result.md`, then report to you.
    If it is stopped, resume it for this.
-2. `claude stop <id>`, then `claude rm <id>`.
+2. Confirm every owner and dependent job released the directory before cleanup.
+   In the tmux branch, stop only the recorded owned runner/pane through its supported mechanism and verify termination; keep evidence and checkouts until the following preservation gates pass.
+   In the Claude background branch: `claude stop <id>`, then `claude rm <id>`.
    If `rm` reports unpushed commits or a worktree it could not remove, stop and show the user; do not pass `--discard-unpushed` or `--force-remove-worktree` without their go-ahead.
 3. Remove every worktree under the home:
    ```bash
@@ -165,7 +179,7 @@ Read `id`, `session_id`, `home`, `dir`, `dir_kind`, and `hold` from `$R` with `j
    ```
    `worktree remove` refuses on uncommitted or untracked files; for each `KEEP`, show the user rather than forcing.
 4. For a held clone, never delete the clone.
-   If `git -C "$DIR" status --porcelain` is empty and it is on `main`, lift the recorded hold with `find "$(dirname "$hold")" -maxdepth 1 -name "$(basename "$hold")" -delete`.
+   If all owners/jobs released it, `git -C "$DIR" status --porcelain` is empty and it is on `main`, lift the recorded hold with `find "$(dirname "$hold")" -maxdepth 1 -name "$(basename "$hold")" -delete`.
    Otherwise keep the hold and show the user what the helper left.
 5. The home holds `result.md` and the evidence it cites, which may be quoted on GitHub.
    Show the user the evidence paths `result.md` lists and ask before `find "$HOME_DIR" -delete`; if nothing is listed and step 3 kept nothing, delete it.
@@ -173,7 +187,9 @@ Read `id`, `session_id`, `home`, `dir`, `dir_kind`, and `hold` from `$R` with `j
 
 ## sweep
 
-For each record in `$HELPERS`, look up its `id` in `claude agents --json --all` and its `primary` in `ListAgents`, then report one line per record:
+For each record in `$HELPERS`, verify the recorded pane or job against the selected runner's actual state.
+The tmux branch reports pane presence separately from runner liveness and labels unavailable evidence unknown.
+In the Claude background branch, look up `id` in `claude agents --json --all` and `primary` in `ListAgents`, then report one line per record:
 
 - **stale** — id not in the listing: the session was removed; offer to finish `stop` from step 3.
 - **primary not found** — session present but no `ListAgents` row carries the recorded primary name.

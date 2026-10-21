@@ -7,16 +7,17 @@ allowed-tools: Skill, Bash, Read, Write, Edit
 # /pc-tuckin
 
 One entry point for persisting session state before `/clear`.
-It determines the session's role, runs the matching tuckin, and that skill writes the role-keyed continuation prompt (`docs/guides/continuation-prompt.md`) which `/pc-continue` reads in the next session.
+It determines the session's role, runs the matching tuckin, and that skill writes the role-keyed continuation prompt ([the continuation contract](../lib/continuation.md)) which `/pc-continue` reads in the next session.
 
 ## Choosing the tuckin
 
 If `$ARGUMENTS` names a role — `ms`, `spawn`, `epic`, `conductor`, or `generic` — use it.
 
-Otherwise determine the role per `docs/guides/continuation-prompt.md` ("Determining the role"): this session's `ListAgents` name against `$CLONE_ROOT/.epic-session` / `.conductor-session`, then the marker file (`.ms-config.json` → `ms`, `.epic-status.json` → `spawn`), then ask.
+Otherwise determine the role per [the continuation contract](../lib/continuation.md): explicit assignment or task markers (`.ms-config.json` → `ms`, `.epic-status.json` → `spawn`), then ask if ambiguous.
+When native role registration is available, cross-check the exact current identity against `.epic-session` / `.conductor-session`; do not require a Claude session listing.
 Never infer the role from what the session has been discussing.
 
-Map the role to its skill and invoke it with the Skill tool — do not reimplement it:
+Map the role to its skill and invoke it with the harness's skill tool or read and follow its text — do not reimplement it:
 `ms` → `/pc-ms-tuckin`, `spawn` → `/pc-spawn-tuckin`, `epic` → `/pc-epic-tuckin`, `conductor` → `/pc-conductor-tuckin`.
 
 ## Generic fallback
