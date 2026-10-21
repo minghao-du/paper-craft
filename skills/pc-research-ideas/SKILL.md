@@ -12,7 +12,7 @@ discussion in chat; do not automatically create notes, issues, or other records.
 
 ## 1. Establish the paper corpus
 
-Read the project's root `RESEARCH-PLAN.md` if present.
+Read the project's root `RESEARCH-PLAN.md`; if missing, prompt the user to create it with `/pc-research-plan`.
 
 Use the user's selected files or paper sections as the evidence boundary. Otherwise,
 discover papers in the specified project directory, or the current project when
