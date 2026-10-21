@@ -6,10 +6,18 @@ Run all tests and business code through the configured remote routes below, incl
 This boundary applies in every phase, including check and review, and to every subagent; task size and duration do not change the execution location.
 Edit and inspect files locally; lint, typecheck, and build may run locally only when they execute neither tests nor business code.
 Before running a command, inspect its entry point and hooks to determine what it actually executes; route commands that execute tests or business code remotely regardless of their name.
-Before each remote execution, identify its CPU/GPU requirement and read the selected platform skill.
 If a route is unconfigured, its skill or required environment is missing, or its backend is inaccessible, stop the affected execution and report what is needed; never fall back to local execution.
 Local execution of tests or business code requires explicit user authorization for that scope or an explicit exception recorded in this policy; other skills' check instructions do not grant an exception.
 Use the configured route until the user changes it; GPU requirements must not silently fall back to CPU or a local accelerator.
+
+## Platform execution
+
+Apply this protocol to every remote operation, including connection, environment preparation, transfers, workload execution, monitoring, and retrieval.
+
+1. Select the configured backend for the operation and its CPU/GPU needs, where applicable. Read its platform skill and the references required by the applicable procedure.
+2. Construct the operation using that procedure and complete its prerequisites. Keep platform rules in the platform skill; this policy supplies project settings. Use only its permitted fallback procedures; if it does not establish a permitted procedure or execution target, stop the affected operation and report the gap.
+3. Before a workload starts, verify its actual execution target using the platform skill's checks in the context that will run it. Connection success alone does not establish an eligible execution target.
+4. Check the result against the platform procedure's completion criteria. Keep the selected procedure, target verification, and job identifiers where applicable in the existing execution output or work log.
 
 ## Routes
 

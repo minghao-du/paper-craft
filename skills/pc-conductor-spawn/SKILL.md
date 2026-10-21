@@ -616,6 +616,8 @@ Now read the issue and begin work:
 
 ### Common context additions
 
+Before applying the remote-operation guidance below, read the target project's `.paper-craft/compute.md` if present, and include that policy pointer in the worker's context so it follows the configured platform skill.
+
 **Filesystem mode** — always include this block when the issue involves running jobs on remote compute nodes. Check `shared_filesystem` in `.epic-config.json`:
 
 *When `shared_filesystem: false` (laptop — files must be synced):*
