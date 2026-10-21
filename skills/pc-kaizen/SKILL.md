@@ -66,8 +66,10 @@ Determine where the fix belongs:
 
 **Mandatory, and skipping it is the single most common way kaizen makes things worse.** This table tells you where a fix *could* go; it does not tell you whether guidance on this already exists somewhere, possibly saying something different. Before writing anything, `grep` for the rule's existing home:
 
+For paper-craft changes, resolve this loaded `SKILL.md` to its physical path (following symlinks), then locate the enclosing Git root from that file's directory. Set `PAPER_CRAFT_ROOT` to that root and verify it contains this skill at `skills/pc-kaizen/SKILL.md`. If resolution fails, report the missing source checkout rather than guessing a directory. Use this root for the commands below; the caller's working directory may belong to another project.
+
 ```bash
-cd ~/re/paper-craft
+cd "$PAPER_CRAFT_ROOT"
 grep -rn '<the key term>' skills/ *.md          # every restatement, not just the obvious one
 ```
 
@@ -136,9 +138,9 @@ Based on user choice:
 
 **Apply now** (CLAUDE.md or skill edits):
 - Edit the target file directly
-- For paper-craft skill changes, the working tree is at `~/re/paper-craft`
+- For paper-craft skill changes, use the resolved `PAPER_CRAFT_ROOT`.
 
-> **That working tree is shared, and it is the one at `~/re/paper-craft` for every session on the machine.** There is no per-session checkout and no locking: two Claude sessions running kaizen are editing the same bytes on disk. `git` never reports a conflict, because there is only one tree — so the failure is silent.
+> **Sessions whose installed skills resolve to the same checkout share that working tree.** Two sessions running kaizen against it edit the same bytes on disk without locking. `git` never reports a conflict between those edits, because there is only one tree — so the failure is silent.
 >
 > **Before you edit**, run `git status`. Modified files you did not touch mean another session is live in here; coordinate or wait rather than writing.
 > **Before you commit**, run `git diff --cached` and confirm every hunk is yours. Per-file `git add` limits the blast radius but does not close it — if the other session edited *the same file*, staging that one path still ships its work. Never `git add -A` or `git add .` here.
@@ -159,7 +161,7 @@ docs/            # Guides and documentation
 Skills are symlinked from `skills/<name>/` to `~/.claude/skills/<name>` for global availability.
 
 ```bash
-cd ~/re/paper-craft
+cd "$PAPER_CRAFT_ROOT"
 git pull origin main
 git checkout -b kaizen/<short-description>
 # Make the changes
@@ -179,7 +181,7 @@ gh pr create --title "kaizen: <description>" --body "..."
   Don't refactor adjacent code
 - **One improvement per invocation**: If you see multiple issues, pick the highest-impact one and mention the others briefly
 - **Respect existing structure**: Follow the conventions already in CLAUDE.md and skill files
-- **Paper-craft repo awareness**: Skills live in `~/re/paper-craft/skills/`.
+- **Paper-craft repo awareness**: Skills live in `skills/` under the resolved `PAPER_CRAFT_ROOT`.
   The repo is `minghao-du/paper-craft` on GitHub
 - **Spend emphasis like it is scarce, because it is.** <!-- emphasis-budget-exempt --> ⭐ ⛔ ⚠ ➡ and ALL-CAPS BOLD are a shared budget across the file, not a per-paragraph decision. **The mechanism a budget only caps: each kaizen reaches for a louder marker than the last one it sees, so the escalation is driven by the file's current state rather than by the new passage's importance — which is why it compounds and why no author notices their own step.** The numbers: `skills/pc-conductor/SKILL.md` carried **0** such markers on 2026-09-05, 13 on 09-14, 148 on 09-18, and 214 on 09-20 — one per 5.7 lines — while the file grew 2.1x in lines over the same window. `EVIDENCE-DISCIPLINE.md` went 0 → 201 across those same two dates. A marker every few lines marks nothing. Before adding one, count what is already there and decide whether your passage outranks them:
 

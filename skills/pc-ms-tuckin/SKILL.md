@@ -83,7 +83,7 @@ Everything below lives in the repo.
 
 4. If Erick corrected an approach or confirmed a non-obvious choice, put it where it will
    be enforced: a durable project fact in `CLAUDE.md`/`AGENTS.md`, a workflow rule in a
-   `~/re/paper-craft/skills/` skill, a finding in the test, doc, or issue it concerns.
+   corresponding `pc-*` skill, a finding in the test, doc, or issue it concerns.
 
 Only update what changed. Do not rewrite unchanged files.
 
