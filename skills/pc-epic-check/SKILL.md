@@ -38,12 +38,17 @@ Also check for:
   gh issue list --repo <org/repo> --label "EPIC" --limit 5 --json number,title
   ```
 
+**Execution gate (including subagents):** File inspection may stay local and does not require compute configuration.
+Before running any code for this review, including tests, verification scripts, or cost calculations, read the target project's `.paper-craft/compute.md` and use its configured HPC route and platform skill.
+If that policy is missing, stop the review and tell the user to run `/pc-compute-config` in the target project before resuming.
+If the required route is unavailable or incomplete, stop and report the blocker; do not fall back to local execution.
+
 ### Step 3: Spawn a review subagent
 
 Use the Agent tool to launch a general-purpose subagent that reads the EPIC file and checks the following.
 The subagent should verify claims by reading referenced files, running cost calculations, and checking existing repo structure.
 
-Pass the full EPIC text and any context from Step 2 to the subagent.
+Pass the full EPIC text, any context from Step 2, and the execution gate above to the subagent; it must apply the gate before running code even if the parent only inspected files.
 
 #### 1. Vision clarity
 
