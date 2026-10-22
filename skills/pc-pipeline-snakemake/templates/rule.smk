@@ -1,3 +1,4 @@
+# Resource values are illustrative; size memory for the workload and site limits.
 # --- Pattern A: Binary / C-tool isolated via Conda directive ---
 rule align_reads:
     input:
@@ -7,9 +8,9 @@ rule align_reads:
         bam=temp("processed/alignment/{sample}.bam"),
     log:
         "logs/align_reads/{sample}.log",
-    threads: 8
+    threads: 1
     resources:
-        mem_mb=16384,
+        mem_mb=4096,
     conda:
         "../envs/samtools.yaml"
     shell:
@@ -26,13 +27,15 @@ rule process_matrix:
         metrics=temp("processed/quantification/counts/{sample}.parquet"),
     log:
         "logs/process_matrix/{sample}.log",
-    threads: 4
+    threads: 1
     resources:
-        mem_mb=8192,
+        mem_mb=4096,
     params:
         script="workflow/scripts/process_matrix.py",
     shell:
         """
+        export OMP_NUM_THREADS={threads} OPENBLAS_NUM_THREADS={threads} MKL_NUM_THREADS={threads}
+        export NUMEXPR_NUM_THREADS={threads} POLARS_MAX_THREADS={threads}
         uv run {params.script} --input {input.counts} --output {output.metrics} > {log} 2>&1
         """
 

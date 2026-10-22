@@ -1,6 +1,6 @@
 ---
 name: pc-pipeline-snakemake
-description: Review, scaffold, and optimize Snakemake workflows adhering to modular rule design, fail-fast schema validation, dual environment isolation (uv & conda), and tiered data hygiene (processed/, results/, logs/, summary/).
+description: Review, scaffold, and optimize Snakemake workflows with modular rules, fail-fast validation, uv & conda isolation, tiered data hygiene, and independent cluster scheduling.
 ---
 
 # /pc-pipeline-snakemake
@@ -83,6 +83,16 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
   - Hybrid workflows with Conda rules: execute `uv run snakemake --software-deployment-method conda -n --configfile config/test.yaml`.
   - Provide synthetic or subsampled input datasets in `tests/data/` paired with `config/test.yaml`. Local execution must resolve DAG and environment configurations without requiring production datasets or cluster scheduling.
 
+### 5. Independent Cluster Jobs (HPC)
+
+For cluster execution:
+
+- **Independent Units**: Represent independent samples, replicates, and parameter combinations as separate wildcard jobs with distinct outputs and logs. Submit each through a Snakemake cluster executor/profile; keep dependencies and aggregation in the DAG. Never pack these units into one multi-core allocation running Snakemake's local executor.
+- **Single-CPU Default**: Use `threads: 1` for units that fit one CPU and the site's memory limits. Match program workers and numerical-library thread pools to the allocation. Multi-core exceptions require tightly coupled parallel work or a unit's memory needs; record the reason beside the rule or profile override and request the minimum required CPUs.
+- **Site Configuration**: Take partition, account, concurrency, and memory limits from project/site configuration. Run the controller where site policy permits, with resources for orchestration only.
+- **Slurm**: When authoring or auditing Slurm execution, read [Slurm profiles](references/slurm.md).
+- **Configuration Gate**: Check every independent unit's job/output mapping, effective executor/profile and resource overrides, CPU/thread agreement, and each multi-core exception. Report findings and unresolved configuration. Dry-run verifies DAG resolution; inspect scheduling configuration separately. This gate requires no additional cluster execution tests.
+
 ## Workflows
 
 ### Branch 1: Workflow Scaffolding (Authoring)
@@ -101,9 +111,10 @@ When generating a new Snakemake workflow or expanding an existing one:
    - Read [summary.md](templates/summary.md) for the receipt skeleton.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
    - Author domain logic in `workflow/rules/*.smk` using tiered paths (`processed/`, `results/`, `logs/`, `summary/`) and the Stage Output Organization conventions above. Each analytical stage has a terminal aggregation rule that writes a brief receipt to `summary/{stage}.md` — conclusions and pointers only.
+   - For cluster execution, apply **Independent Cluster Jobs** when choosing job boundaries, rule resources, and the execution profile.
 5. **Verification**: Run `uv run snakemake [-n --configfile config/test.yaml]` (adding `--software-deployment-method conda` if Conda rules are present) followed by `uv run snakemake --lint`.
 
-**Completion Criterion**: Directory tree conforms to standard layout with root `pyproject.toml`; `tests/data/` contains minimal test fixtures; `uv run snakemake -n --configfile config/test.yaml` (with `--software-deployment-method conda` when Conda rules exist) completes with a valid DAG; `uv run snakemake --lint` produces 0 warnings or errors.
+**Completion Criterion**: Directory tree conforms to standard layout with root `pyproject.toml`; `tests/data/` contains minimal test fixtures; `uv run snakemake -n --configfile config/test.yaml` (with `--software-deployment-method conda` when Conda rules exist) completes with a valid DAG; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate passes with no unresolved configuration.
 
 ### Branch 2: Workflow Audit & Refactoring (Auditing)
 
@@ -111,7 +122,7 @@ When reviewing or optimizing an existing Snakemake pipeline:
 
 1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and analytical stages produce tracked receipts in `summary/`. Check Stage Output Organization conventions and that receipt output entries explain content or purpose.
 2. **Check Parameter Validation & Smoke Testing**: Verify presence of `schema.yaml` with startup validation, and confirm presence of `config/test.yaml` paired with `tests/data/` fixtures for zero-compute local validation.
-3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`.
+3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, evaluate the **Independent Cluster Jobs** configuration gate.
 4. **Check Environment Pinning (Conda & uv)**:
    - For Conda: verify per-rule `conda:` specifications target `workflow/envs/*.yaml` with pinned package versions. Flag any unpinned packages or floating tags. Ensure no loose `requirements.txt` pollute `workflow/envs/`.
    - For uv: verify root `pyproject.toml` (and `uv.lock`) manages Snakemake execution. For standalone Python scripts in `workflow/scripts/`, verify that rules needing isolated dependencies declare pinned versions via PEP 723 inline script metadata rather than unpinned ad-hoc `pip install` in shell directives.
@@ -120,4 +131,4 @@ When reviewing or optimizing an existing Snakemake pipeline:
    - Read [rule.smk](templates/rule.smk) and [script.py](templates/script.py) only when generating code replacement blocks to align syntax, directive formatting, and PEP 723 metadata.
    - Categorize findings into: Critical Violations, Architectural Improvements, and Drop-in Refactorings (concrete before/after code blocks).
 
-**Completion Criterion**: All 4 audit categories evaluated against the codebase; all identified defects accompanied by drop-in replacement code blocks.
+**Completion Criterion**: All 4 audit categories evaluated against the codebase; all identified defects accompanied by drop-in replacement code blocks. For cluster execution, include configuration-gate findings and unresolved configuration in the audit.
