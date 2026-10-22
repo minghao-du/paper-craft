@@ -13,6 +13,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 
 ```text
 .
+├── RESEARCH-PLAN.md             # (Optional) Research intent & proposed stages (tracked in Git)
 ├── pyproject.toml               # uv project dependencies & Snakemake runner specification
 ├── uv.lock                      # uv lockfile for deterministic Python environment
 ├── config/
