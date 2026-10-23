@@ -50,9 +50,16 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 
 ### Stage Output Organization
 
-- Group both roots by analytical stage: `processed/<stage>/` and `results/<stage>/`. Use the same stage name in both roots and `summary/<stage>.md` wherever that stage produces artifacts.
-- Within a stage, group intermediates by domain meaning (e.g., `counts/`, `normalized/`) and deliverables by kind (e.g., `figures/`, `tables/`, `reports/`). Create only directories with actual outputs; a few files of one kind may live directly under the stage.
-- Give each artifact one canonical location. Distinguish samples, comparisons, and parameter variants in paths; use the same filename stem for different formats of the same artifact (e.g., `treatment_vs_control.volcano.pdf` and `.png`). Choose descriptive names rather than `misc/`, `temp/`, or `final_v2/`; adapt filename syntax to the project.
+- Group both roots by analytical stage: `processed/<stage>/` and `results/<stage>/`.
+  Use the same stage name in both roots and `summary/<stage>.md` wherever that stage produces artifacts.
+- Within a stage, group intermediates by domain meaning (e.g., `counts/`, `normalized/`) and deliverables by kind (e.g., `figures/`, `tables/`, `reports/`).
+  Create only directories with actual outputs; a few files of one kind may live directly under the stage.
+- Give each artifact one canonical location.
+  Distinguish samples, comparisons, and parameter variants in paths; use the same filename stem for different formats of the same artifact (e.g., `treatment_vs_control.volcano.pdf` and `.png`).
+  Choose descriptive names rather than `misc/`, `temp/`, or `final_v2/`; adapt filename syntax to the project.
+- **Unnumbered Semantic Stage Architecture**: Name stages, rules (`*.smk`), scripts, receipts (`summary/*.md`), and output subdirectories strictly with semantic domain nouns (e.g., `metadata`, `embedding`, `msa`, `g2p`) rather than sequential numeric prefixes (`01_`, `02_`).
+  Sequential prefixes introduce brittle order-coupling, requiring cascading filesystem renames whenever intermediate steps are inserted or bifurcated.
+  Let the workflow DAG orchestrate execution order, not filesystem naming.
 
 ## Quality Standards
 
