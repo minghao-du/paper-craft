@@ -15,6 +15,7 @@ Read the target project's agent guidance, existing `.paper-craft/` configuration
 Resolve the user's CPU/GPU choices to installed platform skills and read their instructions and relevant references.
 Identify a skill by name, adding a portable source or installation reference when known rather than relying solely on a machine-specific absolute path.
 Infer settings from the project and selected skills; ask only for missing decisions such as which backend to use or an unknown remote workspace.
+For each selected CPU/GPU HPC backend, directly ask the user whether to use Git for the project there and record their answer; Git availability does not establish this choice.
 Record unresolved settings or unavailable skills as pending; skill installation is a separate user choice.
 
 **Done:** CPU and GPU each have a selected backend or are explicitly unconfigured, and every selected backend has its required settings identified as established values or named pending items.
@@ -28,7 +29,8 @@ Ask for a GPU model or resource default only when the platform requires it or th
 
 Reference existing scheduler profiles, dependency files, and environment documentation rather than copying their contents.
 Keep operational procedures and platform rules in the selected platform skill; generate the template's platform execution protocol rather than copying those rules into project policy.
-Record only the platform-specific connection and workspace fields actually needed, such as an SSH alias or remote project root.
+Require `Remote workspace` for every selected backend; it must contain the remote project root. Ask the user if the path is unknown.
+Record only the platform-specific connection fields actually needed, such as an SSH alias.
 
 Add or update one sentence in the project-root `AGENTS.md`:
 
@@ -45,6 +47,7 @@ If Git ignores either generated file, report that it will not travel with the pr
 
 Check that the pointer resolves, each route resolves to a backend definition or is explicitly unconfigured, selected platform skills are available, and referenced project files exist.
 Check that required backend fields are filled, pending items block the affected routes, and no credentials or template placeholders remain.
+Check that every HPC backend's Git choice matches the user's answer and every backend's `Remote workspace` contains a nonempty project path; a missing or pending path leaves configuration incomplete.
 Verify that the policy routes tests and business code remotely even during check and review, permits local lint/typecheck/build only within that boundary, and requires an explicit exception for local execution of tests or business code.
 Verify that the generated policy requires all remote operations to follow the selected platform procedure and its required references, prerequisites, fallbacks, and completion criteria; workload execution requires actual target verification, and procedure gaps block the affected operation.
 

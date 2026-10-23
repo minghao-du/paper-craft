@@ -34,7 +34,8 @@ Repeat this section for each selected backend, using fields required by its plat
 
 - Platform skill: <installed skill name; portable source reference if known>
 - Connection: <SSH alias or other platform-specific identifier, if needed>
-- Remote workspace: <project root on the remote platform, if needed>
+- Remote workspace: <required nonempty project root on the remote platform>
+- Use Git: <yes or no, as answered by the user for this HPC backend>
 - Environment: <reference to existing dependency/environment instructions, or explicit pending item>
 - Inputs and code: <required local/remote paths and existing staging instructions>
 - Outputs: <remote artifact paths and local retrieval destinations, or remote inspection policy>
