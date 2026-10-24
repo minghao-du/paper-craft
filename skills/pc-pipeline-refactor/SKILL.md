@@ -125,7 +125,7 @@ Verification steps:
    - Run `snakemake -n <stage>_all` for every major analytical stage target.
    - Verify that all newly restructured rules and mirror outputs are scheduled properly in the DAG.
 3. **Unit and Smoke Test Suite**:
-   - Execute project test suites (`python -m unittest` or `pytest`) in the local virtual environment.
+   - Read the project's `.paper-craft/compute.md` and execute project test suites (`python -m unittest` or `pytest`) in its configured environment, following the selected platform skill's procedures.
    - Confirm all path assertions and fixture loads pass green.
 4. **Git Tree Inspection & Commit**:
    - Inspect `git status` and `git diff --stat` to verify that only expected path migrations and rewiring changes are staged.

@@ -73,5 +73,5 @@ All gates must pass before finalizing the refactor:
 - [ ] **Zero-Compute Topological Dry-Run (`default`)**: `snakemake -n` completes with 0 errors.
 - [ ] **Zero-Compute Topological Dry-Run (`all targets`)**: `snakemake -n <stage>_all` completes with 0 errors.
 - [ ] **Unit & Fixture Tests**: Test suites pass completely (`pytest` or `python -m unittest`).
-- [ ] **Compute Boundary Guard**: Zero heavy compute jobs executed on login node (conforms to `.paper-craft/compute.md`).
+- [ ] **Compute Boundary Guard**: The actual test execution environment and platform procedure conform to the project's `.paper-craft/compute.md`.
 - [ ] **Repository Status**: `git status` clean with no untracked file debris or uncommitted staged fragments.
