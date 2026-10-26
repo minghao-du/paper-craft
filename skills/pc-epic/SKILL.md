@@ -13,6 +13,8 @@ Fleet mechanics — clone/tmux inventory, staleness checks, spawning, pruning of
 The two roles coordinate over `SendMessage` and a shared `.spawn-prompts/` directory (see Step 6); they do not need to be the same session, though they may run side-by-side in one tmux host.
 
 Use this at **session start** to establish topic context.
+Keep this role active through the shared workflow's **Active role handoff and wake-up** contract;
+finish every coordination turn by arming its native wake-up, or report manual continuation required.
 For fleet state (which clones are free, what's running where, tmux/host occupancy), ask `/pc-conductor` instead — this skill does not scan clones or tmux itself.
 It does *consume* a conductor-supplied occupancy table when the Step 2 handshake succeeds: Step 2 uses it to scope Group A's re-verification, and Step 6 uses it as a readiness filter.
 
@@ -259,13 +261,19 @@ Without verified startup, report prepared and keep intent queued.
 
 **Do not spawn or touch tmux/clones yourself** — that's the conductor's job.
 
-**Check whether a conductor session exists before announcing a handoff** — `ListAgents` for one.
+**Check the conductor's self-registered address before announcing a handoff** — read
+`$CLONE_ROOT/.conductor-session` and use the selected runtime's supported messaging API.
 
-- **Conductor addressable**: tell the user which issues now have pending intent —
-> "Spawn intent written for `i302` (retry logic) and `i315` (scoring refactor) — the conductor will pick these up."
-If it's urgent, `SendMessage` it directly — see `/pc-conductor`'s Conventions section.
+- **Conductor addressable**: always send the queued issue/EPIC and absolute brief path to its
+  self-registered address. Report `queued; conductor handling unconfirmed` until its receipt
+  or verified startup/consumption is observed. On wake, read the receipt and handle any topic
+  blocker; acknowledgement alone needs no reply. Follow the shared wake-up contract before yielding.
 - **No conductor addressable**: say so, and offer both real options — start one now (`/pc-conductor` in a separate tmux window), or, for a single small job, run `/pc-conductor-spawn` yourself from this session for just this intent file.
   The second option is a deliberate, user-confirmed exception to "don't spawn yourself" — say plainly that it mixes the two roles for this one spawn, and let the user pick.
+
+On subsequent wakes, retain the bound EPIC number and reconcile conductor receipts,
+worker/PR transitions and the existing dashboard before filing follow-up issues. A timer
+continues this scoped session; it is not a fresh invocation with an unspecified EPIC.
 
 ### Step 6b: The design question, asked of every arm including the null
 

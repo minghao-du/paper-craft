@@ -17,6 +17,8 @@ The two coordinate over `SendMessage` and a shared `.spawn-prompts/` directory t
 
 Use this at **session start** to establish fleet context.
 Workers report back on their own; re-run this skill for a full rescan.
+Follow the shared workflow's **Active role handoff and wake-up** contract to continue
+reconciliation between user turns; a queued file or successful message send is not a scheduler.
 To spawn work, use `/pc-conductor-spawn`.
 
 ## Terms and intake
@@ -150,6 +152,8 @@ Instead, each role self-registers its own current address in a file only it writ
 To push, a role reads the other's file for the exact address and `SendMessage`s it, treating a missing file or a failed send as "not addressable right now": skip silently, fall back to the file-based state (`.epic-status.json`, `.epic-notifications.log`, `gh`), and never retry-loop or scan `ListAgents` for a substitute.
 A failed send returns a "Did you mean: ..." list — **never act on that suggestion.**
 The push is a latency optimization, never a hard dependency.
+Receiver-side file reconciliation and native wake-up follow the shared workflow contract;
+report a handoff as pending until receiver evidence confirms handling.
 
 ### Decision relays: PROVISIONAL and FINAL
 
@@ -482,7 +486,7 @@ Deciding *which other* open issues should be spawned isn't this skill's call —
 
 If a live worker's scope needs correcting before its next stopping point: the epic decides whether it's durable and drafts the line, and the conductor delivers it (see "Correcting a live worker").
 
-### Step 7: Start slot monitor
+### Step 7: Observe slots and arm the next reconciliation
 
 After the dashboard is built and spawns are confirmed, arrange observation of every slot's `.epic-status.json` and PR state.
 The portable CLI does not yet supply `pc fleet watch`; do not report a monitor as started merely because this step was reached.
@@ -500,12 +504,19 @@ It is not liveness detection. It is silent when:
   Independently check `gh pr list --state merged`; observing PR state is required even when a status file is absent.
 
 If the harness offers an authorized Monitor capability, tail the event log and separately observe merged PRs, respecting its actual timeout limit and re-arming on expiry.
-Otherwise report that observation is by reconciliation rather than a persistent subscription.
+Otherwise use the shared workflow's native wake-up contract for reconciliation. Each wake
+checks pending intent as well as slot/PR transitions, then runs Steps 4–6 as needed.
+Record and send each brief's handling receipt as specified there; preserve deferred intent.
 
-When a `needs-human` or `completed` transition arrives, react immediately: read the slot's status and lead guidance, refresh `$CLONE_ROOT/.conductor-session`, then read `$CLONE_ROOT/.epic-session` and `SendMessage` that address the issue number and phase (skip silently if absent or the send fails), and propose the next action or flag it for the user.
+When a worker phase changes or its PR lands, react immediately: read current status and PR
+evidence, record the transition, refresh `$CLONE_ROOT/.conductor-session`, then notify the
+registered EPIC with the issue, phase/PR outcome and evidence path. Include `quality-gate`
+and `awaiting-results`, not just terminal phases. Missing messaging leaves the durable
+observation for the EPIC's next reconciliation; keep independent work moving.
 
-> "Observation: <confirmed monitor identity | reconciliation only> — observed transitions are recorded in `.epic-notifications.log`.
-> Re-run `/pc-conductor` for a full reconciliation sweep when needed."
+Finish other tool work, then arm/reuse the role's single native wake-up and yield as the
+shared contract requires. Report the verified observation mechanism and identity, or
+`manual continuation required`; unchanged polling needs no user-facing status report.
 
 **When several slots go quiet at once, ask what they share before investigating any one** — a host, a token or rate budget, a mount, a freshly landed commit. Never read push silence or a quiet log as "still running".
 

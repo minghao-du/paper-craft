@@ -88,6 +88,67 @@ Unknown occupancy blocks directory reuse, checkout reset, process termination an
 Missing sessions, windows or status files are not proof of vacancy.
 A tmux pane identifies a terminal, not a live agent: the runner may have exited while its shell or background jobs remain.
 
+## Active role handoff and wake-up
+
+Apply this contract to a conductor and its EPIC session while coordinating work.
+Files carry the durable handoff; messages prompt an earlier reconciliation.
+`queued` means a brief exists, `sent` means the messaging tool accepted a notification,
+and `handled` requires receiver-side evidence. A successful send proves neither
+processing nor wake-up of another interactive conversation.
+
+1. **Persist, then notify.** After queueing intent, notify the registered conductor with
+   the issue, EPIC and absolute brief path. After a worker/PR transition, the conductor
+   records the observation and notifies the registered EPIC with the issue and evidence path.
+   Use the runtime's supported addresses; absent/failed messaging leaves a pending handoff.
+2. **Reconcile on wake.** Verify current state before acting on a message. The conductor
+   checks queued briefs, slot status/worklogs and linked PRs; the EPIC checks conductor
+   decisions/notifications, consumed briefs and its tracked issues/PRs. The conductor's
+   `.epic-decisions.md` and `.epic-notifications.log` live beside the authoritative config.
+   Run the relevant role steps for changed or unresolved work.
+3. **Acknowledge handling.** The conductor appends a timestamped receipt to its
+   `.epic-decisions.md`: issue, brief content hash, and `started`, `deferred` or `launch-failed`,
+   with pane/session evidence or the concrete blocker. Notify the EPIC of that receipt.
+   Append and send only when the brief hash, outcome or blocker changes; unchanged receipts
+   and acknowledgements need no reply.
+   Only verified startup permits intent consumption. Messages, receipts and timers preserve
+   all existing ownership, review and merge-authorization gates.
+4. **Deduplicate.** Recheck live issue ownership and consumed intent before every launch.
+   Repeated messages, acknowledgements and timer ticks do not create another worker.
+   Retry deferred work when its blocker changes; a missing acknowledgement triggers
+   reconciliation, not re-queueing. Record EPIC decisions in its existing body/local copy
+   so unchanged transitions do not generate duplicate issues.
+5. **Arm before yielding.** While coordination remains active, keep one confirmed native
+   wake-up per role conversation, including when its queue is temporarily empty. Inspect
+   the runtime task manager, reuse an active role timer or replace an expired one, and retain
+   its exact returned identity. On every message or timer wake, reconcile and re-arm before
+   ending the turn. Report changes or required user action; keep unchanged polls quiet.
+
+### Antigravity CLI
+
+When the current session exposes the built-in `schedule` tool, use its one-shot form:
+
+```json
+{
+  "DurationSeconds": 60,
+  "TimerCondition": "any",
+  "Prompt": "Continue the registered role and bound EPIC using skills/lib/workflow.md. Reconcile durable handoffs and current state, handle changes within existing authority, then re-arm one wake-up. Stay quiet if unchanged."
+}
+```
+
+Fill the prompt with the current role, absolute config path, absolute shared-contract path
+and EPIC number (for the EPIC role). Finish other tool work first: scheduling returns
+immediately and must be the last tool call before yielding. Require a successful result and
+task identity before reporting wake-up armed. `TimerCondition: any` cancels the timer on an
+incoming message, which wakes the agent; that turn must also reconcile and re-arm.
+See the [native schedule contract](https://antigravity.google/docs/commands/schedule/).
+
+Timers belong to the current conversation. On explicit pause, stop or role handover, cancel
+only its registered timer; restart/re-entry must inspect tasks and establish one active timer.
+If registration fails or the tool is unavailable, retain durable intent and report
+`manual continuation required` with the next role command. Promise automatic pickup only
+with a confirmed wake-up. Other runners may use a verified equivalent; shell sleeps,
+another process resuming the same live conversation, and tmux keystrokes are not substitutes.
+
 ## Installation
 
 Run `scripts/link-skills.sh` from this repository to install the default skill locations.

@@ -724,7 +724,8 @@ Keep the original placement and lifecycle guards explicit:
    The existence of a tmux pane alone does not establish that a runner received the brief or began work.
 5. If no suitable launch path is available or verification fails, report `prepared` or `launch-failed` and keep intent queued.
 
-Native harness launch tools may supply an equivalent checked session instead of a tmux terminal when available.
+Native harness launch tools may supply an equivalent checked session only when the user's
+chosen launch policy permits it. A tmux-only worker policy requires the independent terminal.
 Never bypass these ownership, input and confirmation checks by improvising an unchecked launch.
 
 ### Step 6: Confirm
@@ -765,8 +766,10 @@ Report to the user:
 - Which issue it's working on
 - Any phasing or gate criteria
 
-If a persistent slot monitor is running (started by `/pc-conductor`), the conductor will receive automatic notifications when this worker changes phase.
-If none is running, suggest starting one; workers also report back on their own.
+Record the handling receipt and notify the EPIC under the shared workflow's **Active role
+handoff and wake-up** contract. After a nested spawn, return to the conductor's Step 7 to
+re-arm its wake-up; a standalone spawn does not create a second conductor polling loop.
+Report automatic observation only with a verified monitor or native wake-up identity.
 
 ## Creating new slots
 
