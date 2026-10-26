@@ -616,9 +616,9 @@ Now read the issue and begin work:
 
 ### Common context additions
 
-Before applying the remote-operation guidance below, read the target project's `.paper-craft/compute.md` if present, and include that policy pointer in the worker's context so it follows the configured platform skill.
+For remote work with a project `.paper-craft/compute.md`, read that policy and the selected platform skill before composing the brief. Include the policy path, backend/host, remote project root, resolved platform skill path, and the references or executable entry point required for the operation. Tell the worker to read these before its first remote operation and again when recovering context. The platform skill owns transfer and execution procedures.
 
-**Filesystem mode** — always include this block when the issue involves running jobs on remote compute nodes. Check `shared_filesystem` in `.epic-config.json`:
+**Filesystem mode** — when no project compute policy exists, use the following legacy remote-operation context. A configured platform's procedures take precedence. Check `shared_filesystem` in `.epic-config.json`:
 
 *When `shared_filesystem: false` (laptop — files must be synced):*
 ```

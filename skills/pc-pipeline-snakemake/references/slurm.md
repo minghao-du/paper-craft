@@ -41,4 +41,4 @@ Check `set-threads`, `set-resources`, `cpus_per_task`, and `slurm_extra` for ove
 
 Inspect rule bodies and job grouping for hidden loops or groups that combine independent units into one allocation. Controller launch scripts must select this executor/profile as well. Explain any `localrules` in terms of controller work, keeping analytical computation on compute nodes.
 
-Validate the test DAG using the skill's local smoke command, then complete the **Independent Cluster Jobs** configuration gate from `SKILL.md` against the production launch configuration. A passing dry-run alone does not establish that the Slurm resource requests are correct.
+Complete [smoke validation](smoke.md) through the production launch route and the **Independent Cluster Jobs** configuration gate from `SKILL.md` against the production configuration. Smoke execution and resource inspection establish separate claims.

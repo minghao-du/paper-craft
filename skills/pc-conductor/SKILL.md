@@ -248,7 +248,7 @@ Fields:
 - **github_repo**: `org/repo` for `gh` commands
 - **conductor**: (clone mode only) Which clone is the orchestrator (stays on main)
 - **max_lead_iterations**: Max issue-lead evaluations before escalating to `needs-human` (default: 8)
-- **shared_filesystem**: (optional, default `false`) Set to `true` when the conductor and all compute nodes share an NFS filesystem; the conductor composes direct SSH execution commands instead of `make remote-sync` calls, and experiment results are immediately visible on local NFS paths.
+- **shared_filesystem**: (optional, default `false`) Set to `true` when the conductor and all compute nodes share an NFS filesystem. This describes file visibility; `.paper-craft/compute.md` and its selected platform skill determine transfer and execution procedures, passed to workers by `/pc-conductor-spawn`.
   Each machine sets this flag for itself.
 
 ## Workflow

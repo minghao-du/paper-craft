@@ -19,7 +19,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 ├── config/
 │   ├── config.yaml              # Production execution parameters and path variables
 │   ├── schema.yaml              # JSONSchema parameter validation specification
-│   └── test.yaml                # Minimal test dataset parameters for CI
+│   └── test.yaml                # Smoke inputs, reduced workload, and isolated output roots
 ├── workflow/
 │   ├── Snakefile                # Workflow entry point and target rule (rule all)
 │   ├── rules/                   # Modular rule definitions (*.smk)
@@ -30,8 +30,9 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 │   ├── scripts/                 # Standalone execution scripts (Python / R / Bash; PEP 723 metadata for uv)
 │   │   └── parse_output.py
 │   └── report/                  # HTML report captions and markdown descriptions
-├── tests/                       # Minimal synthetic fixtures & unit tests for local smoke testing & CI (tracked in Git)
-│   └── data/                    # Toy input datasets (subsampled fastq/tables; few KB to MB)
+├── tests/                       # Unit tests and fixtures (tracked in Git)
+│   └── data/
+│       └── smoke/               # Small raw inputs for the production workflow
 ├── data/                        # Raw, immutable input data (production; read-only; never written to by rules)
 ├── processed/                   # Intermediate staged artifacts (cleaned, aligned, intermediate tables; gitignored)
 │   └── quantification/
@@ -67,7 +68,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 - **Log Directive Contract**: Every non-trivial rule must specify a `log:` directive partitioned by rule name and wildcard (e.g., `log: "logs/{rule}/{sample}.log"`). In `shell:`, capture standard streams explicitly: `> {log} 2>&1`.
 - **Intermediate Artifacts (`processed/`)**: Route all intermediate and staged transformations to `processed/`. Mark temporary artifacts with `temp()` so Snakemake removes them immediately after downstream consumers finish.
 - **Deliverables (`results/`)**: Route final analytical summaries, plots, and reports to `results/`. Apply `protected()` on high-cost terminal deliverables to guard against accidental deletion.
-- **Stage Summary Receipts (`summary/`)**: Each analytical stage must produce a brief completion receipt in `summary/{stage}.md` via its aggregation rule. Tracked in Git, decoupling compute-heavy environments from local inspection. A receipt proves completion and summarizes conclusions — it points to where data lives, never reproduces it. Follow the 3-section skeleton in [summary.md](templates/summary.md): **Summary** (pass/fail + 1–2 sentence key finding + runtime), **Shape** (key counts in one line), **Outputs** (file paths, format, and one sentence describing content or purpose). Raw diagnostic dicts, seed arrays, and full schema dumps belong in data files, not receipts. All paths use project-root-relative form.
+- **Stage Summary Receipts (`summary/`)**: Each analytical stage must produce a brief completion receipt via its aggregation rule. Production receipts live in `summary/{stage}.md`, tracked in Git, decoupling compute-heavy environments from local inspection; smoke receipts follow the **Smoke Execution Contract**. A receipt proves completion and summarizes conclusions — it points to where data lives, never reproduces it. Follow the 3-section skeleton in [summary.md](templates/summary.md): **Summary** (pass/fail + 1–2 sentence key finding + runtime), **Shape** (key counts in one line), **Outputs** (file paths, format, and one sentence describing content or purpose). Raw diagnostic dicts, seed arrays, and full schema dumps belong in data files, not receipts. All paths use project-root-relative form.
 - **Immutability of `data/` and `workflow/`**: Treat `data/` as read-only. Confine all output definitions strictly within `processed/`, `results/`, `logs/`, or `summary/`. Never write outputs to `workflow/`.
 
 ### 2. Fail-fast Parameter Validation
@@ -86,10 +87,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
   - **Conda for Binary Dependencies**: Isolate rules requiring non-Python, C/C++, or bioinformatics compiled tools (e.g., `samtools`, `bwa`) via `conda: "envs/foo.yaml"` or `container:`. Pin explicit software versions inside every YAML file. Confine all Conda definitions strictly within `workflow/envs/*.yaml`.
   - **uv for Python Runtime & Rules**: Manage pipeline orchestration (`snakemake`, `snakefmt`) via root `pyproject.toml` and `uv.lock`. Execute all pipeline commands via `uv run`. For Python transformation scripts in `workflow/scripts/`, declare isolated dependencies using PEP 723 inline script metadata (`# /// script ...`) and invoke via `shell: "uv run workflow/scripts/{script} ..."` (see [script.py](templates/script.py)), or execute against the project virtual environment. Never scatter `requirements.txt` files inside `workflow/envs/`.
 - **Automated Linting & Formatting**: Format files using `uv run snakefmt` and run `uv run snakemake --lint` to verify adherence to syntax standards.
-- **Local Smoke Testing & Execution Contract**:
-  - Pure `uv` workflows: execute `uv run snakemake -n --configfile config/test.yaml`.
-  - Hybrid workflows with Conda rules: execute `uv run snakemake --software-deployment-method conda -n --configfile config/test.yaml`.
-  - Provide synthetic or subsampled input datasets in `tests/data/` paired with `config/test.yaml`. Local execution must resolve DAG and environment configurations without requiring production datasets or cluster scheduling.
+- **Smoke Execution Contract**: When authoring, changing, or auditing an execution chain, follow [smoke validation](references/smoke.md) for fixtures, execution, and output checks. A dry-run establishes DAG resolution; smoke success requires an actual run through the production entry point.
 
 ### 5. Independent Cluster Jobs (HPC)
 
@@ -99,7 +97,7 @@ For cluster execution:
 - **Single-CPU Default**: Use `threads: 1` for units that fit one CPU and the site's memory limits. Match program workers and numerical-library thread pools to the allocation. Multi-core exceptions require tightly coupled parallel work or a unit's memory needs; record the reason beside the rule or profile override and request the minimum required CPUs.
 - **Site Configuration**: Take partition, account, concurrency, and memory limits from project/site configuration. Run the controller where site policy permits, with resources for orchestration only.
 - **Slurm**: When authoring or auditing Slurm execution, read [Slurm profiles](references/slurm.md).
-- **Configuration Gate**: Check every independent unit's job/output mapping, effective executor/profile and resource overrides, CPU/thread agreement, and each multi-core exception. Report findings and unresolved configuration. Dry-run verifies DAG resolution; inspect scheduling configuration separately. This gate requires no additional cluster execution tests.
+- **Configuration Gate**: Check every independent unit's job/output mapping, effective executor/profile and resource overrides, CPU/thread agreement, and each multi-core exception. Report findings and unresolved configuration separately from smoke execution results.
 
 ## Workflows
 
@@ -107,29 +105,29 @@ For cluster execution:
 
 When generating a new Snakemake workflow or expanding an existing one:
 
-1. **Scaffold Directory Tree & uv Project**: Create standard directories (`config/`, `workflow/rules/`, `workflow/envs/`, `workflow/scripts/`, `tests/data/`, `data/`, `processed/`, `results/`, `logs/`, `summary/`). Initialize root `pyproject.toml` declaring `snakemake` and `snakefmt`.
+1. **Scaffold Directory Tree & uv Project**: Create the Standard Directory Layout as outputs are introduced. Initialize root `pyproject.toml` declaring `snakemake` and `snakefmt`.
 2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `.venv/`, `processed/`, `results/`, and `logs/` are gitignored while `pyproject.toml`, `uv.lock`, `tests/`, and `summary/` are tracked.
 3. **Configure & Schema**:
    - Read [schema.yaml](templates/schema.yaml) as a reference to write `config/schema.yaml`.
    - Write `config/config.yaml` with required paths and execution parameters matching the schema.
-   - Write `config/test.yaml` pointing to synthetic test fixtures in `tests/data/`.
+   - Configure smoke inputs and output roots following the **Smoke Execution Contract**.
 4. **Author Modular Rules & Scripts**:
    - Read [rule.smk](templates/rule.smk) as a syntax reference for both `conda:` binary rules and `uv run` Python rules.
    - Read [script.py](templates/script.py) as a syntax reference for isolated Python scripts with PEP 723 inline dependency metadata.
    - Read [summary.md](templates/summary.md) for the receipt skeleton.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
-   - Author domain logic in `workflow/rules/*.smk` using tiered paths (`processed/`, `results/`, `logs/`, `summary/`) and the Stage Output Organization conventions above. Each analytical stage has a terminal aggregation rule that writes a brief receipt to `summary/{stage}.md` — conclusions and pointers only.
+   - Author domain logic in `workflow/rules/*.smk` using the **Stage Output Organization** and **Stage Summary Receipts** conventions above.
    - For cluster execution, apply **Independent Cluster Jobs** when choosing job boundaries, rule resources, and the execution profile.
-5. **Verification**: Run `uv run snakemake [-n --configfile config/test.yaml]` (adding `--software-deployment-method conda` if Conda rules are present) followed by `uv run snakemake --lint`.
+5. **Verification**: Complete the **Smoke Execution Contract** and run `uv run snakemake --lint` through the project's configured execution route.
 
-**Completion Criterion**: Directory tree conforms to standard layout with root `pyproject.toml`; `tests/data/` contains minimal test fixtures; `uv run snakemake -n --configfile config/test.yaml` (with `--software-deployment-method conda` when Conda rules exist) completes with a valid DAG; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate passes with no unresolved configuration.
+**Completion Criterion**: Directory tree conforms to the standard layout; smoke execution and its artifact checks pass; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate also passes. Report any unexecuted checks as pending.
 
 ### Branch 2: Workflow Audit & Refactoring (Auditing)
 
 When reviewing or optimizing an existing Snakemake pipeline:
 
 1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and analytical stages produce tracked receipts in `summary/`. Check Stage Output Organization conventions and that receipt output entries explain content or purpose.
-2. **Check Parameter Validation & Smoke Testing**: Verify presence of `schema.yaml` with startup validation, and confirm presence of `config/test.yaml` paired with `tests/data/` fixtures for zero-compute local validation.
+2. **Check Parameter Validation & Smoke Testing**: Verify startup schema validation and evaluate the **Smoke Execution Contract**, including actual execution and artifact evidence for the affected chain.
 3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, evaluate the **Independent Cluster Jobs** configuration gate.
    - When fixing a failed stage run, inspect the existing target, logs, and rerun reasons to distinguish parsing failures, dependency rebuilds, and job execution failures. Trace the failure to its input or environment contract and repair it within the existing Snakefile and stage target, preserving required dependencies.
    - Introduce a separate entry point or stage-selection switch only after identifying execution requirements the existing DAG cannot express.

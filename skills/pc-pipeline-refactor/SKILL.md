@@ -119,7 +119,7 @@ Verify the changed paths and dependencies through the execution environment and 
 Verification steps:
 1. **Small-Data Tests**:
    - Use the project's small test configuration and representative fixtures to dry-run and execute affected targets. Cover changed imports, includes, input/output paths and dependency edges.
-   - Run relevant unit and smoke tests; use the fixture mechanism in [pc-pipeline-snakemake](../pc-pipeline-snakemake/SKILL.md) for Snakemake workflows.
+   - Run relevant unit and smoke tests; follow [Snakemake smoke validation](../pc-pipeline-snakemake/references/smoke.md) for fixtures, execution, and artifact checks.
 2. **Production Path Checks**:
    - Verify the ledger's actual local and remote path mappings, input locations and compatibility symlinks; search active code and configuration for stale references.
 3. **Risk-Based Expansion**:
