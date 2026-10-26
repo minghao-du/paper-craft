@@ -17,8 +17,8 @@ Synchronize all code, rules, configurations, and data assets across local workst
   Every analytical subfolder in `workflow/scripts/<stage>/` must be reflected 1:1 in `results/<stage>/`.
 - **`atomic`**: Dual-environment execution where local repository changes and remote HPC data assets migrate in lockstep.
   Avoid half-migrated states where code expects new paths while compute clusters host old directories.
-- **`dry-run`**: Zero-compute topological verification via `snakemake -n`.
-  Every refactor must prove complete DAG closure across default and aggregate targets before committing.
+- **`dry-run`**: Dependency planning via `snakemake -n`, without executing analysis jobs.
+  Building the DAG still takes time and queries the filesystem; select checks by the migration risks in Phase 5.
 - **`sanitize`**: Safe environment cleanup of merged Git worktrees, unpartitioned root logs, and obsolete intermediate artifacts.
 
 ---
@@ -28,7 +28,7 @@ Synchronize all code, rules, configurations, and data assets across local workst
 ```
 Phase 1: Audit & Inventory  ──>  Phase 2: Migration Ledger  ──>  Phase 3: Code Rewiring
                                                                         │
-Phase 5: Zero-Compute Verification  <──  Phase 4: Atomic Migration & Sanitize  <─┘
+Phase 5: Verification & Commit  <──  Phase 4: Atomic Migration & Sanitize  <─┘
 ```
 
 ### Phase 1: Audit & Inventory
@@ -112,27 +112,26 @@ No orphan files, dangling directories, or broken symlinks remain.
 
 ---
 
-### Phase 5: Zero-Compute Verification & Commit
+### Phase 5: Verification & Commit
 
-Verify pipeline integrity through non-destructive dry-runs and automated tests without launching heavy compute jobs on login nodes.
-Strictly enforce cluster compute boundaries defined in `.paper-craft/compute.md`.
+Verify the changed paths and dependencies through the execution environment and platform procedures defined in `.paper-craft/compute.md`.
 
 Verification steps:
-1. **Default Target Topological Dry-Run**:
-   - Run `snakemake -n` (or `nextflow run main.nf -preview`) on the remote HPC host.
-   - Confirm complete DAG resolution with zero missing input errors and zero cyclic dependencies.
-2. **Stage Aggregate Target Dry-Runs**:
-   - Run `snakemake -n <stage>_all` for every major analytical stage target.
-   - Verify that all newly restructured rules and mirror outputs are scheduled properly in the DAG.
-3. **Unit and Smoke Test Suite**:
-   - Read the project's `.paper-craft/compute.md` and execute project test suites (`python -m unittest` or `pytest`) in its configured environment, following the selected platform skill's procedures.
-   - Confirm all path assertions and fixture loads pass green.
+1. **Small-Data Tests**:
+   - Use the project's small test configuration and representative fixtures to dry-run and execute affected targets. Cover changed imports, includes, input/output paths and dependency edges.
+   - Run relevant unit and smoke tests; use the fixture mechanism in [pc-pipeline-snakemake](../pc-pipeline-snakemake/SKILL.md) for Snakemake workflows.
+2. **Production Path Checks**:
+   - Verify the ledger's actual local and remote path mappings, input locations and compatibility symlinks; search active code and configuration for stale references.
+3. **Risk-Based Expansion**:
+   - Expand DAG checks only for a specific migration risk the fixtures and path checks cannot cover, such as production-only sample discovery or a changed production configuration branch. Record the risk, target and result in the ledger.
+   - Check the affected target or a supported batch first; expand to the full production DAG when that risk requires it, rather than checking every stage by default.
+   - If a check stops making progress, identify the bottleneck and remaining question, then narrow it where coverage permits. Continue necessary checks and report unfinished checks as incomplete.
 4. **Git Tree Inspection & Commit**:
    - Inspect `git status` and `git diff --stat` to verify that only expected path migrations and rewiring changes are staged.
    - Commit changes with a descriptive message summarizing structural changes, unnumbered stages, script submodules, and mirror layouts.
    - Push changes to remote repository tracking branch.
 
 **Completion Criterion**:
-Remote `snakemake -n` and target dry-runs pass with zero errors.
-Unit tests pass completely.
+Affected-target small-data runs and relevant tests pass, and the ledger's real path mappings are verified.
+Any production DAG checks required by an identified risk pass; record their results and any production behavior not covered by the verification.
 Local Git working tree is clean and synchronized with upstream.

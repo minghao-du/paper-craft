@@ -70,8 +70,8 @@ Enumerate dead artifacts to remove on local and remote environments:
 
 All gates must pass before finalizing the refactor:
 
-- [ ] **Zero-Compute Topological Dry-Run (`default`)**: `snakemake -n` completes with 0 errors.
-- [ ] **Zero-Compute Topological Dry-Run (`all targets`)**: `snakemake -n <stage>_all` completes with 0 errors.
-- [ ] **Unit & Fixture Tests**: Test suites pass completely (`pytest` or `python -m unittest`).
+- [ ] **Small-Data Tests**: Affected-target dry-runs, executions and relevant unit/smoke tests pass with representative fixtures covering the changed paths and dependencies.
+- [ ] **Production Paths**: Actual local/remote mappings, input locations and compatibility symlinks match the ledger; active references use the intended paths.
+- [ ] **Production DAG Checks**: Record any risk requiring expanded checks, their targets and results, or why none are needed. Required checks pass; unfinished checks and uncovered production behavior are explicit.
 - [ ] **Compute Boundary Guard**: The actual test execution environment and platform procedure conform to the project's `.paper-craft/compute.md`.
 - [ ] **Repository Status**: `git status` clean with no untracked file debris or uncommitted staged fragments.
