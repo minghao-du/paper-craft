@@ -21,24 +21,15 @@ Reach for a subagent when the work fits in one call and only you need the answer
 /pc-helper sweep
 ```
 
-## Facts this skill depends on
+## Execution mode
 
-The following command flags, identifiers and transcript paths describe the Claude Code background branch only.
-For other runners, use the same home/ownership/result/retirement rules with their documented tmux startup, resume and stop behavior.
+Choose one implementation and read it before `start`, talking/resuming, `stop` or `sweep`:
 
-- `claude --bg` sessions ignore the shell's `CLAUDE_CODE_OAUTH_TOKEN` and authenticate from the `env` token in `~/.claude/settings.json`, which the account switch in matsen/setup writes.
-- A `--resume` keeps none of the original flags, so every resume passes them again.
-- A cross-session message to a session in a different permission mode is held for that session's user to approve.
-  Nobody is watching a background helper, so a held message sits there silently.
-  Start the helper in your own permission mode with `--permission-mode`; `bypassPermissions` starts without a confirmation prompt.
-- A stopped helper disappears from `ListAgents`, so `SendMessage` cannot reach it; resume it first.
-- Idle background sessions nobody is attached to are stopped automatically after roughly an hour.
-  A helper that has finished and is waiting for you will therefore often be missing from `ListAgents`; that is the expected state, not a failure.
-- A `notify_when_idle` notice reaches you only once your own turn ends, so it can arrive long after the helper went idle, and a subscription made while the helper is already idle reports that earlier idle.
-  Don't hold a turn open waiting for one: end your turn and act on the notice, or on the helper's report message, when it arrives.
-- `claude --bg` prints a short id (`backgrounded · <id> · <name>`); `stop`, `rm`, `logs`, and `attach` take that id.
-  `--resume` takes the full session id from `claude agents --json --all`.
-- A background session's scratchpad is `~/.claude/jobs/<id>/tmp/`, and `claude rm` deletes it; nothing citable belongs there.
+- [Tmux](tmux/guide.md): a separate terminal running the selected agent runner.
+- [Claude Code background](claude-background/guide.md): `claude --bg`, when supported.
+
+Use that implementation throughout the helper's lifecycle, starting from its recorded pane or job identity on later turns.
+The home, ownership, result, record and cleanup rules below apply to both modes.
 
 ## Rules
 
@@ -79,7 +70,6 @@ HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
 
 2. **Pick its working directory `DIR`.**
    - Research, review, messaging, or code changes: a detached worktree of your own repo off `origin/main`, inside the home, `KIND=worktree`; tell a research-only helper the checkout is read-only.
-     Not the bare home: `claude --bg` refuses a directory Claude Code has never trusted ("Workspace not trusted"), and a fresh home is one, while a worktree of a trusted repo starts.
      ```bash
      git -C <repo> fetch -q origin
      DIR="$HOME_DIR/$(basename "$(git -C <repo> rev-parse --show-toplevel)")"
@@ -107,18 +97,7 @@ HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
    - no merging, no pushing to main, no other checkouts, no helpers of its own.
 
 4. **Start it** from `$DIR`, within the current task authorization.
-   **Tmux branch:** launch the selected runner with its documented input options, record its returned pane as `ID` and any actual native session identifier as `SID`, and verify the directory and startup.
-   A native session id may be absent in this branch; keep the pane identity distinct from agent liveness.
-   If launch is unavailable, leave the brief prepared and do not record a running helper.
-   **Claude Code background branch:** use the following only when that runner supports these options, preserving the current permission mode:
-   ```bash
-   ARGS=(-n "<primary>-<role>" --permission-mode <your-mode>)
-   OUT=$(cd "$DIR" && claude --bg "${ARGS[@]}" "<brief>" 2>&1)
-   ID=$(printf '%s\n' "$OUT" | sed -n 's/^backgrounded · \([0-9a-f]\{1,\}\) · .*/\1/p')
-   SID=$(claude agents --json --all | jq -r --arg id "$ID" '.[] | select(.id==$id) | .sessionId')
-   ```
-   `<your-mode>` is one of `claude --help`'s `--permission-mode` choices; bypass mode is `bypassPermissions`.
-   If `ID` or `SID` is empty, stop and show the user `$OUT`; do not guess an id from the listing.
+   Follow the chosen implementation’s **Start** procedure. Record only a verified launch.
 
 5. **Write the record.**
    `HOLD` is empty unless `KIND=held-clone`.
@@ -130,11 +109,7 @@ HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
    ```
 
 6. **Confirm reports flow both ways.**
-   In the tmux/file branch, verify the first result in `result.md` and record any pending correction there; native messages additionally require a supported authorized channel.
-   The following message/log checks apply to the Claude background branch:
-   Wait for its first report, then send it something and wait for the answer — a real first task serves as the ping, so reserve a content-free one for when you have nothing to send yet.
-   If either is missing after a few minutes, read `claude logs <id>` and report to the user.
-   A `failed` state in `claude agents --json --all` most often means the wrong account; a silent helper, a held message.
+   Follow the chosen implementation’s **Confirm reports** procedure.
 
 ## Finding a helper's record
 
@@ -150,27 +125,16 @@ Read `id`, `session_id`, `home`, `dir`, `dir_kind`, and `hold` from `$R` with `j
 
 ## Talking to it
 
-- `SendMessage` to its name; its replies arrive as cross-session messages.
 - Read `result.md` in its home first; each round it finished has a section there.
   Resume it only for a new round or a question the file does not answer.
-- In the Claude background branch, a missing `ListAgents` row requires checking the recorded job before concluding it stopped.
-  Resume it with the message as the prompt, rebuilding `ARGS` exactly as in start step 4:
-  ```bash
-  OUT=$(cd "$DIR" && claude --bg --resume "$SID" "${ARGS[@]}" "<message>" 2>&1)
-  ```
-  Without `--permission-mode` its messages are held, and without `-n` it is renamed from the prompt.
-  The resume is a new job with a new short id and session id: parse `ID` and `SID` from `$OUT` as in start step 4, write a new record (start step 5), and delete the old one.
-  `jq .respawnFlags ~/.claude/jobs/<id>/state.json` shows the flags a job actually runs with.
-- The user can watch or type to it with `claude attach <id>` (`←` returns to agent view, `Ctrl+Z` to the shell; the helper keeps running either way).
+- Use the chosen implementation’s **Talk and resume** procedure.
 
 ## stop
 
 1. Ask it to wrap up: commit and push anything it owns, append its last section to `result.md`, then report to you.
    If it is stopped, resume it for this.
 2. Confirm every owner and dependent job released the directory before cleanup.
-   In the tmux branch, stop only the recorded owned runner/pane through its supported mechanism and verify termination; keep evidence and checkouts until the following preservation gates pass.
-   In the Claude background branch: `claude stop <id>`, then `claude rm <id>`.
-   If `rm` reports unpushed commits or a worktree it could not remove, stop and show the user; do not pass `--discard-unpushed` or `--force-remove-worktree` without their go-ahead.
+   Follow the chosen implementation’s **Stop** procedure before continuing with directory cleanup.
 3. Remove every worktree under the home:
    ```bash
    find "$HOME_DIR" -mindepth 2 -maxdepth 3 -name .git -type f | while read -r g; do
@@ -188,13 +152,7 @@ Read `id`, `session_id`, `home`, `dir`, `dir_kind`, and `hold` from `$R` with `j
 ## sweep
 
 For each record in `$HELPERS`, verify the recorded pane or job against the selected runner's actual state.
-The tmux branch reports pane presence separately from runner liveness and labels unavailable evidence unknown.
-In the Claude background branch, look up `id` in `claude agents --json --all` and `primary` in `ListAgents`, then report one line per record:
-
-- **stale** — id not in the listing: the session was removed; offer to finish `stop` from step 3.
-- **primary not found** — session present but no `ListAgents` row carries the recorded primary name.
-  `ListAgents` renames a resumed session (`birch` becomes `birch-61`), so this is not proof the primary is gone; offer to message the helper or stop it.
-- **live** — both present: leave it.
+Follow the chosen implementation’s **Sweep** procedure.
 
 Report and ask; do not stop or remove anything in a sweep without the user's go-ahead.
 Match on the record's `id` only — never infer a helper from a name prefix in the listing.

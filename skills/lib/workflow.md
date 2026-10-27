@@ -123,31 +123,12 @@ processing nor wake-up of another interactive conversation.
    its exact returned identity. On every message or timer wake, reconcile and re-arm before
    ending the turn. Report changes or required user action; keep unchanged polls quiet.
 
-### Antigravity CLI
+### Runtime wake-up
 
-When the current session exposes the built-in `schedule` tool, use its one-shot form:
-
-```json
-{
-  "DurationSeconds": 60,
-  "TimerCondition": "any",
-  "Prompt": "Continue the registered role and bound EPIC using skills/lib/workflow.md. Reconcile durable handoffs and current state, handle changes within existing authority, then re-arm one wake-up. Stay quiet if unchanged."
-}
-```
-
-Fill the prompt with the current role, absolute config path, absolute shared-contract path
-and EPIC number (for the EPIC role). Finish other tool work first: scheduling returns
-immediately and must be the last tool call before yielding. Require a successful result and
-task identity before reporting wake-up armed. `TimerCondition: any` cancels the timer on an
-incoming message, which wakes the agent; that turn must also reconcile and re-arm.
-See the [native schedule contract](https://antigravity.google/docs/commands/schedule/).
-
-Timers belong to the current conversation. On explicit pause, stop or role handover, cancel
-only its registered timer; restart/re-entry must inspect tasks and establish one active timer.
-If registration fails or the tool is unavailable, retain durable intent and report
-`manual continuation required` with the next role command. Promise automatic pickup only
-with a confirmed wake-up. Other runners may use a verified equivalent; shell sleeps,
-another process resuming the same live conversation, and tmux keystrokes are not substitutes.
+For Antigravity sessions exposing `schedule`, read [the Antigravity wake-up procedure](antigravity/wake-up.md) before arming a timer.
+Other runners may use a verified equivalent. Promise automatic pickup only with a confirmed wake-up; shell sleeps, another process resuming the same live conversation, and tmux keystrokes are not substitutes.
+If registration fails or no supported tool exists, retain durable intent and report `manual continuation required` with the next role command.
+On explicit pause, stop or role handover, cancel only the conversation's registered timer; restart/re-entry must inspect tasks and establish one active timer.
 
 ## Installation
 

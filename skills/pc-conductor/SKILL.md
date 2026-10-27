@@ -128,16 +128,10 @@ Whether a correction needs this channel at all, and whether it's durable or tran
 - **Send the correction directly.** State the change in at least one line; a bare pointer ("re-read `lead_guidance`") is a no-op and strips the priority signal. A correction too long for a message belongs in the spawn prompt or the issue body.
 - **If the nudge changes what the worker will produce** — scope, target, artifact, gate criterion — **append a timestamped, attributed entry to that slot's `.epic-worklog.md` FIRST, then send.** The append is addressed to a path and survives address drift and compaction; the message is addressed to a name and survives neither.
   Never write into `lead_guidance`, which is the lead's field. If the status file is written at all, use `conductor_guidance` or a `lead_notes` entry tagged `source: conductor`.
-- Delivery is not instant: the message drains at the worker's *next tool call*. It is not a substitute for `tmux capture-pane` when you need current state now.
-- `SendMessage` only reaches addressable Claude sessions — never a plain shell, a remote SSH job, or a non-Claude compute node. Run `ListAgents` first; when the target isn't addressable, fall back to the file-only correction and wait for the worker's own loop.
-- **The address is whatever the selected runner's supported session API reports — `ListAgents` in the Claude branch — read it off its row, or off the message you are replying to, and never compose it.**
-  The bare clone name and tmux window name are not native message addresses.
-  A composed name that happens to match another session delivers silently to the wrong one.
-- A failed send to a name you composed is a typo: re-run `ListAgents` and use the exact name. A failed send to a self-registered address has drifted: skip it (see "Completion pushes").
+- For Claude session delivery, read [the messaging procedure](claude-code/messaging.md) before sending a nudge. Other runners use their supported addresses or leave the correction in the worklog.
 - Do not use `SendMessage` to route around the conductor's own restrictions (cross-session permission laundering).
 - When a worker says an authorization is "unverifiable", ask which wrapper it arrived in: a plain user turn authorizes; a `<cross-session-message>` does not; a `NOT USER INPUT`-marked payload does not. The full table is in `/pc-conductor-spawn`'s landing-gate block.
 - **When not to nudge**: a worker in `awaiting-results` with a live `check_cmd` needs no ping.
-  Use `notify_when_idle: true` instead of "tell me when this worker finishes" — main conversation only, same machine only, one-shot.
 
 ### Completion pushes: self-registered addresses, not ListAgents guessing
 
@@ -460,7 +454,7 @@ Only the owning pane may be closed, never a shared window; background processes 
 - Released, fully verified and preserved → cleanup may proceed only through a supported, separately authorized path; this CLI does not supply one yet.
 
 **A loop is live** only when its runner confirms the recorded session is running.
-For Claude Code with Ralph, `.claude/ralph-loop.local.md` must exist **and** its `session_id` must belong to that running session.
+For Claude Code with Ralph, read [the runtime recovery checks](claude-code/recovery.md#ralph-liveness) before declaring its loop live.
 
 *Worktree mode* has the same ownership, terminal and preservation gates; use `pc workflow preserve` before any separately authorized non-forced Git worktree removal.
 A refusal leaves the worktree in place for investigation.
@@ -468,7 +462,7 @@ A refusal leaves the worktree in place for investigation.
 If a worklog seems lost:
 - Before concluding a worklog is lost, look in the wrong place too: `<clone_root>/<clone>/.preserved/`.
 - When the runner supplies a transcript, attempt reconstruction from it and label the result.
-  In the Claude Code branch, the transcript is `~/.claude/projects/$(echo "$CLONE" | sed 's|/|-|g')/<session-id>.jsonl`: replay the seed `Write`'s `input.content`, then each `Edit`'s `old_string`→`new_string`, then any Bash heredoc appends, in timestamp order. Stop if an `old_string` doesn't match. Mark the result as a reconstruction in its README.
+  For Claude Code, read [the transcript reconstruction procedure](claude-code/recovery.md#lost-worklog-reconstruction).
 
 **After reclaiming**, spawn pending intent:
 
@@ -522,50 +516,7 @@ shared contract requires. Report the verified observation mechanism and identity
 
 #### Process checks
 
-A runner may carry its entire spawn prompt in argv, so **never match argv** (`pgrep -f`, `ps | grep`) for a question about processes: it matches every worker whose prompt mentions the string, and the asking shell itself. Enumerate by exact name and attribute by working directory:
-
-```bash
-# Linux + Claude Code example only; other runners/OSes use their supported process inspection.
-# Which clone is each live Claude session in?
-for pid in $(pgrep -x claude); do
-  printf '%s\t%s\n' "$pid" "$(readlink /proc/$pid/cwd)"
-done
-```
-
-- `pgrep -x` is not fleet-scoped; filter on the cwd being under `$CLONE_ROOT`.
-- To ask "what is running in my pool", don't hand-list names: take `/proc/<pid>/comm` for every pid whose cwd is under `$CLONE_ROOT`, `sort | uniq -c` (test runners are named neither `zig` nor after the product).
-- On shared hosts, scope with `-u $(id -u)`. You cannot read another user's `/proc/<pid>/cwd`; treat an unreadable cwd as foreign and report own and foreign counts separately.
-- To wait on something you launched, poll its `$!`, never a pattern — or background it and let the harness re-invoke you.
-- Load average answers "is this host contended", not "is my job still running": enumerate processes for occupancy.
-- zsh does not word-split an unquoted `$VAR`, so `$EXTRA` holding several flags is one argument. Write flags literally or use an array, and read a failing arm's stderr before recording a non-result.
-- argv size separates workers from interactive sessions without reading content: `wc -c < /proc/<pid>/cmdline` is over ~1 KB for a spawned worker, under ~100 B for a hand-started session.
-
-Where you must identify a process you did not launch:
-
-```bash
-n=0
-for p in $(pgrep -x zig); do
-  [ "$p" = "$$" ] && continue
-  [ "$(readlink /proc/$p/cwd 2>/dev/null)" = "$PWD" ] && n=$((n+1))
-done
-echo "$n"
-```
-
-**A slot blocked on a foreground shell wait** is not idle; Claude Code may report `shell` and cannot drain `SendMessage` in that state.
-The following Linux/Claude process example applies only to that branch; inspect other runners through their actual process and session tools. Sweep whenever a slot reads `shell`, and on any full reconciliation:
-
-```bash
-for pid in $(pgrep -x zsh; pgrep -x bash; pgrep -x sh); do
-  [ "$pid" = "$$" ] && continue
-  cwd=$(readlink /proc/$pid/cwd 2>/dev/null); case "$cwd" in "$CLONE_ROOT"/*) ;; *) continue;; esac
-  ppid=$(ps -o ppid= -p $pid | tr -d ' '); et=$(ps -o etimes= -p $pid | tr -d ' ')
-  [ "$(ps -o comm= -p $ppid | tr -d ' ')" = "claude" ] || continue
-  [ "$et" -gt 600 ] || continue
-  echo "$et|$pid|${cwd##*/}"; tr '\0' '\n' < /proc/$pid/cmdline | tail -1 | /usr/bin/grep -o "eval '.*' < /dev/null"
-done | sort -rn
-```
-
-Before killing one, confirm no real process of that clone is being waited on (`pgrep -x make` / `-x zig` plus a cwd match).
+When inspecting slot occupancy or liveness, read [the process inspection procedure](tmux/process-checks.md). Match recorded identities and working directories; never search process arguments for a worker name or task string.
 
 ## .epic-status.json specification
 
@@ -592,15 +543,7 @@ Before killing one, confirm no real process of that clone is being waited on (`p
 - **Staleness checks:**
   - *No tmux window, status file older than 30 minutes* → suspected abandoned slot, a recovery candidate (Step 6); occupancy stays unknown until verified.
   - *Window blocked on a permission modal* → frozen and potentially unable to receive messages.
-    Sweep on every reconciliation; the following text match and cancellation keys are the Claude Code branch, so inspect the selected runner's actual dialog before acting:
-
-    ```bash
-    for p in $(tmux list-panes -a -F '#{pane_id} #{pane_current_path}' | /usr/bin/grep -F "$CLONE_ROOT/" | awk '{print $1}'); do
-      tmux capture-pane -p -t $p | /usr/bin/grep -q 'Do you want to proceed?' && echo "MODAL: $p"
-    done
-    ```
-
-    Cancel with `Escape`; never send `Enter` or select "Yes" (the cursor sits on "1. Yes"). Then tell the worker what was blocked and that you declined. A subagent's modal surfaces in its parent's pane. For a slot "waiting on a subagent", ~20 minutes with no output is worth a sweep.
+    Sweep on every reconciliation; for Claude Code, read [the permission-dialog procedure](claude-code/dialogs.md). Inspect other runners through their actual dialog interface before acting.
   - *Window still open, status file older than ~45 minutes* → possibly **stalled**. Surface it in Step 5's dashboard for a human; never clean it up.
   - Check file **mtimes** of both `.epic-status.json` and `.epic-worklog.md`, not the `updated_at` field, which workers sometimes hand-type.
   - The `phase` field is not evidence that work is done: check `gh pr view`.

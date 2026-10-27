@@ -234,13 +234,14 @@ git diff origin/main...HEAD -- <the owned files>
 
 When you change a gating rule, sweep the slots already running under the old one; a prompt is frozen at launch.
 
+Supply the selected runner’s concrete pause instruction in every brief. For a Claude Code worker using Ralph, read [the loop adapter](claude-code/ralph.md) and insert its concrete start/pause instructions into the prompt below. Resolve any referenced files to absolute paths before handing off the brief.
+
 **Prompt file** (written by conductor to /tmp/spawn-N.txt):
 ````
 You are working on GitHub issue #N TITLE.
 
 Follow the iteration and stopping-point protocol below using your runner's supported continuation mechanism.
-Only for Claude Code with the Ralph plugin, start its loop with:
-/ralph-loop:ralph-loop --completion-promise 'ISSUE WORK COMPLETE' --max-iterations 20 Continue working on the task. Read .epic-status.json and .epic-worklog.md for context. Output ISSUE WORK COMPLETE in promise tags when done.
+[Insert the selected runner’s pause instruction here; for Claude Code with Ralph, also insert the start command from the loop adapter. Remove this placeholder.]
 Other runners must still perform every issue-lead and quality gate; if an independent evaluator cannot be started through tmux or native tools, leave that gate pending rather than self-certifying it.
 Tool names such as SendMessage/ListAgents below denote the Claude branch; use only supported, authorized native equivalents and persist undelivered notifications in the worklog and FINAL RECAP.
 
@@ -302,7 +303,7 @@ Do not quietly reconcile a contradiction in either direction.
 HUMAN INTERRUPT — The AUTONOMY rule governs YOUR decisions, not the
 human steering. If a human interrupts to ask a question, discuss, or
 change direction, that supersedes the loop: PAUSE it FIRST
-(for Claude + Ralph: /ralph-loop:cancel-ralph; otherwise the runner's supported pause) so the
+using the runtime pause instruction supplied in this brief so the
 stop hook stops re-injecting "continue working", then engage. Do NOT
 grind stale work between their messages just to satisfy the hook. When
 the discussion resolves, either RESTART the loop with an updated prompt
@@ -710,20 +711,11 @@ The check compares code between the two commits (`src build.zig build.zig.zon`, 
 
 ### Step 5: Launch tmux window
 
-Write the composed prompt to a file and use the selected runner's documented prompt-input method.
-The current CLI does not implement `pc spawn`; a prepared prompt is not a launched worker.
-Keep the original placement and lifecycle guards explicit:
+Before any launch, resolve the authoritative config and exact slot directory; recheck all directory owners, holds and pane paths including subdirectories. Unknown occupancy blocks reuse.
+Write the composed prompt to a file and use the selected runner's documented input method, treating prompt content as data. Record the returned pane/session identity and verify the intended directory, brief delivery and actual runner startup.
+The current CLI does not implement `pc spawn`; if launch is unavailable or verification fails, report `prepared` or `launch-failed` and keep intent queued.
 
-1. Resolve the authoritative config and exact slot directory.
-2. Recheck tmux pane paths, including subdirectories, holds and all directory owners immediately before launch.
-   Unknown occupancy blocks reuse; allocate an exclusively owned new slot or leave the brief prepared.
-3. Create the tmux window named `<N>-<clone-name>` or `<N>-issue-<N>` in that exact directory.
-   Use the actual runner executable and arguments established from its installed help, with explicit user authorization for the task.
-   Treat prompt content as data; prefer supported prompt-file input and avoid shell-interpolated multiline text.
-4. Record the returned pane identifier and verify both the directory and actual runner startup.
-   The existence of a tmux pane alone does not establish that a runner received the brief or began work.
-5. If no suitable launch path is available or verification fails, report `prepared` or `launch-failed` and keep intent queued.
-
+For tmux workers, read and follow [the terminal placement procedure](tmux/launch.md).
 Native harness launch tools may supply an equivalent checked session only when the user's
 chosen launch policy permits it. A tmux-only worker policy requires the independent terminal.
 Never bypass these ownership, input and confirmation checks by improvising an unchecked launch.
@@ -787,7 +779,7 @@ git clone "git@github.com:$REPO.git" <new-name>
 Then all of:
 
 1. **Add the name to `clone_names` in the authoritative `.epic-config.json`.** Step 1 and the conductor's scans use it; an unregistered clone is invisible.
-2. **Verify the selected runner can use the directory before spawning into it.** In the Claude Code branch, a fresh clone can open its folder-trust dialog, which queues the prompt. If you answer it from the conductor, read which option is highlighted first (`grep -nE 'No, exit|Yes, I trust'` the pane) and send `Down` before `Enter` when `No, exit` is highlighted — never a blind `Enter`.
+2. **Verify the selected runner can use the directory before spawning into it.** For Claude Code in a fresh clone, follow [the folder-trust check](claude-code/folder-trust.md).
 3. **Refresh slot observation.** Re-run `/pc-conductor`'s scan after registration.
    If a supported external monitor enumerates only at startup, restart only its recorded owned identity and verify the new slot is covered; this CLI does not yet implement `pc fleet watch`.
 
