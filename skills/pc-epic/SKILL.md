@@ -55,7 +55,7 @@ Cross-session messages are nudges, not transcripts: lead with the decision or th
 - **Before writing that the EPIC's question is answered**, quote the EPIC's own question and state which measured quantity closes it, and by how much. If it is a fraction of one stage at one fixture, say that.
 - **Run a skeptic subagent on your own artifacts**: before claiming a question answered, and before filing an issue you wrote yourself.
 - **Before repeating who found something**, check the attribution against the log or the PR; it is the part of a claim nobody tests.
-- **Before escalating a question to the user, ask whether its answers lead to different actions.** If both lead to the same action, do not escalate.
+- **Before escalating a question to the user, ask whether its answers lead to different actions.** If they do not, do not escalate. If the options share a first step within the authorized scope, take that step now and ask only about the point where the actions diverge; keep work that depends on the answer pending.
   Put a question for the user as one line in your report, page them per `/pc-conductor`'s "Paging the user", park only that item, and keep working the rest. Use the current harness's supported user-input mechanism and continue independent work while waiting.
 
 ## Configuration

@@ -101,6 +101,7 @@ The slug should be a short kebab-case summary (e.g., `ISSUE-quartet-timing-instr
 
 - **Title** (H1): concise, imperative mood (e.g., "Add timing instrumentation for quartet NNI")
 - **🤖** robot emoji as the first character of the body (after the H1 title)
+- **Goal.**: Open the prose with a plain-language paragraph, following `PROSE-DISCIPLINE.md`.
 - **Motivation**: 2-3 sentences linking back to the source — the PR decision, the conversation, or the focus-file context.
   Reference the PR by number if one exists.
   Include quantitative results if relevant
@@ -121,7 +122,7 @@ No "fast", "scalable", "robust" without numbers.
 
 **Apply prose discipline.**
 Read `PROSE-DISCIPLINE.md` at the paper-craft repo root before drafting and apply its rules. Apply `EVIDENCE-DISCIPLINE.md` to every number the draft cites.
-Defaults toward shorter: lead with the deliverable, state each fact once, bullets for enumerations, show the change site (not its surroundings), drop non-contested options, list bug-catching tests (not invariants).
+Defaults toward shorter: open with a plain-language **Goal.**, then lead with the deliverable, state each fact once, bullets for enumerations, show the change site (not its surroundings), drop non-contested options, list bug-catching tests (not invariants).
 
 **No hard-wrapping.**
 Write each paragraph as a single long line.
