@@ -9,10 +9,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readJsonl, writeJsonl, appendJsonl } from '../../src/storage/jsonl.js';
-import { ProjectSchema, type Project } from '../../src/models/project.js';
-import { RepoSchema, type Repo } from '../../src/models/repo.js';
-import { findById } from '../../src/storage/jsonl.js';
+import { readJsonl, writeJsonl, appendJsonl } from '@paper-craft/core/storage/jsonl';
+import { ProjectSchema, type Project } from '@paper-craft/core/models/project';
+import { RepoSchema, type Repo } from '@paper-craft/core/models/repo';
+import { findById } from '@paper-craft/core/storage/jsonl';
 
 describe('Project CRUD via JSONL', () => {
   let nexus: string;

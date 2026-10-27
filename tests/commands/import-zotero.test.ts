@@ -9,9 +9,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
-import { readJsonl } from '../../src/storage/jsonl.js';
-import { ReferenceSchema } from '../../src/models/reference.js';
-import type { Reference } from '../../src/models/reference.js';
+import { readJsonl } from '@paper-craft/core/storage/jsonl';
+import { ReferenceSchema } from '@paper-craft/core/models/reference';
+import type { Reference } from '@paper-craft/core/models/reference';
 import {
   importZotero,
   findZoteroBaseAttachmentPath,
@@ -19,13 +19,13 @@ import {
   cleanDoi,
   parseZoteroDate,
   reconcileReferences,
-} from '../../src/commands/import.js';
+} from '../../packages/cli/src/commands/import.js';
 import {
   resolveZoteroPath,
   getPdfRoot,
   saveNexusConfig,
   resetGlobalConfigCache,
-} from '../../src/utils/config.js';
+} from '@paper-craft/core/utils/config';
 
 const FIXTURE_DIR = join(import.meta.dirname, 'fixtures', 'zotero');
 
@@ -177,7 +177,7 @@ describe('Zotero import', () => {
       pdf_path: '',
       source: { type: 'manual', id: 'manual-1' },
     };
-    const { appendJsonl } = await import('../../src/storage/jsonl.js');
+    const { appendJsonl } = await import('@paper-craft/core/storage/jsonl');
     await appendJsonl(refsPath, existing);
 
     await importZotero({
@@ -219,7 +219,7 @@ describe('Zotero import', () => {
   describe('CLI command arguments', () => {
     it('requires file argument when format is paperpile', async () => {
       const { Command } = await import('commander');
-      const { registerImportCommand } = await import('../../src/commands/import.js');
+      const { registerImportCommand } = await import('../../packages/cli/src/commands/import.js');
 
       const program = new Command();
       program.exitOverride();
@@ -237,7 +237,7 @@ describe('Zotero import', () => {
 
     it('allows omitting file argument when format is zotero', async () => {
       const { Command } = await import('commander');
-      const { registerImportCommand } = await import('../../src/commands/import.js');
+      const { registerImportCommand } = await import('../../packages/cli/src/commands/import.js');
 
       const program = new Command();
       program.exitOverride();
@@ -262,7 +262,7 @@ describe('Zotero import', () => {
 
     it('parses --library flag in CLI command', async () => {
       const { Command } = await import('commander');
-      const { registerImportCommand } = await import('../../src/commands/import.js');
+      const { registerImportCommand } = await import('../../packages/cli/src/commands/import.js');
 
       const program = new Command();
       program.exitOverride();
@@ -549,7 +549,7 @@ describe('Zotero import', () => {
         s2_id: 's2-transformer-uuid',
         tags: ['custom-local-tag', 'reading-list'],
       };
-      const { appendJsonl } = await import('../../src/storage/jsonl.js');
+      const { appendJsonl } = await import('@paper-craft/core/storage/jsonl');
       await appendJsonl(refsPath, preExisting);
 
       const result = await importZotero({
@@ -609,7 +609,7 @@ describe('Zotero import', () => {
         source: { type: 'manual', id: 'manual-doi-ref' },
         note: 'Imported by hand',
       };
-      const { appendJsonl } = await import('../../src/storage/jsonl.js');
+      const { appendJsonl } = await import('@paper-craft/core/storage/jsonl');
       await appendJsonl(refsPath, manualRef);
 
       const result = await importZotero({
@@ -673,7 +673,7 @@ describe('Zotero import', () => {
       expect(dryResult2.total).toBe(2);
 
       // 4. Modify one existing record in refs.jsonl (outdated field)
-      const { writeJsonl } = await import('../../src/storage/jsonl.js');
+      const { writeJsonl } = await import('@paper-craft/core/storage/jsonl');
       refs[0].title = 'Old Outdated Title';
       await writeJsonl(refsPath, refs);
 
@@ -817,7 +817,7 @@ describe('Zotero import', () => {
         pdf_path: '',
         source: { type: 'manual', id: 'manual-id-1' },
       };
-      const { appendJsonl } = await import('../../src/storage/jsonl.js');
+      const { appendJsonl } = await import('@paper-craft/core/storage/jsonl');
       await appendJsonl(refsPath, existingRef);
 
       const result = await importZotero({

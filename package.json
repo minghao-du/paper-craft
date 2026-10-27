@@ -7,13 +7,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc",
-    "lint": "eslint src/ cmd/",
-    "format": "prettier --write 'src/**/*.ts' 'cmd/**/*.ts' 'tests/**/*.ts'",
-    "format:check": "prettier --check 'src/**/*.ts' 'cmd/**/*.ts' 'tests/**/*.ts'",
+    "build": "pnpm -r run build",
+    "lint": "eslint packages/",
+    "format": "prettier --write 'packages/*/src/**/*.ts' 'tests/**/*.ts'",
+    "format:check": "prettier --check 'packages/*/src/**/*.ts' 'tests/**/*.ts'",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "pnpm run build && vitest run",
+    "test:watch": "pnpm run build && vitest"
   },
   "keywords": [],
   "author": "",
@@ -26,12 +26,6 @@
     }
   },
   "packageManager": "pnpm@12.8.1",
-  "dependencies": {
-    "commander": "^15.0.0",
-    "sql.js": "^1.14.2",
-    "yaml": "^2.9.1",
-    "zod": "^4.6.5"
-  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.3",
@@ -41,6 +35,17 @@
     "tsx": "^4.23.15",
     "typescript": "~5.7.3",
     "typescript-eslint": "^8.71.0",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.3",
+    "commander": "^15.0.0",
+    "sql.js": "^1.14.2",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5",
+    "@modelcontextprotocol/client": "^2.4.0"
+  },
+  "private": true,
+  "dependencies": {
+    "@paper-craft/core": "workspace:*",
+    "@paper-craft/cli": "workspace:*",
+    "@paper-craft/mcp": "workspace:*"
   }
 }

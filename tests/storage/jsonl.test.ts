@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
-import { readJsonl, appendJsonl, writeJsonl, findById } from '../../src/storage/jsonl.js';
+import { readJsonl, appendJsonl, writeJsonl, findById } from '@paper-craft/core/storage/jsonl';
 
 const TestSchema = z.object({
   id: z.string(),

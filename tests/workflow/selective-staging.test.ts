@@ -1,3 +1,4 @@
+import { runStagedDiffAudit } from '../../packages/cli/src/workflow/staging.js';
 /**
  * Selective Staging and Pre-Commit Cached Diff Audit Test.
  *
@@ -18,8 +19,7 @@ import {
   unstageCruft,
   unstageFiles,
   selectiveStage,
-  runStagedDiffAudit,
-} from '../../src/workflow/staging.js';
+} from '@paper-craft/core/workflow/staging';
 
 describe('Selective Staging & Pre-Commit Cached Diff Audit', () => {
   let tempRepo: string;

@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import {
   validatePRBodyEvidence,
   type PREvidenceValidationResult,
-} from '../../src/workflow/evidence-discipline.js';
+} from '@paper-craft/core/workflow/evidence-discipline';
 
 describe('Evidence Discipline: Scenario 4 Validation', () => {
   it('accepts PR body with markdown metric summary tables, reproduction commands, duration, and environment notes without requiring GitHub blob URL links', () => {

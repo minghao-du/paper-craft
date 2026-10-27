@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { normalizeS2Id, s2PaperToReference, type S2Paper } from '../../src/clients/s2.js';
+import { normalizeS2Id, s2PaperToReference, type S2Paper } from '@paper-craft/core/clients/s2';
 
 describe('normalizeS2Id', () => {
   it('normalizes a plain DOI', () => {

@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { PcDatabase } from '../../src/storage/db.js';
-import type { Reference } from '../../src/models/reference.js';
-import type { Project } from '../../src/models/project.js';
+import { PcDatabase } from '@paper-craft/core/storage/db';
+import type { Reference } from '@paper-craft/core/models/reference';
+import type { Project } from '@paper-craft/core/models/project';
 
 function makeRef(id: string, title: string, year = 2024): Reference {
   return {

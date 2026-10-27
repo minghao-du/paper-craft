@@ -10,6 +10,56 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/', 'node_modules/'],
+    files: ['packages/core/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            'commander',
+            '@modelcontextprotocol/*',
+            '@deepseek-ai/*',
+            '@paper-craft/cli',
+            '@paper-craft/cli/*',
+            '@paper-craft/mcp',
+            '@paper-craft/mcp/*',
+            '**/cli/**',
+            '**/mcp/**',
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/{cli,mcp}/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: ['**/core/src/**', '**/core/dist/**'],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/mcp/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            'commander',
+            '@paper-craft/cli',
+            '@paper-craft/cli/*',
+            '**/cli/**',
+            '**/core/src/**',
+            '**/core/dist/**',
+          ],
+        },
+      ],
+    },
+  },
+  {
+    ignores: ['**/dist/', '**/node_modules/'],
   },
 );

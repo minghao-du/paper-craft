@@ -1,0 +1,23 @@
+{
+  "name": "@paper-craft/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@paper-craft/core": "workspace:*",
+    "commander": "^15.0.0",
+    "sql.js": "^1.14.2"
+  },
+  "bin": {
+    "pc": "./dist/main.js"
+  }
+}

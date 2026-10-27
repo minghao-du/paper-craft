@@ -5,7 +5,9 @@
     "moduleResolution": "nodenext",
     "outDir": "dist",
     "rootDir": ".",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -14,8 +16,17 @@
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "customConditions": [
+      "paper-craft-source"
+    ]
   },
-  "include": ["src/**/*.ts", "cmd/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": [
+    "packages/*/src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests"
+  ]
 }

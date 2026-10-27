@@ -63,3 +63,13 @@ Git/file commands remain usable without starting a terminal session.
 An unavailable occupancy check means unknown, never free.
 Automatic reclaim remains blocked until occupancy and all preservation and
 completion checks are verified; the portable CLI provides read-only evidence.
+
+## VIII. Host Adapters Depend on Core
+
+The pnpm workspace separates `packages/core`, `packages/cli` and `packages/mcp`.
+Core exposes domain data and services without Commander, MCP or model-host
+contexts. CLI and MCP depend on Core's public package exports; Core never imports
+an adapter. Host-specific registration, response formatting and process lifecycle
+belong in adapters. A future native DeepSeek plugin follows the same direction.
+Shared skills remain at the repository root. Existing CLI commands, configuration
+paths and JSONL formats remain the compatibility boundary.

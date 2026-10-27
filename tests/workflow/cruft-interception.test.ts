@@ -1,3 +1,4 @@
+import { runReadinessCheck } from '../../packages/cli/src/workflow/readiness.js';
 /**
  * Cruft Interception Test.
  *
@@ -16,8 +17,7 @@ import {
   checkWorktreeReadiness,
   categorizeGitStatus,
   isCruftFile,
-  runReadinessCheck,
-} from '../../src/workflow/readiness.js';
+} from '@paper-craft/core/workflow/readiness';
 
 describe('Cruft Interception and Worktree Readiness Check', () => {
   let tempRepo: string;

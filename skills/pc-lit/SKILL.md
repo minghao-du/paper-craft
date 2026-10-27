@@ -11,6 +11,18 @@ A CLI tool for managing academic references with local storage and external pape
 
 **Issues**: https://github.com/matsen/bipartite/issues
 
+## Local MCP tools
+
+When the host exposes paper-craft MCP tools, use `search_references` for local
+keyword search, `get_reference` for metadata by ID, `list_projects` for projects,
+and `list_repos` for repositories (optional `project` filter).
+`search_references` accepts `query` and an optional integer `limit` from 1 to 200
+(default 50).
+These tools return metadata, not PDF contents; use a PDF reader for paper content.
+Use the existing CLI for operations not exposed by MCP.
+For installation and DeepSeek Harness configuration, follow
+[the MCP setup guide](../../docs/guides/mcp.md).
+
 ## ⚠️ CRITICAL: Local-First, Paper-First Policy
 
 **ALWAYS search locally before using external APIs.

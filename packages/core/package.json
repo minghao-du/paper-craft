@@ -1,0 +1,117 @@
+{
+  "name": "@paper-craft/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    "./clients/s2": {
+      "paper-craft-source": "./src/clients/s2.ts",
+      "types": "./dist/clients/s2.d.ts",
+      "default": "./dist/clients/s2.js"
+    },
+    "./utils/bibtex": {
+      "paper-craft-source": "./src/utils/bibtex.ts",
+      "types": "./dist/utils/bibtex.d.ts",
+      "default": "./dist/utils/bibtex.js"
+    },
+    "./utils/config": {
+      "paper-craft-source": "./src/utils/config.ts",
+      "types": "./dist/utils/config.d.ts",
+      "default": "./dist/utils/config.js"
+    },
+    "./models/project": {
+      "paper-craft-source": "./src/models/project.ts",
+      "types": "./dist/models/project.d.ts",
+      "default": "./dist/models/project.js"
+    },
+    "./models/reference": {
+      "paper-craft-source": "./src/models/reference.ts",
+      "types": "./dist/models/reference.d.ts",
+      "default": "./dist/models/reference.js"
+    },
+    "./models/repo": {
+      "paper-craft-source": "./src/models/repo.ts",
+      "types": "./dist/models/repo.d.ts",
+      "default": "./dist/models/repo.js"
+    },
+    "./models/index": {
+      "paper-craft-source": "./src/models/index.ts",
+      "types": "./dist/models/index.d.ts",
+      "default": "./dist/models/index.js"
+    },
+    "./storage/jsonl": {
+      "paper-craft-source": "./src/storage/jsonl.ts",
+      "types": "./dist/storage/jsonl.d.ts",
+      "default": "./dist/storage/jsonl.js"
+    },
+    "./storage/index": {
+      "paper-craft-source": "./src/storage/index.ts",
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
+    },
+    "./storage/db": {
+      "paper-craft-source": "./src/storage/db.ts",
+      "types": "./dist/storage/db.d.ts",
+      "default": "./dist/storage/db.js"
+    },
+    "./workflow/fleet-config": {
+      "paper-craft-source": "./src/workflow/fleet-config.ts",
+      "types": "./dist/workflow/fleet-config.d.ts",
+      "default": "./dist/workflow/fleet-config.js"
+    },
+    "./workflow/evidence-discipline": {
+      "paper-craft-source": "./src/workflow/evidence-discipline.ts",
+      "types": "./dist/workflow/evidence-discipline.d.ts",
+      "default": "./dist/workflow/evidence-discipline.js"
+    },
+    "./workflow/staging": {
+      "paper-craft-source": "./src/workflow/staging.ts",
+      "types": "./dist/workflow/staging.d.ts",
+      "default": "./dist/workflow/staging.js"
+    },
+    "./workflow/readiness": {
+      "paper-craft-source": "./src/workflow/readiness.ts",
+      "types": "./dist/workflow/readiness.d.ts",
+      "default": "./dist/workflow/readiness.js"
+    },
+    "./workflow/input-verification": {
+      "paper-craft-source": "./src/workflow/input-verification.ts",
+      "types": "./dist/workflow/input-verification.d.ts",
+      "default": "./dist/workflow/input-verification.js"
+    },
+    "./workflow/handoff": {
+      "paper-craft-source": "./src/workflow/handoff.ts",
+      "types": "./dist/workflow/handoff.d.ts",
+      "default": "./dist/workflow/handoff.js"
+    },
+    "./workflow/fleet": {
+      "paper-craft-source": "./src/workflow/fleet.ts",
+      "types": "./dist/workflow/fleet.d.ts",
+      "default": "./dist/workflow/fleet.js"
+    },
+    "./workflow/index": {
+      "paper-craft-source": "./src/workflow/index.ts",
+      "types": "./dist/workflow/index.d.ts",
+      "default": "./dist/workflow/index.js"
+    },
+    ".": {
+      "paper-craft-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.2",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  }
+}

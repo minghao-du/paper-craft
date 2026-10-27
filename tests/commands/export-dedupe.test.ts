@@ -6,10 +6,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { toBibtex, toBibtexFile } from '../../src/utils/bibtex.js';
-import { readJsonl, writeJsonl } from '../../src/storage/jsonl.js';
-import { ReferenceSchema } from '../../src/models/reference.js';
-import type { Reference } from '../../src/models/reference.js';
+import { toBibtex, toBibtexFile } from '@paper-craft/core/utils/bibtex';
+import { readJsonl, writeJsonl } from '@paper-craft/core/storage/jsonl';
+import { ReferenceSchema } from '@paper-craft/core/models/reference';
+import type { Reference } from '@paper-craft/core/models/reference';
 
 function makeRef(id: string, overrides: Partial<Reference> = {}): Reference {
   return {

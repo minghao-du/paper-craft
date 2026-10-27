@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ReferenceSchema, mergeReferences, referencesEqual } from '../../src/models/reference.js';
-import type { Reference } from '../../src/models/reference.js';
+import { ReferenceSchema, mergeReferences, referencesEqual } from '@paper-craft/core/models/reference';
+import type { Reference } from '@paper-craft/core/models/reference';
 
 /** A minimal valid Reference for testing. */
 function makeRef(overrides: Partial<Reference> = {}): Reference {

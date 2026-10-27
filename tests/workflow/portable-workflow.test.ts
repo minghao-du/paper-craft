@@ -13,14 +13,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { loadFleetConfig } from '../../src/workflow/fleet-config.js';
+import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import {
   consumeIntent,
   findIntent,
   preserveState,
   writeIntent,
-} from '../../src/workflow/handoff.js';
-import { checkFleet, checkReclaim } from '../../src/workflow/fleet.js';
+} from '@paper-craft/core/workflow/handoff';
+import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 
 const repo = process.cwd();
 function git(dir: string, ...args: string[]): string {

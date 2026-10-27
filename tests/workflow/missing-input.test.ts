@@ -21,7 +21,7 @@ import {
   HALT_HEADER,
   HALT_ACTION_PROMPT,
   type PrerequisiteInput,
-} from '../../src/workflow/input-verification.js';
+} from '@paper-craft/core/workflow/input-verification';
 
 describe('Missing Input Protocol', () => {
   let tempDir: string;

@@ -132,6 +132,8 @@ paper-craft reimplements all bipartite skills in TypeScript, renaming the `bip-`
 | `pc-scout` (`bip-scout`) | SSH server resource scouting |
 | `pc-compute-config` | Configures project CPU/GPU backends and platform skills in `.paper-craft/` |
 
+For local DeepSeek Harness integration, see the [MCP setup guide](docs/guides/mcp.md).
+
 ## Project Status
 
 > [!IMPORTANT]
