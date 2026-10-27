@@ -66,7 +66,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 
 ### 1. Tiered Data Hygiene & Directive Contracts
 - **Log Directive Contract**: Every non-trivial rule must specify a `log:` directive partitioned by rule name and wildcard (e.g., `log: "logs/{rule}/{sample}.log"`). In `shell:`, capture standard streams explicitly: `> {log} 2>&1`.
-- **Intermediate Artifacts (`processed/`)**: Route all intermediate and staged transformations to `processed/`. Mark temporary artifacts with `temp()` so Snakemake removes them immediately after downstream consumers finish.
+- **Intermediate Artifacts (`processed/`)**: Route all intermediate and staged transformations to `processed/`. Retain expensive, reusable intermediates as ordinary outputs; use `temp()` only for disposable artifacts that can be removed after downstream consumers finish.
 - **Deliverables (`results/`)**: Route final analytical summaries, plots, and reports to `results/`. Apply `protected()` on high-cost terminal deliverables to guard against accidental deletion.
 - **Stage Summary Receipts (`summary/`)**: Each analytical stage must produce a brief completion receipt via its aggregation rule. Production receipts live in `summary/{stage}.md`, tracked in Git, decoupling compute-heavy environments from local inspection; smoke receipts follow the **Smoke Execution Contract**. A receipt proves completion and summarizes conclusions — it points to where data lives, never reproduces it. Follow the 3-section skeleton in [summary.md](templates/summary.md): **Summary** (pass/fail + 1–2 sentence key finding + runtime), **Shape** (key counts in one line), **Outputs** (file paths, format, and one sentence describing content or purpose). Raw diagnostic dicts, seed arrays, and full schema dumps belong in data files, not receipts. All paths use project-root-relative form.
 - **Immutability of `data/` and `workflow/`**: Treat `data/` as read-only. Confine all output definitions strictly within `processed/`, `results/`, `logs/`, or `summary/`. Never write outputs to `workflow/`.
@@ -101,6 +101,17 @@ For cluster execution:
 
 ## Workflows
 
+### Incremental recovery
+
+When fixing a failed Snakemake run:
+
+1. Inspect the original target, configuration, execution environment, and logs. Confirm which upstream outputs completed successfully and remain valid under the repaired code, inputs, parameters, and environment; file existence alone is insufficient. Preserve those outputs and `.snakemake/` metadata at their existing paths.
+2. Repair the existing DAG and its input or environment contracts. Give expensive stages separate rules with persisted outputs connected to downstream inputs; a single rule containing several stages must restart as a unit. Reuse verified existing artifacts when splitting such a rule. Introduce a separate entry point or stage-selection switch only when the existing DAG cannot express the execution requirement.
+3. Dry-run the original target through the same launcher, configuration, and execution environment. Inspect the planned jobs and every unexpected upstream rebuild reason. Correct missing dependency declarations or overly broad rule boundaries; retain rebuilds required by invalidated outputs. Preserve normal freshness checks rather than using touch, metadata deletion, or weakened rerun triggers to force reuse.
+4. Execute the planned recovery through the same route, using `--rerun-incomplete` when needed for outputs marked incomplete. Validate the requested final outputs and complete the existing **Smoke Execution Contract** for the changed chain.
+
+**Done:** The requested target and artifact checks pass; record the recovery command, environment, reused outputs, executed stages, and reasons for upstream recomputation in the existing work log. A failure or pending smoke check leaves recovery incomplete.
+
 ### Branch 1: Workflow Scaffolding (Authoring)
 
 When generating a new Snakemake workflow or expanding an existing one:
@@ -129,9 +140,7 @@ When reviewing or optimizing an existing Snakemake pipeline:
 1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and analytical stages produce tracked receipts in `summary/`. Check Stage Output Organization conventions and that receipt output entries explain content or purpose.
 2. **Check Parameter Validation & Smoke Testing**: Verify startup schema validation and evaluate the **Smoke Execution Contract**, including actual execution and artifact evidence for the affected chain.
 3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, evaluate the **Independent Cluster Jobs** configuration gate.
-   - When fixing a failed stage run, inspect the existing target, logs, and rerun reasons to distinguish parsing failures, dependency rebuilds, and job execution failures. Trace the failure to its input or environment contract and repair it within the existing Snakefile and stage target, preserving required dependencies.
-   - Introduce a separate entry point or stage-selection switch only after identifying execution requirements the existing DAG cannot express.
-   - Complete the diagnosis when the reported failure and any triggered upstream rebuild are explained, and the proposed repair addresses their cause.
+   - When fixing a failed stage run, follow **Incremental recovery**. For a read-only audit, explain the failure and any triggered upstream rebuild, and propose the corresponding repair without claiming execution succeeded.
 4. **Check Environment Pinning (Conda & uv)**:
    - For Conda: verify per-rule `conda:` specifications target `workflow/envs/*.yaml` with pinned package versions. Flag any unpinned packages or floating tags. Ensure no loose `requirements.txt` pollute `workflow/envs/`.
    - For uv: verify root `pyproject.toml` (and `uv.lock`) manages Snakemake execution. For standalone Python scripts in `workflow/scripts/`, verify that rules needing isolated dependencies declare pinned versions via PEP 723 inline script metadata rather than unpinned ad-hoc `pip install` in shell directives.

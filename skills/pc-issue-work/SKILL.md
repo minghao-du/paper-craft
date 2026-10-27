@@ -87,6 +87,7 @@ Use the issue number as a branch prefix for traceability.
 - Use code from the issue as a starting point when provided
 - Follow CLAUDE.md guidelines for the project
 - If you start deviating significantly from the issue, **STOP and discuss**
+- When a Snakemake run fails, follow [incremental recovery](../pc-pipeline-snakemake/SKILL.md#incremental-recovery) before rerunning: reuse valid completed outputs and execute only the affected dependency chain.
 - Continue until the issue is done and all tests pass
 
 ### Step 4b: Selective staging and pre-commit cached diff audit
@@ -120,7 +121,7 @@ When any staged path matches a forbidden pattern, immediately unstage it:
 git reset HEAD <file>
 ```
 
-Quarantine un-staged cruft files by deleting them, moving them to `_ignore/`, or adding them to `.gitignore`.
+Keep reusable Snakemake data artifacts and `.snakemake/` metadata at their existing paths and gitignored so subsequent runs can resume. For other un-staged cruft, delete it, move it to `_ignore/`, or add it to `.gitignore`.
 Commit only when `git diff --cached --name-only` contains exclusively legitimate source, configuration, and documentation files.
 
 Completion criterion: every file in `git diff --cached --name-only` is verified to be legitimate source or documentation, zero transient cruft paths remain staged, and the commit clean gate passes.
