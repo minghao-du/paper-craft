@@ -18,12 +18,17 @@ export function registerDashboardCommand(program: Command): void {
         'Dashboard-owned registration and observation directory',
         join(homedir(), '.config', 'pc', 'dashboard'),
       )
-      .option('--interval <milliseconds>', 'Local collection interval', '15000');
+      .option('--interval <milliseconds>', 'Local collection interval', '15000')
+      .option('--github-interval <milliseconds>', 'GitHub collection interval', '180000');
   const options = (opts: Record<string, unknown>) => {
     const intervalMs = Number(opts.interval);
     if (!Number.isFinite(intervalMs) || intervalMs < 100)
       throw new Error('Expected interval of at least 100 milliseconds');
+    const githubIntervalMs = Number(opts.githubInterval);
+    if (!Number.isFinite(githubIntervalMs) || githubIntervalMs < 100)
+      throw new Error('Expected GitHub interval of at least 100 milliseconds');
     return {
+      githubIntervalMs,
       dataDir: resolve(String(opts.dataDir)),
       configs: (opts.config as string[] | undefined)?.map((p) => resolve(p)),
       intervalMs,
