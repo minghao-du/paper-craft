@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { GitHubEvidence } from './GitHubEvidence.jsx';
+import GitEvidence from './GitEvidence.jsx';
+
 const access = new URLSearchParams(location.hash.slice(1)).get('token');
 if (access) {
   sessionStorage.setItem('dashboard-token', access);
@@ -94,6 +96,7 @@ function App() {
                     {fleet.error} {fleet.stale && '(stale)'}
                   </p>
                 )}
+                <GitEvidence fleetId={fleet.id} />
                 <table>
                   <thead>
                     <tr>
@@ -152,6 +155,10 @@ function App() {
                                   </li>
                                 ))}
                               </ul>
+                              <details>
+                                <summary>Runtime observations</summary>
+                                <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
+                              </details>
                               <p>Blockers: {task.blockers.join(', ') || 'None recorded'}</p>
                             </details>
                           </td>

@@ -7,6 +7,8 @@ import { directory, pathExists, workflowSource, type FleetConfig } from './fleet
 function git(dir: string, ...args: string[]): string {
   return execFileSync('git', ['-C', dir, ...args], {
     encoding: 'utf8',
+    timeout: 3000,
+    killSignal: 'SIGKILL',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
@@ -17,6 +19,8 @@ function files(dir: string, ...args: string[]): string[] {
   // Preserve whitespace and newlines in filenames; only NUL is a separator.
   return execFileSync('git', ['-C', dir, ...args], {
     encoding: 'utf8',
+    timeout: 3000,
+    killSignal: 'SIGKILL',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
