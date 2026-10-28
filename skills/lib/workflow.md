@@ -166,6 +166,29 @@ Completion at the approval boundary means findings and confirmations cover the l
 head and the user request is recorded as pending or explicitly approved. It does not
 mean merged or cleaned up; retain state and checkout ownership evidence for landing.
 
+## Checkout ownership and landing phases
+
+The conductor records each transfer beside the authoritative config and in the task
+worklog: checkout, task/PR, prior and next role/session, timestamp, explicit release,
+acceptance and supporting runtime evidence. Persistent agent existence is distinct
+from checkout ownership. Unknown or overlapping ownership blocks mutation.
+The prior owner stops edits and records release before the next owner accepts;
+messages alone do not transfer ownership. Reconcile durable and live evidence first.
+
+After current findings, EPIC confirmations and user approval are verified, transfer
+worker → landing agent for `/pc-pr-land`'s merge phase. On blockers, the landing agent
+records details and release before conductor transfers back to the worker. The worker
+resolves content, conflicts or failed checks, repeating the bounded evaluation loop
+and required confirmation/approval gates. Preserve interrupted operation state.
+
+After verified merge, transfer landing agent → worker for final `/pc-issue-lead`
+evaluation, follow-up filing and completion records. The worker records evidence paths
+and release; only then dispatch the landing agent's cleanup phase. Cleanup requires
+exclusive ownership, final records, verified preservation and existing reclaim gates.
+Record `handed off`, `merged`, `final records complete`, `preservation verified` and
+`cleanup pending/complete` as distinct observations, without inventing status phases.
+A merge outcome never establishes final records or available resources.
+
 ## Active role handoff and wake-up
 
 Apply this contract to the conductor and each keyed EPIC session while coordinating work.

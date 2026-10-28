@@ -224,3 +224,13 @@ Provide a concise summary that highlights things the user needs to **judge**:
 Record any deferred work in the PR body `DEFERRED` section (one line per item, with rationale per the DEFERRAL RULE).
 In EPIC mode the issue-lead will scan these at terminal `completed` and file the legitimate ones as follow-up issues; standalone users can review the list and run `/pc-issue-next` for the ones worth filing.
 Either way, do not list follow-ups in this summary — the PR body is the source of truth.
+
+### Step 9: Landing handoff and final records
+
+Follow [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases)
+when the conductor requests release. Stop edits, record explicit release and wait for
+ownership to return before remediation or final records. After verified merge, invoke
+`/pc-issue-lead` independently at the retained checkout for its full terminal protocol.
+Record the final assessment, follow-up outcomes and terminal comment path in the worklog;
+notify the conductor and release again for preservation/cleanup. Missing or failed
+records remain pending and keep the checkout intact.
