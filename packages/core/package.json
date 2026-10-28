@@ -101,6 +101,11 @@
       "paper-craft-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./workflow/dashboard": {
+      "paper-craft-source": "./src/workflow/dashboard.ts",
+      "types": "./dist/workflow/dashboard.d.ts",
+      "default": "./dist/workflow/dashboard.js"
     }
   },
   "files": [

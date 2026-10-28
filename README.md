@@ -77,6 +77,7 @@ paper-craft reimplements all bipartite skills in TypeScript, renaming the `bip-`
 | `pc-pr-land` (`bip-pr-land`) | PR merge and landing |
 | `pc-epic-check` (`bip-epic-check`) | EPIC status check |
 | `pc-conductor-prepare-reboot` (`bip-conductor-prepare-reboot`) | State preservation before host reboot |
+| `pc-dashboard` | Read-only local Fleet overview and JSON evidence |
 | `pc-conductor-recover` (`bip-conductor-recover`) | Recovery after reboot |
 
 ### Specialized Review & Support Skills

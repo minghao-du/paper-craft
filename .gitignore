@@ -38,3 +38,5 @@ site/
 node_modules/
 dist/
 *.tsbuildinfo
+
+/packages/dashboard/web/
