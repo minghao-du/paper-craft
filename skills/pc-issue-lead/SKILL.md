@@ -161,19 +161,9 @@ Two rules for writing the status file:
 
 1. **Update `.epic-status.json`**:
    - Set `phase` (if changing) — one of the seven above, no others
-   - Set `stop_reason` to your classification. **One exception:** if
-     the worker wrote `stop_reason: awaiting-human-merge` (its brief
-     says `LANDING DELEGATION: NONE RECORDED`, so a human merges) and
-     you find the gate clean with nothing left for the worker, leave
-     that exact value in place and keep phase `quality-gate`. The
-     worker ends its loop on it, and the fleet reads it as "waiting on
-     a human", not "still working the gate". Put your own
-     classification in the `lead_notes` entry. If the gate is not
-     clean, overwrite it as usual; that is how the worker learns to
-     keep going. Keep it through the post-merge ceremony too (Step 8
-     sets phase `completed` but leaves this value): it is still why
-     the worker stopped, and the conductor's reclaim reads it to tell
-     a human merge from a land that bypassed `/pc-pr-land`.
+   - Set `stop_reason` to your classification. For clean open PRs awaiting conductor
+     confirmation or user approval, retain `awaiting-human-merge` and phase `quality-gate`;
+     put your assessment in `lead_notes`. This never authorizes landing or reclaim.
    - Set `lead_guidance` — clear, actionable instruction for the worker
    - Set `scope` — one-line restatement of the issue's goal
    - Append to `lead_notes`:
@@ -227,7 +217,7 @@ other classifications.
 gh pr view <N> --json state,mergedAt   # state must be MERGED
 ```
 
-If the work is done and the PR is open, the phase is `quality-gate`. (A `completed` phase invites the conductor to reclaim the slot.)
+If the work is done and the PR is open, the phase is `quality-gate`. Completion records are a prerequisite for later preservation and cleanup, not reclaim authorization.
 
 **Who calls you.** Workers invoke the evaluator for task-local stopping points and
 again for final evaluation/records after the conductor verifies merge success. Worker
@@ -236,7 +226,7 @@ Read state from the supplied absolute slot path, run git with `git -C <path>` an
 pass `-R <owner/repo>` to `gh`. After merge, use the PR's commits/files rather than
 assuming `main..HEAD` still contains the change. Retain records until verified cleanup.
 
-**Idempotency guard: check the PR, not the status file** (`/pc-pr-land` deletes the status file). The ceremony has run if some comment *begins* with the `🤖 **Issue Lead**` header and has `completed` as the first word after its `**Category**` label:
+**Idempotency guard: check the PR, not the status file.** Records remain until final evaluation and verified preservation/cleanup. The ceremony has run if some comment *begins* with the `🤖 **Issue Lead**` header and has `completed` as the first word after its `**Category**` label:
 
 ```bash
 gh pr view <N> --json comments \
@@ -272,9 +262,7 @@ Otherwise:
    omit both. Post the comment.
 
 3. Set `.epic-status.json#completed_at` to the current ISO 8601
-   timestamp from `date -u`, then return "PHASE: completed". If the
-   file is already gone, skip the write and say so in your return line;
-   it is a dashboard convenience, not the idempotency record.
+   timestamp from `date -u`, then return "PHASE: completed". If the file is missing, report missing final records to the conductor and reconstruct them before cleanup.
 
 **Do not file on non-terminal evaluations.** Signals may change as
 the worker addresses feedback; filing only at `completed` means the

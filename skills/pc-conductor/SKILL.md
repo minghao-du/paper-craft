@@ -222,7 +222,7 @@ Check this by what you are about to **do**:
 | **report a number you did not compute** | re-derive it, or relay the basis — *"it reports X"*, not *"X"* |
 | **close or reopen an issue** | verify the criterion against `main`, not against the PR that claims it |
 | **land a PR** | `/pc-pr-land`, never a hand-rolled `gh pr merge`. Never send a worker a runnable `gh pr merge` recipe either — it bypasses the skill's preservation and cleanup. Say *"`/pc-pr-land`"* |
-| **approve a PR** | the worker's gate report names every routed target and its exit status **at the SHA you are approving**; `git merge-base --is-ancestor origin/main <head>` (not `MERGEABLE`, which is about conflicts). An approval names a SHA, so a new head voids it. "No doc ack needed" is not "no approval needed" — say both |
+| **request user approval** | current worker/review findings and all required EPIC confirmations cover the full live SHA under the shared approval contract |
 | **cite an artifact by path** | preserve it outside a pooled slot before citing |
 
 Before landing, follow the shared scheduling/approval contract and dispatch a landing
@@ -269,22 +269,18 @@ Use `list-timers` (it shows LAST and NEXT), not `is-active` on the service. On `
 
 First, do housekeeping automatically (no need to ask).
 
-**Reclaim** a slot from outside its clone, preserving all terminal and ownership gates:
+**Coordinate landing and reclaim** through [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases).
+Verify the current evidence and release before dispatching each role:
+- Approved live head → landing agent runs `/pc-pr-land` merge phase.
+- Landing blocker → verify landing release, then resume the worker for remediation.
+- Verified merge → resume the worker for final `/pc-issue-lead` evaluation and records.
+- Final records complete and worker released → landing agent runs preservation/cleanup.
+- Missing records, unknown occupancy, failed preservation or blocked reclaim → retain
+  resources and report cleanup pending. A merged PR never makes its slot available.
 
-```sh
-pc fleet reclaim-check --dir /absolute/path/to/pool/slot --config /absolute/path/to/conductor/.epic-config.json
-```
-
-This read-only command currently reports `eligible: false` and exits 2; it does not perform automatic reclaim.
-Keep the slot intact while runtime occupancy or GitHub completion evidence remains unknown.
-Before any separately authorized cleanup, verify the terminal ceremony, merged PR, all linked issues closed, clean tree, no unmerged local commits, no pending input, all owners/jobs released and no hold.
-Preserve state with `pc workflow preserve --dir <slot> --reason <reason> --config <authoritative-config>` and verify its manifest before deleting originals.
-Only the owning pane may be closed, never a shared window; background processes and external users must also have released the clone before changing its checkout or deleting a branch.
-
-- `blocked` or unknown → leave the slot intact and report which gate is unresolved.
-- Terminal ceremony owed → invoke `/pc-issue-lead` against the slot's absolute path, pass `-R <owner/repo>` to GitHub queries, and run its full post-merge terminal protocol before rechecking.
-- Worklog missing or ceremony uncertain → investigate and preserve recovery evidence; never equate missing state with completion.
-- Released, fully verified and preserved → cleanup may proceed only through a supported, separately authorized path; this CLI does not supply one yet.
+The conductor verifies recorded outcomes and schedules the next role; independent
+completion judgment stays with issue-lead. Inspect the landing skill for preservation
+and reclaim prerequisites rather than duplicating its cleanup procedure here.
 
 **A loop is live** only when its runner confirms the recorded session is running.
 For Claude Code with Ralph, read [the runtime recovery checks](claude-code/recovery.md#ralph-liveness) before declaring its loop live.
@@ -307,7 +303,7 @@ Run `/pc-conductor-spawn` for checked tmux placement and the selected runner's s
 Deciding *which other* open issues should be spawned isn't this skill's call — that's `/pc-epic`.
 
 - **Spawn ready, in-scope, unblocked briefs freely while capacity exists.** The gate is topic and objective, not count.
-- **When a slot completes, re-assess and spawn in the same step** — a slot finished, a PR merged, or a brief appeared is the trigger.
+- **When a slot completes, re-assess and spawn in the same step** — verified cleanup released a slot, or a brief appeared is the trigger.
 - Match worker count to the shape of the work: one issue whose result informs the others → spawn it alone; N independent ready issues → spawn N.
 - **Before a spawn, and on every event that frees a slot, ask the epic: "what is the next thing that moves this EPIC's top line, and is this it?"** A brief's readiness was established when it was written. The epic answers; a stated hold is a complete answer.
 
@@ -396,7 +392,7 @@ Workers loop `/pc-pr-check` and `/pc-pr-review` until both pass clean.
 - `lead_guidance` — actionable instruction for the worker's next iteration
 - `lead_notes` — append-only log of lead evaluations (max 8 before escalation)
 - `completed_at` — ISO 8601 timestamp set by the lead after it finishes the terminal `completed` ceremony (files any legitimate follow-ups, posts the final PR comment).
-  Its presence is the idempotency signal: subsequent lead invocations at `completed` skip the ceremony.
+  The terminal PR comment is the idempotency record; reconcile it before repeating the ceremony.
 - `awaiting` — set during `awaiting-results` phase:
   ```json
   {
