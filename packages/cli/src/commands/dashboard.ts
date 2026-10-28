@@ -24,20 +24,32 @@ export function registerDashboardCommand(program: Command): void {
         '--remote-interval <milliseconds>',
         'Associated remote task collection interval',
         '300000',
-      );
+      )
+      .option('--github-interval <milliseconds>', 'GitHub collection interval', '180000')
+      .option('--runtime-interval <milliseconds>', 'Runtime observation interval', '15000');
+
   const options = (opts: Record<string, unknown>) => {
     const intervalMs = Number(opts.interval);
     if (!Number.isFinite(intervalMs) || intervalMs < 100)
       throw new Error('Expected interval of at least 100 milliseconds');
+    const githubIntervalMs = Number(opts.githubInterval);
+    if (!Number.isFinite(githubIntervalMs) || githubIntervalMs < 100)
+      throw new Error('Expected GitHub interval of at least 100 milliseconds');
     const gitIntervalMs = Number(opts.gitInterval);
     if (!Number.isFinite(gitIntervalMs) || gitIntervalMs < 100)
       throw new Error('Expected Git interval of at least 100 milliseconds');
     const remoteIntervalMs = Number(opts.remoteInterval);
     if (!Number.isFinite(remoteIntervalMs) || remoteIntervalMs < 100)
       throw new Error('Expected remote interval of at least 100 milliseconds');
+    const runtimeIntervalMs = Number(opts.runtimeInterval);
+    if (!Number.isFinite(runtimeIntervalMs) || runtimeIntervalMs < 100)
+      throw new Error('Expected runtime interval of at least 100 milliseconds');
     return {
       remoteIntervalMs,
       gitIntervalMs,
+      runtimeIntervalMs,
+      githubIntervalMs,
+
       dataDir: resolve(String(opts.dataDir)),
       configs: (opts.config as string[] | undefined)?.map((p) => resolve(p)),
       intervalMs,

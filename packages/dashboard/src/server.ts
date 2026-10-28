@@ -1,7 +1,16 @@
+import { loadFleetConfig, workflowSource } from '@paper-craft/core/workflow/fleet-config';
 /** Protected local HTTP adapter over shared file evidence. */
+import {
+  observeRuntime,
+  executeRuntime,
+  type RuntimeExecutor,
+  type RuntimeEvidence,
+} from './runtime.js';
 import { Hono } from 'hono';
 import { collectRemote } from './remote.js';
+import { githubCollector } from './github.js';
 import { collectGit } from './git.js';
+
 import { Worker } from 'node:worker_threads';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -17,8 +26,11 @@ export interface DashboardOptions {
   token?: string;
   host?: string;
   intervalMs?: number;
+  githubIntervalMs?: number;
   gitIntervalMs?: number;
   remoteIntervalMs?: number;
+  runtimeIntervalMs?: number;
+  executeRuntime?: RuntimeExecutor;
 }
 /** Assemble shared collection and authenticated HTTP reads. */
 function collectFleet(registration: FleetRegistration): Promise<DashboardFleet> {
@@ -83,8 +95,10 @@ export async function createDashboard(options: DashboardOptions) {
   });
   const remoteEvidence = collectRemote(registrations, options.remoteIntervalMs);
   await remoteEvidence.refresh();
+  const github = githubCollector(options.githubIntervalMs);
   const gitEvidence = collectGit(registrations, options.gitIntervalMs);
   await gitEvidence.refresh();
+
   let fleets: DashboardFleet[] = [];
   let snapshot = { version: 0, generatedAt: new Date().toISOString(), fleets };
   let collecting: Promise<void> | undefined;
@@ -119,6 +133,7 @@ export async function createDashboard(options: DashboardOptions) {
         }),
       );
       fleets = results;
+      void github.refresh(fleets);
       snapshot = { version: snapshot.version + 1, generatedAt: new Date().toISOString(), fleets };
       next = Math.min(...due.values(), Date.now() + interval);
     })().finally(() => {
@@ -126,9 +141,92 @@ export async function createDashboard(options: DashboardOptions) {
     });
     return collecting;
   };
+  const runtimeCache = new Map<string, RuntimeEvidence>();
+  let runtimeCollecting: Promise<void> | undefined;
+  let runtimeNext = 0;
+  const runtimeFailures = new Map<string, number>();
+  const runtimeDue = new Map<string, number>();
+  const runtimeInterval = Math.max(100, options.runtimeIntervalMs ?? 15000);
+  const refreshRuntime = async (force = false): Promise<void> => {
+    if (runtimeCollecting) return runtimeCollecting;
+    if (!force && Date.now() < runtimeNext) return;
+    runtimeCollecting = (async () => {
+      for (const task of fleets.flatMap((f) => f.tasks)) {
+        if (!force && Date.now() < (runtimeDue.get(task.id) ?? 0)) continue;
+        const fleet = fleets.find((f) => f.tasks.some((t) => t.id === task.id));
+        try {
+          workflowSource(loadFleetConfig(fleet!.config), task.path);
+        } catch {
+          runtimeCache.delete(task.id);
+          continue;
+        }
+        const observed = await observeRuntime(task.path, options.executeRuntime ?? executeRuntime);
+        const failures = observed.error ? Math.min(5, (runtimeFailures.get(task.id) ?? 0) + 1) : 0;
+        runtimeFailures.set(task.id, failures);
+        runtimeDue.set(task.id, Date.now() + runtimeInterval * 2 ** failures);
+        const old = runtimeCache.get(task.id);
+        runtimeCache.set(
+          task.id,
+          observed.error && old?.lastSuccessAt
+            ? { ...old, stale: true, error: observed.error, observedAt: observed.observedAt }
+            : observed,
+        );
+      }
+      runtimeNext = Math.min(...runtimeDue.values(), Date.now() + runtimeInterval);
+      snapshot = {
+        ...snapshot,
+        version: snapshot.version + 1,
+        generatedAt: new Date().toISOString(),
+      };
+    })().finally(() => {
+      runtimeCollecting = undefined;
+    });
+    return runtimeCollecting;
+  };
+  const runtimeTask = (task: DashboardFleet['tasks'][number]) => {
+    const evidence = runtimeCache.get(task.id);
+    const interventions = [...(task.interventions ?? [])];
+    const age = task.modifiedAt ? Date.now() - Date.parse(task.modifiedAt) : NaN;
+    if (
+      task.waiting !== 'planned' &&
+      evidence?.tmux.state === 'observed' &&
+      !evidence.stale &&
+      !evidence.error
+    ) {
+      const present = evidence.tmux.panes.length > 0;
+      if (age > (present ? 45 : 30) * 60000)
+        interventions.push({
+          reason: present
+            ? 'Possibly stalled: terminal present and file activity older than 45 minutes; investigate, occupancy unknown'
+            : 'Suspected recovery candidate: no observed terminal and file activity older than 30 minutes; occupancy unknown',
+          source: `${task.source}; ${evidence.source}`,
+        });
+    }
+    return { ...task, interventions, runtimeEvidence: evidence };
+  };
+  const runtimeSnapshot = () => ({
+    ...snapshot,
+    fleets: fleets.map((f) => ({
+      ...f,
+      tasks: f.tasks.map(runtimeTask),
+    })),
+  });
   await refresh();
+  await github.refresh(fleets);
+  await refreshRuntime();
+  const runtimeTimer = setInterval(
+    () => {
+      void refreshRuntime().catch(() => {
+        runtimeNext = Date.now() + runtimeInterval;
+      });
+    },
+    Math.min(runtimeInterval, 1000),
+  );
+  runtimeTimer.unref();
+
   const timer = setInterval(
     () => {
+      void github.refresh(fleets);
       void refresh().catch(() => {
         next = Date.now() + interval;
       });
@@ -162,8 +260,8 @@ export async function createDashboard(options: DashboardOptions) {
     const query = (c.req.query('q') ?? '').toLocaleLowerCase().slice(0, 512);
     const phase = c.req.query('phase');
     const attention = c.req.query('attention') === 'true';
-    const fleets = snapshot.fleets
-      .filter((f) => !selected || f.id === selected)
+    const fleets = runtimeSnapshot()
+      .fleets.filter((f) => !selected || f.id === selected)
       .map((f) => ({
         ...f,
         tasks: f.tasks.filter(
@@ -186,13 +284,20 @@ export async function createDashboard(options: DashboardOptions) {
       nextObservationAt: new Date(next).toISOString(),
     }),
   );
+  app.get('/api/github', (c) => c.json(github.values()));
   app.get('/api/refresh', async (c) => {
-    await Promise.all([refresh(), gitEvidence.refresh(), remoteEvidence.refresh()]);
-    return c.json(snapshot);
+    void github.refresh(fleets);
+    await Promise.all([
+      refresh(),
+      gitEvidence.refresh(),
+      refreshRuntime(),
+      remoteEvidence.refresh(),
+    ]);
+    return c.json(runtimeSnapshot());
   });
   app.get('/api/tasks/:id', (c) => {
     const task = fleets.flatMap((f) => f.tasks).find((t) => t.id === c.req.param('id'));
-    return task ? c.json(task) : c.json({ error: 'Unknown task' }, 404);
+    return task ? c.json(runtimeTask(task)) : c.json({ error: 'Unknown task' }, 404);
   });
   app.get('*', async (c) => {
     const name = c.req.path === '/' ? 'index.html' : c.req.path.slice(1);
@@ -216,10 +321,12 @@ export async function createDashboard(options: DashboardOptions) {
     app,
     token,
     refresh,
+    refreshRuntime,
     stop: () => {
       clearInterval(timer);
       gitEvidence.stop();
       remoteEvidence.stop();
+      clearInterval(runtimeTimer);
     },
   };
 }
