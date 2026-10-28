@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import GitEvidence from './GitEvidence.jsx';
 const access = new URLSearchParams(location.hash.slice(1)).get('token');
 if (access) {
   sessionStorage.setItem('dashboard-token', access);
@@ -93,6 +94,7 @@ function App() {
                     {fleet.error} {fleet.stale && '(stale)'}
                   </p>
                 )}
+                <GitEvidence fleetId={fleet.id} />
                 <table>
                   <thead>
                     <tr>
