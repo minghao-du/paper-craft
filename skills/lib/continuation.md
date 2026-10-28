@@ -21,7 +21,7 @@ Keep this path stable so a fresh agent can locate it without the old session's m
 - Issue/PR references, branch and exact commit for any recorded approval.
 - Decisions and user instructions that still apply, with their durable sources.
 - Each unfinished item, its next action and a runnable `FIRST CHECK` that verifies whether it is still relevant.
-- Evidence, brief, archive and worklog paths.
+- Evidence, brief, archive and worklog paths. For coordinated roles, include the keyed EPIC registration and pending lifecycle/ownership pointers required by [Lifecycle recovery](workflow.md#lifecycle-recovery).
 - Outstanding user decisions, uncertain occupancy and preservation or delivery failures.
 
 Record enough instruction to resume; reference existing evidence rather than duplicating it.

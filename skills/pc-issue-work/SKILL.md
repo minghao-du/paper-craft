@@ -66,7 +66,7 @@ Completion criterion: every prerequisite input has passed the verification above
 
 ### Step 3: Create a feature branch
 
-If another live session works in this checkout (the co-tenancy check in `/pc-pr-land`'s "Where to stand"), don't move its `HEAD`: branch in a worktree outside it and do all remaining steps there. If you were started in this checkout to own it and the other process is exiting (a session whose window was just killed), wait until it is gone, then take the checkout path.
+If another live session works in this checkout (see [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases)), don't move its `HEAD`: branch in a worktree outside it and do all remaining steps there. If you were started in this checkout to own it and the other process is exiting (a session whose window was just killed), wait until it is gone, then take the checkout path.
 
 ```bash
 git fetch origin

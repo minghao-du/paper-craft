@@ -1,17 +1,27 @@
 ---
 name: pc-conductor-recover
-description: Recover pc-conductor fleet Claude sessions after a host reboot — replay a planned-reboot manifest if one exists, else find the killed sessions by scanning jsonl, label them, and resume each into a tmux window. Use when a box running a pc-conductor fleet rebooted and the tmux sessions are gone.
+description: Recover conductor, EPIC and task lifecycle evidence after interruption; restore Claude Code host sessions when applicable.
 allowed-tools: Bash, Read
 ---
 
 # /pc-conductor-recover
 
-A reboot of a host running a pc-conductor fleet kills the tmux server and every `claude` process at once.
-The clones, their `.epic-status.json`/`.epic-worklog.md`, and the full per-session `~/.claude/projects/*/<id>.jsonl` conversations all survive on disk, so the sessions are resumable via `claude --dangerously-skip-permissions --resume <id>`.
-This skill finds those sessions, labels them in human terms, and resumes the ones you pick into tmux windows.
+Read [Lifecycle recovery](../lib/workflow.md#lifecycle-recovery) before resuming any
+role. Restore conversations through the selected runner's supported exact-session
+mechanism; runtime layout is separate from EPIC identity, checkout ownership and approval.
+If it is unavailable, retain durable state and report manual continuation required.
 
-The deterministic engine is the bundled `epic-recover` shell helper; this skill is the brain that turns its raw output into labeled choices.
-Run it **on the box that rebooted** — that is where the tmux, jsonl, and clones live.
+Reconcile conductor records first, then each keyed EPIC and task. A restored worker or
+landing agent waits for the conductor's verified next assignment/transfer before editing.
+The lifecycle contract determines the next operation, including when merge already
+succeeded. Conversation restoration alone grants no authorization or checkout ownership.
+
+## Claude Code host restoration
+
+The remaining helper procedure applies only to a host using Claude Code. Other runners
+use their supported recovery tools, then the same lifecycle reconciliation above.
+The bundled `epic-recover` helper restores terminal sessions; it does not validate
+multi-EPIC assignments, user approval or landing progress. Run it on the rebooted host.
 
 ## Usage
 
@@ -125,16 +135,14 @@ Run this from inside the project's tmux session so windows are added to it (the 
 
 Each becomes a window named `<issue>-<clone>` (workers) or the clone basename (main-clone sessions), running `claude --dangerously-skip-permissions --resume <id>`.
 
-### Step 5: Nudge resumed workers
+### Step 5: Reconcile restored roles
 
-A resumed worker reloads its context but sits idle — the ralph-loop wakeup that would have driven the next iteration died with the process.
-Once the resumed sessions appear in `ListAgents`, `SendMessage` each worker a one-line nudge so it resumes forward motion:
-
-> Host rebooted and this session was interrupted.
-> Re-read `.epic-status.json` and `.epic-worklog.md`, then continue from where you left off.
-
-An idle session acts on a message, so no keystrokes are needed. A worker not yet listed is still loading; message it once it is.
-Conductor/planning/discussion sessions usually need no nudge.
+Run the shared **Lifecycle recovery** contract after confirming exact conversation
+identity. Route each keyed EPIC/task its evidence pointers and verified next action via
+the conductor. Use supported messaging only as a wake-up aid; persist a pending route
+when unavailable. Workers holding a released checkout remain idle until ownership is
+explicitly returned. Re-arm role wake-ups only after registration and pending receipts
+are reconciled. Report restored conversations separately from resumed workflow steps.
 
 ## Notes
 

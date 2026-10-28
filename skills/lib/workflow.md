@@ -189,6 +189,46 @@ Record `handed off`, `merged`, `final records complete`, `preservation verified`
 `cleanup pending/complete` as distinct observations, without inventing status phases.
 A merge outcome never establishes final records or available resources.
 
+## Lifecycle recovery
+
+Read on tuckin, continuation or interruption before dispatch or checkout mutation.
+Persist pointers beside the authoritative config in `.epic-decisions.md` and the task
+worklog to each EPIC registration, user priority source, task brief/hash, order and
+constraints, retry count, queued/consumed intent and receiver receipts. Retain explicit
+checkout release/acceptance evidence, current evaluated head, completion/review findings,
+required confirmer set and each finding, user approval source/PR/SHA, merge outcome,
+final records and preservation manifest/cleanup outcome. A continuation points to these
+records with a live `FIRST CHECK`; it does not replace them or turn a request into a result.
+
+A fresh conductor reconciles in this order:
+
+1. Resolve authoritative config/roots and each keyed EPIC assignment; verify live runtime
+   identity and ownership separately. Reconcile legacy singleton records and live workers
+   against their briefs, issues and recorded releases. Preserve ambiguous records; route
+   unclear scope/ownership through the conductor rather than choosing by session recency.
+   Legacy standing landing delegation supplies no commit-bound user approval.
+2. Match intent hashes, consumed archives, startup evidence and receiver receipts to live
+   workers/PRs before retrying. A sent-but-unhandled message, missing session or absent
+   file is unknown: investigate or report the blocker. Never dispatch a duplicate worker
+   or consume intent merely because a previous conversation promised startup.
+3. Read live PR head, base/check results and merge outcome. An unchanged approved head
+   may retain its recorded user answer only after current gates and all required findings
+   are revalidated. A changed head returns through applicable checks, EPIC confirmations
+   and fresh user approval. Missing user-answer evidence leaves approval pending.
+4. Reconstruct the checkout's latest explicit release and acceptance; if transfer was
+   interrupted, verify the prior owner has stopped and the next owner has accepted before
+   mutation. For remediation, verify landing release before resuming worker edits. Resume
+   an interrupted Git operation from its actual state; never reset it merely to restart.
+5. For an already merged PR, verify the merge and skip merge dispatch. Missing final
+   evaluation/records returns ownership to the worker; completed records plus worker
+   release permits landing-agent preservation/cleanup. Missing/changed archives or unknown
+   occupancy keeps cleanup pending and the directory intact. Revalidate reclaim gates.
+
+Done when every pending item has a verified next role/action or a concrete blocker,
+and each route, ownership transfer and approval still agrees with current evidence.
+Resume independent eligible work; consolidate unresolved user judgments through the
+conductor. Restore or re-arm only the assigned role's verified wake-up mechanism.
+
 ## Active role handoff and wake-up
 
 Apply this contract to the conductor and each keyed EPIC session while coordinating work.

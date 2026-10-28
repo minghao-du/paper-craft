@@ -1,20 +1,28 @@
 ---
 name: pc-conductor-prepare-reboot
-description: Quiesce the whole tmux host before a PLANNED reboot — ask every Claude session by message to tuck in and report whether it can be paused, resolve each Claude pane's exact session id, and write a manifest so pc-conductor-recover can rebuild the workspace deterministically. Use when you know a reboot is coming and want a clean, lossless restart.
+description: Persist coordination and ownership before a planned reboot; park Claude Code tmux sessions when applicable.
 allowed-tools: Bash, Read
 ---
 
 # /pc-conductor-prepare-reboot
 
-`/pc-conductor-recover` reconstructs a *killed* fleet after an unplanned reboot by scanning `~/.claude/projects/*/<id>.jsonl` and inferring which sessions were live from file mtimes.
-That inference is lossy: mtime is last *activity*, not "window was open", and it cannot tell which of several concurrent sessions in one cwd were on screen.
+Before parking runtime sessions, persist each project's state under the shared
+[Lifecycle recovery](../lib/workflow.md#lifecycle-recovery) contract. The conductor holds
+new dispatch, requests role tuckins, and accounts for every EPIC, worker and landing
+agent, including local Git operations and explicit checkout ownership. Preserve approval
+sources and separate merge, final-record and cleanup outcomes. Silent roles stay unknown;
+a pane snapshot does not substitute for their records.
 
-When the reboot is **planned**, we can do better: capture ground truth *while tmux is still alive*.
-This skill walks every pane on every tmux server on the host in one run, resolves each Claude window's current `session_id` from the live process, and writes a host-wide manifest. Before the manifest, the skill asks every Claude session by message to persist its state and say whether it can be paused.
-`pc-conductor-recover` then replays that manifest after the reboot — rebuilding every session by its real name, windows in order, each Claude window resumed to the right id — instead of guessing.
+Use the selected runner's supported exact-session save/resume mechanism. If unavailable,
+retain file-based continuation and report manual recovery required. Let local operations
+reach a safe point or preserve their interrupted state. Saving a conversation does not
+preserve a running job or authorize a PR merge.
 
-The deterministic engine is the bundled `epic-prepare-reboot` shell helper; this skill is the brain that runs it, sanity-checks the resolved table with the user, and triggers the manifest write / shutdown.
-Run it **on the box about to reboot** — that is where tmux, the jsonl files, and the clones live.
+## Claude Code host parking
+
+The remaining host-wide procedure applies only to Claude Code with the bundled
+`epic-prepare-reboot` helper. It records tmux layout and conversation identity, separately
+from the lifecycle records above. Run it on the host about to reboot.
 
 ## Usage
 

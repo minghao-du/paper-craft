@@ -23,28 +23,16 @@ Topic-side state (EPIC bodies, findings, decisions) is `/pc-epic-tuckin`'s job, 
 
 ### Step 1: Verify role registration
 
-`$CLONE_ROOT/.conductor-session` and `$CLONE_ROOT/.epic-session` name the sessions currently holding those roles.
-They are written at cold start and at handover, and nothing else re-checks them — a tuckin is the moment they are most likely to be wrong, since a role often changes hands shortly before a context reset.
+Resolve the authoritative config and `clone_root`. Verify `.conductor-session` and
+every `.epic-sessions/<N>.json` under the shared **Multi-EPIC registration and scheduling**
+contract. Record verified live, paused or unknown separately for each EPIC; each agent
+refreshes only its own record. Preserve legacy `.epic-session` for reconciliation.
+A runtime address cannot establish task or checkout ownership.
 
-```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
-CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
-for f in .conductor-session .epic-session; do echo "$f: $(cat "$CLONE_ROOT/$f" 2>/dev/null)"; done
-```
-
-Cross-check each name through the selected runner's supported session API (`ListAgents` in the Claude branch), when available:
-
-- **Names a live session** — correct, leave it alone.
-- **Names this session under an old name** — rewrite it with the current name.
-- **Names a session that no longer appears** — investigate the recorded owner; absence alone means unknown, not vacant.
-  Report verified vacancy or unknown separately in Step 5 rather than nominating a successor; who takes a role is the user's call.
-
-**Address slots by clone directory, not by session name.**
-`ListAgents` renames a session when it is resumed — `birch` becomes `birch-61`, and a send to the bare name fails with a disambiguation error.
-So any durable note that addresses a session by name rots at the next resume; look the name up at send time instead.
-
-Do not write a roster of worker sessions.
-Which session occupies which clone is derivable (`ListAgents` for names and panes, `readlink /proc/<pid>/cwd` for the directory) and fails Step 4's "is it derived?" gate.
+Apply the shared **Lifecycle recovery** contract before reset. Persist outstanding
+planning/confirmation requests, priorities/constraints, delivery receipts, transfers,
+approval and landing phase evidence with pointers; this is required coordination state,
+even when parts can later be queried live. Never replace it with a worker-session roster.
 
 ### Step 2: Update slot status files
 
@@ -57,21 +45,10 @@ Slot paths:
 For each slot the conductor interacted with this session:
 
 1. Check if the slot's `.epic-status.json` is stale or missing
-2. If the conductor has newer information (e.g., a slot finished, got blocked, or changed phase), update the file:
-   ```bash
-   CONFIG=/absolute/path/to/conductor/.epic-config.json
-   CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
-   cat > "$CLONE_ROOT/<slot>/.epic-status.json" << 'EOF'
-   {
-     "issue": <N>,
-     "title": "<title>",
-     "phase": "<current phase>",
-     "summary": "<what happened>",
-     "updated_at": "<ISO 8601 timestamp>",
-     "blockers": []
-   }
-   EOF
-   ```
+2. Record newer verified observations in the task worklog and conductor decisions.
+   If updating status with exclusive ownership, merge only observed fields into existing
+   JSON; retain quality, awaiting schedule, lead notes and completion evidence. A stale
+   timestamp does not authorize rewriting a live worker's state or changing its phase.
 
 Use the absolute authoritative conductor config in every shell invocation; worker snapshots are refused.
 
@@ -121,7 +98,7 @@ Most state should already be in `.epic-status.json` per slot.
 Before recording anything anywhere, run each candidate fleet-level finding through this filter:
 
 1. **Is it derived?**
-   Recomputable from `git`, `tmux`, `gh`, or the filesystem — record nothing, whatever the destination would have been.
+   For optional fleet findings, recomputable observations need no extra copy. Required lifecycle evidence above remains durable with its observation timestamp; revalidate it on resume.
    Which remote host had a warm cache, which host was mid-build, local cache sizes, open-issue counts, which worker was blocked: all of these are re-measurable on demand and go stale within hours, so don't write them down anywhere.
 2. **Is it already recorded?**
    A finding that produced an issue, PR, test, or doc needs no second copy.
@@ -132,11 +109,11 @@ Only what survives both gates gets a destination:
 - A finding → the test, doc, or issue it came from.
 - Nothing else fits → the Step 5 report below.
 
-### Step 4b: Record approvals as `approved at <SHA>`, never as a state
+### Step 4b: Persist lifecycle evidence
 
-"Approved by both" is true when written and stops being true the moment anyone pushes. **An approval is scoped to the commit it was given for. Push after it and it no longer covers your branch — re-request, and wait.** Measured 2026-09-11: a worker landed a PR believing an earlier conductor approval still covered bytes rewritten minutes later; the content happened to be right, the form was not, and `gh pr view --json reviews` returned `[]` the whole time, so nothing on the record ever contradicted the belief.
-
-The falsifier rule this pairs with lives in `/pc-conductor-spawn`, not here — a tuckin report is read immediately by a human, so there is no reset gap for a stale imperative to survive. The spawn prompt is where that gap is real.
+Follow the shared **Lifecycle recovery** contract: distinguish EPIC confirmation,
+user PR/SHA approval, checkout release, verified merge, final records, preservation
+and cleanup. Retain source evidence and next owner for every pending step.
 
 ### Step 5: Report
 
@@ -145,7 +122,8 @@ Print a summary:
 ```
 ## Tuckin Complete
 
-- Roles: conductor = <name> (verified live) | epic = <name> (verified live | verified vacant | unknown — evidence <source>)
+- Roles: conductor = <verified identity/state>; each EPIC = <number, identity, active/paused/unknown, evidence>
+- Pending lifecycle steps: <task/PR, evidence path, next owner/action or blocker>
 - Slot status updated: cedar, issue-295
 - Queued spawn intent: i302 (retry logic)
 - Consumed spawn intent: i298 (already launched, moved to consumed/)

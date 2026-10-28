@@ -10,7 +10,7 @@ This skill's job is entirely **orientation**: gather context, report it, and sto
 It does not decide what happens next — the most common case is a vetted PR the user wants to modify (directly, or via PR review comments), but treat that as a prior, not a restriction.
 Let the actual state (and the user) drive what happens after Step 2.
 
-This is **not** a crash-recovery tool — see `/pc-conductor-recover` for processes killed by a host reboot (`claude --resume`-based).
+For runtime restoration after interruption, use `/pc-conductor-recover` and the selected runner's supported session recovery.
 This skill is for the ordinary case of a new conversation that needs to re-orient inside a slot that already has state.
 
 ## Usage
@@ -48,7 +48,9 @@ Assemble a recap and present it, branching on state:
 - **PR merged / phase `completed`** — say so plainly; there may be nothing left, or the user may want a follow-up.
 - **Nothing recognizable** (no status file, no PR, just a branch) — say so; report the branch/log state and let the user frame the task.
 
-End the recap with a direct question — what would you like to do?
+For a conductor-managed task, first reconcile [Lifecycle recovery](../lib/workflow.md#lifecycle-recovery), send the recap and evidence to the conductor, and await its verified next assignment/ownership transfer. A merged PR may still owe final evaluation or cleanup. Preserve pending routes when messaging is unavailable.
+
+For an independent session, end the recap with a direct question — what would you like to do?
 Do not guess at a next action (fix a comment, keep coding, open a PR, restart the loop) and do not restart any ralph-loop or autonomous machinery on your own initiative.
 
 ## After the user responds
