@@ -15,7 +15,9 @@
   "dependencies": {
     "@paper-craft/core": "workspace:*",
     "commander": "^15.0.0",
-    "sql.js": "^1.14.2"
+    "sql.js": "^1.14.2",
+    "@paper-craft/dashboard": "workspace:*",
+    "@hono/node-server": "^1.19.0"
   },
   "bin": {
     "pc": "./dist/main.js"

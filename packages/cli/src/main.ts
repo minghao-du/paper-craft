@@ -6,6 +6,7 @@
  * and dispatches to command modules in commands/.
  */
 
+import { registerDashboardCommand } from './commands/dashboard.js';
 import { Command } from 'commander';
 import { registerConfigCommand } from './commands/config.js';
 import { registerRebuildCommand } from './commands/rebuild.js';
@@ -57,6 +58,8 @@ registerCheckCommand(program, opts);
 registerNewCommand(program, opts);
 registerDiffCommand(program, opts);
 registerWorkflowCommands(program, opts);
+
+registerDashboardCommand(program);
 
 // Parse and execute
 program.parseAsync(process.argv).catch((err: Error) => {
