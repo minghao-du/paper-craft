@@ -31,7 +31,7 @@ ends with the continuation path or a concrete persistence blocker, without gener
 
 ## Generic fallback
 
-For a session that is none of the four — an ad-hoc or adjudicator session — there is no specialised tuckin, so do the minimum that makes a reset safe:
+For a session that is none of the roles above — an ad-hoc or adjudicator session — there is no specialised tuckin, so do the minimum that makes a reset safe:
 
 1. Commit and push anything this session owns; branch first if on `main`, and leave the pooled-slot branches a conductor manages alone. Report what is unpushed rather than forcing it.
 2. Write `_ignore/CONTINUE-generic.md` per the guide.
