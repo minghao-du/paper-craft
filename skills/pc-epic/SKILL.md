@@ -48,7 +48,7 @@ Tmux window naming, reboot recovery, and the live-worker `SendMessage` mechanics
 
 ### Message economy
 
-Cross-session messages are nudges, not transcripts: lead with the decision or the ask, give the reasoning the receiver cannot reconstruct, and cite the EPIC body, the issue, or `.epic-decisions.md` for the rest instead of restating it. This never licenses a bare pointer where Step 7 requires substance: a drafted worker correction states the change itself, not "re-read the EPIC body." Send raw measurements rather than conclusions, and keep corrections to one line in either direction. See `/pc-conductor`'s "Message economy" section; it applies symmetrically here.
+Cross-session messages are nudges, not transcripts: lead with the decision or the ask, give the reasoning the receiver cannot reconstruct, and cite the EPIC body, the issue, or `.epic-decisions.md` for the rest instead of restating it. This never licenses a bare pointer where Step 7 requires substance: a drafted worker correction states the change itself, not "re-read the EPIC body." Send raw measurements rather than conclusions, and keep corrections to one line in either direction.
 
 ### The epic's own claims
 
@@ -88,9 +88,7 @@ git ls-files | /usr/bin/grep -E '(CLAUDE|AGENTS)\.md$'
 
 Use `git ls-files`, not `find`: vendored copies and stale nested clones also contain files named `CLAUDE.md`. Before claiming a measured number is new, grep the experiment's own README for it.
 
-**Self-register for completion pushes**: resolve `CLONE_ROOT` and write this session's own `ListAgents` name (the "This session is ..." row) as the sole line of `$CLONE_ROOT/.epic-session` — this is how the conductor finds the epic to push a `needs-human`/`completed` notification without guessing among `ListAgents` rows.
-See `/pc-conductor`'s Conventions section ("Completion pushes").
-Re-run this write every time `/pc-epic` starts a fresh cycle, since the address can drift mid-session.
+**Register this EPIC** using the shared workflow's **Multi-EPIC registration and scheduling** contract. Verify the assigned EPIC and refresh only `$CLONE_ROOT/.epic-sessions/<N>.json`; preserve other EPICs' records. Reconcile its active/paused state, pending findings and conductor decisions before planning. Finish with a verified registration or a specific identity/delivery blocker.
 
 ### Step 2: Fan out scanners
 
@@ -151,7 +149,7 @@ Brief:
 
 **Group B does not cover the backlog.** `--limit 20` reaches back only as far as the last 20 touched issues, a couple of days on an active repo. Coverage is Group A's job plus a periodic audit for issues no EPIC references (see `matsengrp/phyz`#2093); Group B only answers "what moved lately".
 
-**Never ask the user a question you could answer yourself, and never ask a sequencing or staging one at all.** Issue/PR status is a `gh` query. Order, placement, and timing are for this session and the conductor to settle; `/pc-conductor`'s "Arbitration" section applies symmetrically here — escalate only what it names or a genuinely scientific question about whether work is worth doing.
+**Resolve observable status yourself.** This EPIC supplies internal order and constraints; the conductor schedules shared resources under the user's priorities. Return unresolved substantive judgments and proposed priority changes through the conductor under the shared scheduling contract.
 
 ### Step 3: Reconcile
 
@@ -252,6 +250,7 @@ This directory lives outside every clone's git and is the handoff point to `/pc-
 Without verified startup, report prepared and keep intent queued.
 
 **What a brief contains:**
+- **Scheduling constraints:** internal order, dependencies, readiness/holds and resource needs; the conductor combines these with user priorities under the shared scheduling contract.
 - **Only what the issue does not say.** Point at the issue's scope sections rather than restating them — open the issue before writing a brief, every time.
 - **Its own issue's footprint, and no parallel-safety verdict**: "this issue touches A, B, C; ask the conductor whether that intersects live work."
 - **Collision constraints in 4b's vocabulary** ("cannot run concurrently with `iN`, because both edit X"). Never another issue's gate, hold, or queue status.
@@ -268,8 +267,7 @@ Without verified startup, report prepared and keep intent queued.
   self-registered address. Report `queued; conductor handling unconfirmed` until its receipt
   or verified startup/consumption is observed. On wake, read the receipt and handle any topic
   blocker; acknowledgement alone needs no reply. Follow the shared wake-up contract before yielding.
-- **No conductor addressable**: say so, and offer both real options — start one now (`/pc-conductor` in a separate tmux window), or, for a single small job, run `/pc-conductor-spawn` yourself from this session for just this intent file.
-  The second option is a deliberate, user-confirmed exception to "don't spawn yourself" — say plainly that it mixes the two roles for this one spawn, and let the user pick.
+- **No conductor addressable**: retain queued intent and report delivery pending with the conductor continuation instruction. Resume through the conductor after its registration is verified.
 
 On subsequent wakes, retain the bound EPIC number and reconcile conductor receipts,
 worker/PR transitions and the existing dashboard before filing follow-up issues. A timer
@@ -299,7 +297,7 @@ A worker correction is often more time-sensitive than spawn intent. If the condu
 
 ### Step 8: Confirm the PR head for the conductor
 
-For every owned PR, including maintenance and docs, inspect scope and claims after
+For every owned PR and every PR affecting this EPIC, including maintenance and docs, inspect scope and claims after
 applicable worker completion and review findings. Post a `🤖`-prefixed PR comment
 identifying this EPIC, full head SHA, judgment, evidence and any required revision.
 State that this is EPIC confirmation, distinct from code review and user merge approval.
@@ -317,10 +315,10 @@ These files are gitignored via the `ISSUE-*.md` pattern.
 
 ```bash
 # Pull current body and record the timestamp
-gh issue view <number> --json body,updatedAt > /tmp/epic-pull.json
-jq -r .body /tmp/epic-pull.json > ISSUE-EPIC-<N>.md
-PULLED_AT=$(jq -r .updatedAt /tmp/epic-pull.json)
-rm -f /tmp/epic-pull.json
+gh issue view <number> --json body,updatedAt > /tmp/epic-<N>-pull.json
+jq -r .body /tmp/epic-<N>-pull.json > ISSUE-EPIC-<N>.md
+PULLED_AT=$(jq -r .updatedAt /tmp/epic-<N>-pull.json)
+rm -f /tmp/epic-<N>-pull.json
 
 # Edit the file (add findings, check boxes, cut finished sections)
 # ...

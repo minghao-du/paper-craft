@@ -48,9 +48,9 @@ Use the absolute authoritative conductor config in every shell invocation; worke
   Check it against live fleet state (Step 2b) and append fleet facts it structurally couldn't know: which host/clone is actually free, a concurrent worker editing an overlapping file, a build running on a target remote host.
   Mark it consumed after a successful launch (Step 6).
   An epic-written brief carries an `EPIC:` reference near the top; the conductor counts live slots by it. Match it tolerantly — `grep -iE '^\**EPIC\**:? *#?([0-9]+)'` — since both `EPIC: 369` and `**EPIC**: #369` are in use. If an epic brief lacks one, ask the epic rather than inferring it. Every brief, including user-originated work, requires an explicit owning EPIC.
-- **No intent file** — compose the prompt from the issue directly. This is a first-class path: a user-originated spawn, a conductor-initiated respawn, routine maintenance. Obtain an explicit owning EPIC and its scope/readiness brief before dispatch. See `/pc-conductor`'s "Terms and intake".
+- **No intent file** — compose the prompt from the issue directly. This is a first-class path: a user-originated spawn, a conductor-initiated respawn, routine maintenance. Obtain an explicit owning EPIC and its scope/readiness brief before dispatch. See `/pc-conductor`'s "Intake and planning".
 
-If the intent conflicts with current fleet state, resolve it from measured state and say so in your report — a contended host or a taken clone is a placement decision. Escalate only if either resolution risks an actual problem (see `/pc-conductor`'s "Arbitration").
+If the intent conflicts with current fleet state, resolve it from measured state and say so in your report — a contended host or a taken clone is a placement decision. Escalate only if either resolution risks an actual problem (see the shared workflow's **Multi-EPIC registration and scheduling** contract).
 
 ## Workflow
 

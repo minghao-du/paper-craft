@@ -88,6 +88,39 @@ Unknown occupancy blocks directory reuse, checkout reset, process termination an
 Missing sessions, windows or status files are not proof of vacancy.
 A tmux pane identifies a terminal, not a live agent: the runner may have exited while its shell or background jobs remain.
 
+## Multi-EPIC registration and scheduling
+
+Use `$CLONE_ROOT/.epic-sessions/<N>.json` for each EPIC's registration. Each record
+identifies the repository, authoritative config path, EPIC number, role, runtime address
+(or null), working directory, active/paused state and verification timestamp. The assigned
+EPIC agent refreshes only its own record after verifying its role; the conductor records
+start, pause, resume and handover decisions in `.epic-decisions.md`. Keep scope, briefs,
+constraints and outstanding findings linked there. A paused EPIC retains its identity and
+work; resume verifies the same assignment and live address before dispatching. Pause
+holds new dispatch for that EPIC; separately reconcile active workers and their ownership.
+Missing messaging retains these records with delivery pending. A native session name
+alone cannot prove the EPIC assignment. Never overwrite another EPIC's registration.
+Legacy `.epic-session` is recovery evidence only: reconcile its EPIC/owner before creating
+a keyed record; ambiguity holds that route rather than guessing or deleting it.
+
+For each scheduling decision, persist the user's EPIC priority and its source, EPIC-provided
+internal task order, dependencies/holds, first-ready timestamp, resource needs and current
+blockers. Missing user priorities require clarification while independent planning proceeds.
+Select only active, owned, unblocked tasks in the EPIC's allowed order. Prefer the higher
+user priority; among equal priorities use readiness time and measured available resources.
+A task that cannot fit stays queued with its constraint; another eligible task may proceed.
+Resource contention is mechanical. Semantic dependencies, scope and cross-EPIC effects go
+to the relevant EPIC agents; retain their attributed answers and route unresolved judgments
+or priority changes to the user through the conductor.
+
+Route every handoff and receipt by repository, EPIC and issue/PR, using the matching keyed
+registration. Include sender, receiver, evidence path/hash and evaluated SHA for PR findings.
+The owner identifies affected EPICs, with conductor collision evidence referred to those
+agents to establish impact. Record the required confirmer set and obtain every member's
+current-head finding before requesting user approval. Disputed impact holds that PR's
+approval request, while unrelated ready work continues. Task briefs, PR records and worker
+worklogs retain the owning EPIC so a reply cannot be adopted by a similarly named session.
+
 ## Scheduling and approval contract
 
 The conductor is the primary user conversation and sole scheduler of persistent EPIC
@@ -135,7 +168,7 @@ mean merged or cleaned up; retain state and checkout ownership evidence for land
 
 ## Active role handoff and wake-up
 
-Apply this contract to a conductor and its EPIC session while coordinating work.
+Apply this contract to the conductor and each keyed EPIC session while coordinating work.
 Files carry the durable handoff; messages prompt an earlier reconciliation.
 `queued` means a brief exists, `sent` means the messaging tool accepted a notification,
 and `handled` requires receiver-side evidence. A successful send proves neither
@@ -143,7 +176,8 @@ processing nor wake-up of another interactive conversation.
 
 1. **Persist, then notify.** After queueing intent, notify the registered conductor with
    the issue, EPIC and absolute brief path. After a worker/PR transition, the conductor
-   records the observation and notifies the registered EPIC with the issue and evidence path.
+   records the observation and notifies the owning and relevant affected EPICs via their keyed registrations with the
+   issue and evidence path.
    Use the runtime's supported addresses; absent/failed messaging leaves a pending handoff.
 2. **Reconcile on wake.** Verify current state before acting on a message. The conductor
    checks queued briefs, slot status/worklogs and linked PRs; the EPIC checks conductor

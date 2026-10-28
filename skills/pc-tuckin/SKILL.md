@@ -14,7 +14,7 @@ It determines the session's role, runs the matching tuckin, and that skill write
 If `$ARGUMENTS` names a role — `ms`, `spawn`, `epic`, `conductor`, or `generic` — use it.
 
 Otherwise determine the role per [the continuation contract](../lib/continuation.md): explicit assignment or task markers (`.ms-config.json` → `ms`, `.epic-status.json` → `spawn`), then ask if ambiguous.
-When native role registration is available, cross-check the exact current identity against `.epic-session` / `.conductor-session`; do not require a Claude session listing.
+When native role registration is available, cross-check the exact current identity against the EPIC-keyed `.epic-sessions/<N>.json` / `.conductor-session`; do not require a Claude session listing.
 Never infer the role from what the session has been discussing.
 
 Map the role to its skill and invoke it with the harness's skill tool or read and follow its text — do not reimplement it:

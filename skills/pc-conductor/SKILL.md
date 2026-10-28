@@ -19,12 +19,15 @@ hosts. Topic decomposition, readiness and confirmation belong to `/pc-epic`.
 1. Load the authoritative config and register this conductor's verified runtime address
    in `$CLONE_ROOT/.conductor-session`; unavailable messaging uses durable files.
 2. Assign every requested task an explicit EPIC owner before execution. Start or resume
-   that EPIC's persistent `/pc-epic <number>` agent; record its role/session and scope.
+   that EPIC's persistent `/pc-epic <number>` agent; reconcile its keyed registration
+   under the shared **Multi-EPIC registration and scheduling** contract. Start, pause
+   and resume EPICs independently, preserving every other EPIC's identity and work.
    Ask for ownership when ambiguous rather than assigning scientific scope yourself.
-3. Obtain its scoped task brief, order, dependencies, readiness and blockers. Inventory
-   resources using the checks below and dispatch eligible work with `/pc-conductor-spawn`.
+3. Obtain each active EPIC's scoped task briefs, order, dependencies, readiness and blockers.
+   Record user priorities and apply the shared scheduling contract to the measured resource
+   inventory below; dispatch eligible work with `/pc-conductor-spawn`.
    A worker may delegate helpers within that task; independent work returns as intent.
-4. Collect completion and review findings and EPIC confirmation at the current PR head,
+4. Collect completion and review findings and all required EPIC confirmations at the current PR head,
    then request the user's explicit PR/SHA approval under the shared contract. Route
    revision requests to the worker, retaining retry counts and attributed evidence.
    Finish with either a recorded approval request or a concrete blocker and next owner.
@@ -197,10 +200,10 @@ The dashboard is **slot-centric** — the epic's dashboard is issue-centric; thi
 
 **Pending spawn intent**: list any `.spawn-prompts/` files found in Step 4 (either naming pattern), with the available slots that could run them.
 
-**EPIC distribution**: one line counting live slots by the `EPIC:` header of the brief that spawned them, with user-originated slots as their own row. This is counting, not judging; it is what makes drift across EPICs visible.
+**EPIC distribution**: count live slots by the required owning `EPIC:` header, including user-originated work. Show each EPIC's active/paused state, user priority, eligible queue and resource blockers alongside its slots. Legacy work without an owner is unresolved intake; reconcile it before further dispatch.
 
 ```
-EPIC #369: 5 slots    user/pc-ms: 2 slots    (no header): 1 slot
+EPIC #369: 5 slots    EPIC #402: 2 slots    unresolved legacy owner: 1 slot
 ```
 
 **Negative list**: surface decisions already taken *against* an action, with reasons — sequencing already applied, an issue already stood down for a reason that would otherwise look resolved.
@@ -337,7 +340,8 @@ Record and send each brief's handling receipt as specified there; preserve defer
 
 When a worker phase changes or its PR lands, react immediately: read current status and PR
 evidence, record the transition, refresh `$CLONE_ROOT/.conductor-session`, then notify the
-registered EPIC with the issue, phase/PR outcome and evidence path. Include `quality-gate`
+owning and relevant affected EPICs through keyed registrations with the issue, phase/PR
+outcome and evidence path. Include `quality-gate`
 and `awaiting-results`, not just terminal phases. Missing messaging leaves the durable
 observation for the EPIC's next reconciliation; keep independent work moving.
 
@@ -372,7 +376,7 @@ When inspecting slot occupancy or liveness, read [the process inspection procedu
 }
 ```
 
-- Must be `.gitignored`, along with `.epic-worklog.md`, `.epic-decisions.md`, and `.epic-notifications.log`. Any file this skill writes to the **conductor cwd** needs a `.gitignore` entry in the consuming repo; files at `$CLONE_ROOT` (`.epic-session`, `.conductor-session`, `.spawn-prompts/`, `.preserved/`) do not, since that path is outside every clone's git tree.
+- Must be `.gitignored`, along with `.epic-worklog.md`, `.epic-decisions.md`, and `.epic-notifications.log`. Any file this skill writes to the **conductor cwd** needs a `.gitignore` entry in the consuming repo; files at `$CLONE_ROOT` (`.epic-sessions/`, `.conductor-session`, `.spawn-prompts/`, `.preserved/`) do not, since that path is outside every clone's git tree.
 - **Staleness checks:**
   - *No tmux window, status file older than 30 minutes* → suspected abandoned slot, a recovery candidate (Step 6); occupancy stays unknown until verified.
   - *Window blocked on a permission modal* → frozen and potentially unable to receive messages.
