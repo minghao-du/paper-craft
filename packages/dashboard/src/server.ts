@@ -18,6 +18,7 @@ import { type FleetRegistration, type DashboardFleet } from '@paper-craft/core/w
 export interface DashboardOptions {
   dataDir: string;
   configs?: string[];
+  project?: string;
   token?: string;
   host?: string;
   intervalMs?: number;
@@ -80,6 +81,7 @@ export async function createDashboard(options: DashboardOptions) {
       registrations.push({
         id: createHash('sha256').update(config).digest('hex').slice(0, 16),
         config,
+        project: options.project,
       });
   await writeFile(registry, registrations.map((r) => JSON.stringify(r)).join('\n') + '\n', {
     mode: 0o600,
@@ -166,11 +168,32 @@ export async function createDashboard(options: DashboardOptions) {
     });
     return runtimeCollecting;
   };
+  const runtimeTask = (task: DashboardFleet['tasks'][number]) => {
+    const evidence = runtimeCache.get(task.id);
+    const interventions = [...(task.interventions ?? [])];
+    const age = task.modifiedAt ? Date.now() - Date.parse(task.modifiedAt) : NaN;
+    if (
+      task.waiting !== 'planned' &&
+      evidence?.tmux.state === 'observed' &&
+      !evidence.stale &&
+      !evidence.error
+    ) {
+      const present = evidence.tmux.panes.length > 0;
+      if (age > (present ? 45 : 30) * 60000)
+        interventions.push({
+          reason: present
+            ? 'Possibly stalled: terminal present and file activity older than 45 minutes; investigate, occupancy unknown'
+            : 'Suspected recovery candidate: no observed terminal and file activity older than 30 minutes; occupancy unknown',
+          source: `${task.source}; ${evidence.source}`,
+        });
+    }
+    return { ...task, interventions, runtimeEvidence: evidence };
+  };
   const runtimeSnapshot = () => ({
     ...snapshot,
     fleets: fleets.map((f) => ({
       ...f,
-      tasks: f.tasks.map((t) => ({ ...t, runtimeEvidence: runtimeCache.get(t.id) })),
+      tasks: f.tasks.map(runtimeTask),
     })),
   });
   await refresh();
@@ -212,7 +235,28 @@ export async function createDashboard(options: DashboardOptions) {
     }
     await next();
   });
-  app.get('/api/snapshot', (c) => c.json(runtimeSnapshot()));
+  app.get('/api/snapshot', (c) => {
+    const selected = c.req.query('fleet');
+    const query = (c.req.query('q') ?? '').toLocaleLowerCase().slice(0, 512);
+    const phase = c.req.query('phase');
+    const attention = c.req.query('attention') === 'true';
+    const fleets = runtimeSnapshot()
+      .fleets.filter((f) => !selected || f.id === selected)
+      .map((f) => ({
+        ...f,
+        tasks: f.tasks.filter(
+          (t) =>
+            (!phase || t.phase === phase) &&
+            (!attention || !!t.interventions?.length) &&
+            (!query ||
+              [f.config, f.project, t.slot, t.summary, t.phase, t.issue, ...t.blockers]
+                .join(' ')
+                .toLocaleLowerCase()
+                .includes(query)),
+        ),
+      }));
+    return c.json({ ...snapshot, fleets });
+  });
   app.get('/api/health', (c) =>
     c.json({
       generatedAt: snapshot.generatedAt,
@@ -226,9 +270,7 @@ export async function createDashboard(options: DashboardOptions) {
   });
   app.get('/api/tasks/:id', (c) => {
     const task = fleets.flatMap((f) => f.tasks).find((t) => t.id === c.req.param('id'));
-    return task
-      ? c.json({ ...task, runtimeEvidence: runtimeCache.get(task.id) })
-      : c.json({ error: 'Unknown task' }, 404);
+    return task ? c.json(runtimeTask(task)) : c.json({ error: 'Unknown task' }, 404);
   });
   app.get('*', async (c) => {
     const name = c.req.path === '/' ? 'index.html' : c.req.path.slice(1);

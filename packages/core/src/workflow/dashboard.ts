@@ -19,6 +19,9 @@ export interface DashboardTask {
   phase: string;
   summary: string;
   blockers: string[];
+  waiting?: 'planned' | 'overdue' | 'unknown';
+  modifiedAt?: string;
+  interventions?: { reason: string; source: string }[];
   issue?: number;
   pr?: string;
   runtime: 'unknown';
@@ -80,6 +83,40 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         task.blockers = Array.isArray(record.blockers)
           ? record.blockers.filter((v): v is string => typeof v === 'string')
           : [];
+        task.interventions = task.blockers.map((reason) => ({ reason, source: task.source }));
+        if (['needs-human', 'blocked'].includes(task.phase) && !task.blockers.length)
+          task.interventions.push({
+            reason: 'Recorded phase requests human intervention',
+            source: task.source,
+          });
+        const awaiting =
+          record.awaiting && typeof record.awaiting === 'object'
+            ? (record.awaiting as Record<string, unknown>)
+            : undefined;
+        const appointment =
+          typeof awaiting?.next_check_at === 'string' ? Date.parse(awaiting.next_check_at) : NaN;
+        const statusTime = (await stat(physical)).mtimeMs;
+        let worklogTime = 0;
+        try {
+          const worklog = await realpath(join(location.path, '.epic-worklog.md'));
+          if (within(location.path, worklog)) worklogTime = (await stat(worklog)).mtimeMs;
+        } catch {
+          /* Missing worklog does not invalidate status evidence. */
+        }
+        task.modifiedAt = new Date(Math.max(statusTime, worklogTime)).toISOString();
+        if (task.phase === 'awaiting-results') {
+          task.waiting = Number.isFinite(appointment)
+            ? appointment > Date.now()
+              ? 'planned'
+              : 'overdue'
+            : 'unknown';
+          if (task.waiting === 'overdue')
+            task.interventions.push({
+              reason: 'Saved next check is overdue; investigate',
+              source: task.source,
+            });
+        }
+        // Without verified terminal evidence, old files alone cannot establish stalled work.
         if (typeof record.issue === 'number') task.issue = record.issue;
         if (typeof record.pr === 'string') task.pr = record.pr;
       } catch (error) {

@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDashboard } from '../../packages/dashboard/src/server.js';
@@ -11,6 +11,10 @@ test('runtime HTTP evidence attributes panes by physical directory, keeps shell 
     mkdirSync(join(root, 'pool', 'worker'), { recursive: true });
     const config = join(root, '.epic-config.json');
     writeFileSync(config, JSON.stringify({ clone_root: 'pool', clone_names: ['worker'] }));
+    const status = join(root, 'pool', 'worker', '.epic-status.json');
+    writeFileSync(status, JSON.stringify({ phase: 'coding', summary: 'Working' }));
+    const oldTime = new Date(Date.now() - 60 * 60000);
+    utimesSync(status, oldTime, oldTime);
     let failed = false;
     let calls = 0;
     service = await createDashboard({
@@ -37,6 +41,11 @@ test('runtime HTTP evidence attributes panes by physical directory, keeps shell 
       tmux: { state: 'observed', panes: [{ id: '%1', command: 'zsh' }] },
       runner: { state: 'unknown' },
     });
+    expect(first.fleets[0].tasks[1].interventions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: expect.stringContaining('Possibly stalled') }),
+      ]),
+    );
     const count = calls;
     await read();
     await read();
