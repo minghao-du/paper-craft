@@ -1,5 +1,6 @@
 /** Protected local HTTP adapter over shared file evidence. */
 import { Hono } from 'hono';
+import { collectRemote } from './remote.js';
 import { collectGit } from './git.js';
 import { Worker } from 'node:worker_threads';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
@@ -17,6 +18,7 @@ export interface DashboardOptions {
   host?: string;
   intervalMs?: number;
   gitIntervalMs?: number;
+  remoteIntervalMs?: number;
 }
 /** Assemble shared collection and authenticated HTTP reads. */
 function collectFleet(registration: FleetRegistration): Promise<DashboardFleet> {
@@ -79,6 +81,8 @@ export async function createDashboard(options: DashboardOptions) {
   await writeFile(registry, registrations.map((r) => JSON.stringify(r)).join('\n') + '\n', {
     mode: 0o600,
   });
+  const remoteEvidence = collectRemote(registrations, options.remoteIntervalMs);
+  await remoteEvidence.refresh();
   const gitEvidence = collectGit(registrations, options.gitIntervalMs);
   await gitEvidence.refresh();
   let fleets: DashboardFleet[] = [];
@@ -88,7 +92,7 @@ export async function createDashboard(options: DashboardOptions) {
   const failures = new Map<string, number>();
   const due = new Map<string, number>();
   const refresh = async (force = false): Promise<void> => {
-    if (force) await gitEvidence.refresh(true);
+    if (force) await Promise.all([gitEvidence.refresh(true), remoteEvidence.refresh(true)]);
     if (collecting) return collecting;
     if (!force && Date.now() < next) return;
     collecting = (async () => {
@@ -151,6 +155,7 @@ export async function createDashboard(options: DashboardOptions) {
     }
     await next();
   });
+  app.get('/api/remote', (c) => c.json(remoteEvidence.read()));
   app.get('/api/git', (c) => c.json(gitEvidence.read()));
   app.get('/api/snapshot', (c) => {
     const selected = c.req.query('fleet');
@@ -182,7 +187,7 @@ export async function createDashboard(options: DashboardOptions) {
     }),
   );
   app.get('/api/refresh', async (c) => {
-    await Promise.all([refresh(), gitEvidence.refresh()]);
+    await Promise.all([refresh(), gitEvidence.refresh(), remoteEvidence.refresh()]);
     return c.json(snapshot);
   });
   app.get('/api/tasks/:id', (c) => {
@@ -214,6 +219,7 @@ export async function createDashboard(options: DashboardOptions) {
     stop: () => {
       clearInterval(timer);
       gitEvidence.stop();
+      remoteEvidence.stop();
     },
   };
 }

@@ -19,7 +19,12 @@ export function registerDashboardCommand(program: Command): void {
         join(homedir(), '.config', 'pc', 'dashboard'),
       )
       .option('--interval <milliseconds>', 'Local collection interval', '15000')
-      .option('--git-interval <milliseconds>', 'Cached Git collection interval', '60000');
+      .option('--git-interval <milliseconds>', 'Cached Git collection interval', '60000')
+      .option(
+        '--remote-interval <milliseconds>',
+        'Associated remote task collection interval',
+        '300000',
+      );
   const options = (opts: Record<string, unknown>) => {
     const intervalMs = Number(opts.interval);
     if (!Number.isFinite(intervalMs) || intervalMs < 100)
@@ -27,7 +32,11 @@ export function registerDashboardCommand(program: Command): void {
     const gitIntervalMs = Number(opts.gitInterval);
     if (!Number.isFinite(gitIntervalMs) || gitIntervalMs < 100)
       throw new Error('Expected Git interval of at least 100 milliseconds');
+    const remoteIntervalMs = Number(opts.remoteInterval);
+    if (!Number.isFinite(remoteIntervalMs) || remoteIntervalMs < 100)
+      throw new Error('Expected remote interval of at least 100 milliseconds');
     return {
+      remoteIntervalMs,
       gitIntervalMs,
       dataDir: resolve(String(opts.dataDir)),
       configs: (opts.config as string[] | undefined)?.map((p) => resolve(p)),
