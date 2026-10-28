@@ -152,6 +152,10 @@ function App() {
                                   </li>
                                 ))}
                               </ul>
+                              <details>
+                                <summary>Runtime observations</summary>
+                                <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
+                              </details>
                               <p>Blockers: {task.blockers.join(', ') || 'None recorded'}</p>
                             </details>
                           </td>
