@@ -12,6 +12,7 @@ export function registerDashboardCommand(program: Command): void {
   const configure = (cmd: Command) =>
     cmd
       .option('--config <path...>', 'Explicit authoritative Fleet configuration(s)')
+      .option('--project <name>', 'Optional research Project association for new registrations')
       .option(
         '--data-dir <path>',
         'Dashboard-owned registration and observation directory',
@@ -26,6 +27,7 @@ export function registerDashboardCommand(program: Command): void {
       dataDir: resolve(String(opts.dataDir)),
       configs: (opts.config as string[] | undefined)?.map((p) => resolve(p)),
       intervalMs,
+      project: opts.project as string | undefined,
     };
   };
   configure(

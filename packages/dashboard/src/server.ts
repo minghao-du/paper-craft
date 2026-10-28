@@ -11,6 +11,7 @@ import { type FleetRegistration, type DashboardFleet } from '@paper-craft/core/w
 export interface DashboardOptions {
   dataDir: string;
   configs?: string[];
+  project?: string;
   token?: string;
   host?: string;
   intervalMs?: number;
@@ -71,6 +72,7 @@ export async function createDashboard(options: DashboardOptions) {
       registrations.push({
         id: createHash('sha256').update(config).digest('hex').slice(0, 16),
         config,
+        project: options.project,
       });
   await writeFile(registry, registrations.map((r) => JSON.stringify(r)).join('\n') + '\n', {
     mode: 0o600,
@@ -144,7 +146,28 @@ export async function createDashboard(options: DashboardOptions) {
     }
     await next();
   });
-  app.get('/api/snapshot', (c) => c.json(snapshot));
+  app.get('/api/snapshot', (c) => {
+    const selected = c.req.query('fleet');
+    const query = (c.req.query('q') ?? '').toLocaleLowerCase().slice(0, 512);
+    const phase = c.req.query('phase');
+    const attention = c.req.query('attention') === 'true';
+    const fleets = snapshot.fleets
+      .filter((f) => !selected || f.id === selected)
+      .map((f) => ({
+        ...f,
+        tasks: f.tasks.filter(
+          (t) =>
+            (!phase || t.phase === phase) &&
+            (!attention || !!t.interventions?.length) &&
+            (!query ||
+              [f.config, f.project, t.slot, t.summary, t.phase, t.issue, ...t.blockers]
+                .join(' ')
+                .toLocaleLowerCase()
+                .includes(query)),
+        ),
+      }));
+    return c.json({ ...snapshot, fleets });
+  });
   app.get('/api/health', (c) =>
     c.json({
       generatedAt: snapshot.generatedAt,
