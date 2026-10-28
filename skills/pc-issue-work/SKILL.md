@@ -211,9 +211,11 @@ If the work involved experiments or benchmarks, include key results (tables, num
 Don't just point at branch files — the PR body is the permanent record.
 When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed (such as a preserved path or ephemeral directory) alongside their reproduction command, environment specifications, and reproduction duration or cost.
 
-### Step 8: Summary for the user
+### Step 8: Report to the conductor
 
-After creating the PR, provide a concise summary that highlights things the user needs to **judge**:
+Before execution, verify an explicit owning EPIC and its brief under the shared workflow contract.
+After creating the PR, report the full head SHA and current completion/check evidence to the conductor for EPIC confirmation and user approval. Retain status and worklog; workers release ownership only through the landing handoff. Independent follow-up work uses `/pc-conductor-handoff`.
+Provide a concise summary that highlights things the user needs to **judge**:
 
 - **Underlying bugs or tech debt** discovered during the work (even if worked around)
 - **Structural concerns** — places where the fix is a workaround rather than a root-cause fix

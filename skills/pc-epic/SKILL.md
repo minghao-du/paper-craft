@@ -33,8 +33,8 @@ The epic session does strategy, not fleet ops:
 - Composes and prunes EPIC bodies
 - Flags dependency-direction conflicts and file-overlap collisions between open issues, before either gets spawned — by the time branches exist the cost of a collision is already sunk
 - Decides an issue is ready and drafts the spawn brief, but does not spawn it — that goes to `/pc-conductor` as intent, not action
-- Owns the user-facing topic channel: this is where scientific reasoning gets presented and where scientific decisions get made.
-  `/pc-conductor` narrates fleet state only and points here for substance (see that skill's "The fleet/topic line"), so expect a semantic question raised in the conductor's window to arrive here rather than be answered there.
+- Returns attributed planning, findings and substantive questions through the conductor,
+  the primary user conversation. Preserve supporting evidence and professional judgment.
 - Never writes code, creates branches, or spawns tmux windows for numbered issues itself
 
 ## Conventions
@@ -56,7 +56,7 @@ Cross-session messages are nudges, not transcripts: lead with the decision or th
 - **Run a skeptic subagent on your own artifacts**: before claiming a question answered, and before filing an issue you wrote yourself.
 - **Before repeating who found something**, check the attribution against the log or the PR; it is the part of a claim nobody tests.
 - **Before escalating a question to the user, ask whether its answers lead to different actions.** If they do not, do not escalate. If the options share a first step within the authorized scope, take that step now and ask only about the point where the actions diverge; keep work that depends on the answer pending.
-  Put a question for the user as one line in your report, page them per `/pc-conductor`'s "Paging the user", park only that item, and keep working the rest. Use the current harness's supported user-input mechanism and continue independent work while waiting.
+  Return a specific question with evidence to the conductor, park only the dependent item, and keep independent planning moving.
 
 ## Configuration
 
@@ -297,15 +297,15 @@ A worker correction is often more time-sensitive than spawn intent. If the condu
 
 **Editing an issue a live worker holds is a Step 7 correction.** The worker read the issue once at spawn and will not re-read it, so the body edit is the record and the relayed delta is the delivery. Before editing an issue, ask the conductor whether a slot is live on it. If a worker reports something you already fixed, the relay did not happen: tell it, and check what else failed to reach it.
 
-### Step 8: Approving a merge, holding, or discharging a gate — post it to the PR
+### Step 8: Confirm the PR head for the conductor
 
-When you approve a worker's merge, place a hold, or discharge a gate you set, post a `🤖`-prefixed comment on the PR as well as messaging the worker. Not `gh pr review --approve` — you review claims, not code.
-
-1. **Post at decision time, not after the merge.** A comment timestamped after the merge cannot show the approval preceded it; label a retroactive one as a record.
-2. **Say what was approved or held and on what grounds**: the commit, what changed, what you checked. For a hold: `🤖 Hold (claims) at <sha>: <condition>`, plus what you have already ruled on.
-3. **Say explicitly that it is not a code review.**
-
-For any ruling a future reader will need, prefer the PR (body or comment) over a slot's own files, which `/pc-pr-land` deletes at land time.
+For every owned PR, including maintenance and docs, inspect scope and claims after
+applicable worker completion and review findings. Post a `🤖`-prefixed PR comment
+identifying this EPIC, full head SHA, judgment, evidence and any required revision.
+State that this is EPIC confirmation, distinct from code review and user merge approval.
+Notify the conductor with the comment pointer; it collects confirmations and asks the
+user. A changed head requires renewed applicable confirmation under the shared contract.
+Done when the current-head confirmation or specific blocker is durable and routed.
 
 ## EPIC body update pattern
 

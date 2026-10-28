@@ -229,7 +229,12 @@ gh pr view <N> --json state,mergedAt   # state must be MERGED
 
 If the work is done and the PR is open, the phase is `quality-gate`. (A `completed` phase invites the conductor to reclaim the slot.)
 
-**Who calls you.** Where the worker lands its own PR, it calls you after `/pc-pr-land`. Where a human merges (`stop_reason: awaiting-human-merge`), the conductor spawns you from `/pc-conductor`'s reclaim step with the clone's absolute path. Read the state files by that path, run git as `git -C <path>`, and pass `-R <owner/repo>` to `gh`. In either case the clone is on `main` after the merge, so Step 1's `main..HEAD` is empty: read the change from `gh pr view <N> -R <owner/repo> --json commits,files` instead.
+**Who calls you.** Workers invoke the evaluator for task-local stopping points and
+again for final evaluation/records after the conductor verifies merge success. Worker
+self-landing is replaced by the shared workflow's Scheduling and approval contract.
+Read state from the supplied absolute slot path, run git with `git -C <path>` and
+pass `-R <owner/repo>` to `gh`. After merge, use the PR's commits/files rather than
+assuming `main..HEAD` still contains the change. Retain records until verified cleanup.
 
 **Idempotency guard: check the PR, not the status file** (`/pc-pr-land` deletes the status file). The ceremony has run if some comment *begins* with the `🤖 **Issue Lead**` header and has `completed` as the first word after its `**Category**` label:
 

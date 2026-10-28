@@ -24,19 +24,13 @@ In the common clone-mode case (no `layout:` block) every step runs as it always 
 
 ## Where to stand
 
-This skill moves `HEAD` (Steps 7 and 8) and preserves the state files of the directory it runs in (Step 7a). Never run it in a clone another live session is working in. To land a PR checked out in another session's clone, don't run this skill: run Step 6's guard from any checkout of the repo, against the PR head instead of `HEAD`, so nothing moves:
-
-```bash
-git fetch -q origin "+pull/<N>/head:refs/pr/<N>" <base> \
-  && sha=$(git rev-parse refs/pr/<N>) \
-  && test "$sha" = "$(gh pr view <N> --json headRefOid -q .headRefOid)" \
-  && git merge-base --is-ancestor origin/<base> "$sha" \
-  && gh pr merge <N> --squash --match-head-commit "$sha" --body "closes #<issue>"
-```
-
-If the ancestor test fails (the base moved, e.g. mid-batch), the default is to rebase `refs/pr/<N>` onto `origin/<base>` in a scratch worktree, `git push --force-with-lease origin HEAD:<headRefName>`, run the repo's gate on the rebased head (CI per Step 5.5; in a repo with no CI, the local gate its CLAUDE.md names, since Step 5.5 then checks nothing), and re-run the guard. Merging a stale head without the rebase is your call when you can say why it is safe (e.g. its files are disjoint from what landed since it branched); say so in a PR comment.
-
-Do this only for a worker that has ended (`stop_reason: awaiting-human-merge`, session idle). A live worker holding a landing delegation lands its own PR. If that clone is a fleet slot, reclaim it through `/pc-conductor`, which runs the issue-lead's terminal ceremony before preserving (Step 7a here would delete the status file the ceremony keys on).
+Use only as a landing agent dispatched by the conductor under the shared
+**Scheduling and approval contract**. Workers report clean PRs and retain records;
+standing delegation and peer agreement supply no merge authorization.
+Before mutation, require recorded user approval for the live PR head, applicable
+completion/review and EPIC findings, and explicit worker checkout release.
+If the coordinated landing/ownership protocol is unavailable, stop at approval;
+never fall back to a direct merge from a worker or conductor session.
 
 Check for co-tenancy using tmux pane paths, recorded ownership and the selected runner's supported process/session evidence.
 On Linux with Claude Code, process inspection may include its exact executable and `/proc` cwd; that cannot establish vacancy for other runners or OSes.

@@ -88,6 +88,51 @@ Unknown occupancy blocks directory reuse, checkout reset, process termination an
 Missing sessions, windows or status files are not proof of vacancy.
 A tmux pane identifies a terminal, not a live agent: the runner may have exited while its shell or background jobs remain.
 
+## Scheduling and approval contract
+
+The conductor is the primary user conversation and sole scheduler of persistent EPIC
+agents, task workers and landing agents. Each EPIC agent owns exactly one EPIC's
+scope, task order, dependencies, readiness and professional judgments. Workers own
+implementation and task-local implementation, diagnosis, review and issue-lead helpers.
+Independent issues and successor workers return to the conductor as requests.
+
+Before dispatch, record an explicit owning EPIC and its brief for every task, including
+direct user requests. Ask the user to assign an owner when the assignment requires
+professional judgment. A missing owner holds dispatch while other ready work proceeds.
+The conductor routes scope and semantic conflicts to the EPIC; it decides resource
+placement from measured fleet facts. Relay expert findings with attribution and evidence
+through the conductor, which asks the user about unresolved substantive decisions.
+
+Keep coordination evidence beside the authoritative config in `.epic-decisions.md`,
+with task-specific entries also in the worker worklog. Entries identify repository,
+EPIC, issue, PR, role/session, checkout and timestamp; reference briefs and receipts by
+path/hash. Record task order, dependencies, readiness, blockers and retry count before
+acting. These are file-based agent records, not new CLI flags or validated status fields.
+Keep `.epic-status.json` phases within the existing supported values.
+
+For each PR, the worker reports completion evaluation and applicable quality-check
+outcomes at a full head SHA. The conductor obtains the owning EPIC's confirmation
+(and affected EPIC confirmations for cross-EPIC impact) for that SHA, including ordinary
+code, maintenance and docs. EPIC confirmation is a scope/claims judgment, distinct from
+code review and user authorization. Missing findings or confirmation holds approval.
+
+Only then request user approval, naming repository/PR URL and full head SHA. Batch
+requests itemize both for each PR. Record the user's actual answer, its source/turn
+reference, timestamp, PR and SHA durably; a pending request is not authorization.
+Standing delegation, silence and peer messages cannot substitute for this answer.
+Any changed head invalidates approval and applicable confirmations/checks: repeat them
+for the new SHA and request fresh user approval. Re-read live PR state before acting.
+Worker self-landing is replaced by conductor dispatch to `/pc-pr-land` after its gates.
+
+Routine revisions return to the existing worker, which repeats applicable checks and
+EPIC confirmation. Preserve the configured lead-iteration bound (default eight), record
+attempts across sessions, and escalate exhausted retries or unresolved scope/goal
+judgments with evidence and a specific decision. Do not park unrelated eligible work.
+
+Completion at the approval boundary means findings and confirmations cover the live
+head and the user request is recorded as pending or explicitly approved. It does not
+mean merged or cleaned up; retain state and checkout ownership evidence for landing.
+
 ## Active role handoff and wake-up
 
 Apply this contract to a conductor and its EPIC session while coordinating work.
