@@ -17,12 +17,17 @@ export function registerDashboardCommand(program: Command): void {
         'Dashboard-owned registration and observation directory',
         join(homedir(), '.config', 'pc', 'dashboard'),
       )
-      .option('--interval <milliseconds>', 'Local collection interval', '15000');
+      .option('--interval <milliseconds>', 'Local collection interval', '15000')
+      .option('--runtime-interval <milliseconds>', 'Runtime observation interval', '15000');
   const options = (opts: Record<string, unknown>) => {
     const intervalMs = Number(opts.interval);
     if (!Number.isFinite(intervalMs) || intervalMs < 100)
       throw new Error('Expected interval of at least 100 milliseconds');
+    const runtimeIntervalMs = Number(opts.runtimeInterval);
+    if (!Number.isFinite(runtimeIntervalMs) || runtimeIntervalMs < 100)
+      throw new Error('Expected runtime interval of at least 100 milliseconds');
     return {
+      runtimeIntervalMs,
       dataDir: resolve(String(opts.dataDir)),
       configs: (opts.config as string[] | undefined)?.map((p) => resolve(p)),
       intervalMs,
