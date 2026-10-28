@@ -1,3 +1,4 @@
+import { readTaskLog } from './logs.js';
 import { loadFleetConfig, workflowSource } from '@paper-craft/core/workflow/fleet-config';
 /** Protected local HTTP adapter over shared file evidence. */
 import {
@@ -273,6 +274,25 @@ export async function createDashboard(options: DashboardOptions) {
   app.get('/api/refresh', async (c) => {
     await Promise.all([refresh(), gitEvidence.refresh(), refreshRuntime()]);
     return c.json(runtimeSnapshot());
+  });
+  app.get('/api/tasks/:id/logs', async (c) => {
+    if ([...new URL(c.req.url).searchParams.keys()].some((k) => !['source', 'offset'].includes(k)))
+      return c.json({ error: 'Only source and offset are accepted' }, 400);
+    const kind = c.req.query('source') ?? 'worklog';
+    const offset = Number(c.req.query('offset') ?? 0);
+    if (
+      !['worklog', 'terminal', 'runner'].includes(kind) ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset > Number.MAX_SAFE_INTEGER - 16384
+    )
+      return c.json({ error: 'Expected supported source and nonnegative byte offset' }, 400);
+    const fleet = fleets.find((f) => f.tasks.some((t) => t.id === c.req.param('id')));
+    const task = fleet?.tasks.find((t) => t.id === c.req.param('id'));
+    if (!fleet || !task) return c.json({ error: 'Unknown task' }, 404);
+    return c.json(
+      await readTaskLog(fleet.config, task, kind, offset, options.executeRuntime ?? executeRuntime),
+    );
   });
   app.get('/api/tasks/:id', (c) => {
     const task = fleets.flatMap((f) => f.tasks).find((t) => t.id === c.req.param('id'));
