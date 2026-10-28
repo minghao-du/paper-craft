@@ -1,4 +1,5 @@
 import RecentChanges from './RecentChanges.jsx';
+import { TaskLogs } from './TaskLogs.jsx';
 import RemoteEvidence from './RemoteEvidence.jsx';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -161,6 +162,7 @@ function App() {
                                 <summary>Runtime observations</summary>
                                 <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
                               </details>
+                              <TaskLogs task={task} read={read} />
                               <p>Blockers: {task.blockers.join(', ') || 'None recorded'}</p>
                             </details>
                           </td>
