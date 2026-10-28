@@ -1,4 +1,5 @@
 import { TaskLogs } from './TaskLogs.jsx';
+import RemoteEvidence from './RemoteEvidence.jsx';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
@@ -97,7 +98,7 @@ function App() {
                     {fleet.error} {fleet.stale && '(stale)'}
                   </p>
                 )}
-                <GitEvidence fleetId={fleet.id} />
+                <GitEvidence fleetId={fleet.id} /><RemoteEvidence fleetId={fleet.id} />
                 <table>
                   <thead>
                     <tr>
