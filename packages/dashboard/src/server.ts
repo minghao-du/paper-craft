@@ -7,7 +7,9 @@ import {
   type RuntimeEvidence,
 } from './runtime.js';
 import { Hono } from 'hono';
+import { githubCollector } from './github.js';
 import { collectGit } from './git.js';
+
 import { Worker } from 'node:worker_threads';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -23,6 +25,7 @@ export interface DashboardOptions {
   token?: string;
   host?: string;
   intervalMs?: number;
+  githubIntervalMs?: number;
   gitIntervalMs?: number;
   runtimeIntervalMs?: number;
   executeRuntime?: RuntimeExecutor;
@@ -88,8 +91,10 @@ export async function createDashboard(options: DashboardOptions) {
   await writeFile(registry, registrations.map((r) => JSON.stringify(r)).join('\n') + '\n', {
     mode: 0o600,
   });
+  const github = githubCollector(options.githubIntervalMs);
   const gitEvidence = collectGit(registrations, options.gitIntervalMs);
   await gitEvidence.refresh();
+
   let fleets: DashboardFleet[] = [];
   let snapshot = { version: 0, generatedAt: new Date().toISOString(), fleets };
   let collecting: Promise<void> | undefined;
@@ -124,6 +129,7 @@ export async function createDashboard(options: DashboardOptions) {
         }),
       );
       fleets = results;
+      void github.refresh(fleets);
       snapshot = { version: snapshot.version + 1, generatedAt: new Date().toISOString(), fleets };
       next = Math.min(...due.values(), Date.now() + interval);
     })().finally(() => {
@@ -202,6 +208,7 @@ export async function createDashboard(options: DashboardOptions) {
     })),
   });
   await refresh();
+  await github.refresh(fleets);
   await refreshRuntime();
   const runtimeTimer = setInterval(
     () => {
@@ -212,8 +219,10 @@ export async function createDashboard(options: DashboardOptions) {
     Math.min(runtimeInterval, 1000),
   );
   runtimeTimer.unref();
+
   const timer = setInterval(
     () => {
+      void github.refresh(fleets);
       void refresh().catch(() => {
         next = Date.now() + interval;
       });
@@ -270,7 +279,9 @@ export async function createDashboard(options: DashboardOptions) {
       nextObservationAt: new Date(next).toISOString(),
     }),
   );
+  app.get('/api/github', (c) => c.json(github.values()));
   app.get('/api/refresh', async (c) => {
+    void github.refresh(fleets);
     await Promise.all([refresh(), gitEvidence.refresh(), refreshRuntime()]);
     return c.json(runtimeSnapshot());
   });
