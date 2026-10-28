@@ -544,7 +544,11 @@ When inspecting slot occupancy or liveness, read [the process inspection procedu
   - *No tmux window, status file older than 30 minutes* → suspected abandoned slot, a recovery candidate (Step 6); occupancy stays unknown until verified.
   - *Window blocked on a permission modal* → frozen and potentially unable to receive messages.
     Sweep on every reconciliation; for Claude Code, read [the permission-dialog procedure](claude-code/dialogs.md). Inspect other runners through their actual dialog interface before acting.
-  - *Window still open, status file older than ~45 minutes* → possibly **stalled**. Surface it in Step 5's dashboard for a human; never clean it up.
+  - For `awaiting-results`, read the saved schedule under
+    [Adaptive checks for long tasks](../pc-issue-work/SKILL.md#adaptive-checks-for-long-tasks).
+    Before a valid `next_check_at`, old mtimes alone indicate planned waiting;
+    reconcile overdue checks or known failures without independently polling the job.
+  - *Window still open, status file older than ~45 minutes outside planned waiting* → possibly **stalled**. Surface it in Step 5's dashboard for a human; never clean it up.
   - Check file **mtimes** of both `.epic-status.json` and `.epic-worklog.md`, not the `updated_at` field, which workers sometimes hand-type.
   - The `phase` field is not evidence that work is done: check `gh pr view`.
   - A pane's scrollback is current; its statusline is re-rendered on Claude Code's own schedule and can be stale. Don't use it to verify anything.
@@ -567,9 +571,21 @@ Workers loop `/pc-pr-check` and `/pc-pr-review` until both pass clean.
     "check_cmd": "command that exits 0 when done",
     "check_files": ["paths whose existence means done"],
     "started_at": "ISO 8601",
-    "timeout_hours": 12
+    "timeout_hours": 12,
+    "estimated_completion_at": null,
+    "next_check_at": "ISO 8601 UTC",
+    "check_basis": "Latest observation and reason for the next check time"
   }
   ```
+
+`estimated_completion_at` is a forecast (null when unknown); `next_check_at` is
+an absolute UTC appointment computed from the current clock. `check_basis` explains
+the latest adjustment. `started_at` and `timeout_hours` retain their total-wait
+meaning; they do not measure SLURM execution time. Keep job identity, queue/start
+observations and detailed evidence in the worklog. Workers and leads use
+[Adaptive checks for long tasks](../pc-issue-work/SKILL.md#adaptive-checks-for-long-tasks)
+to maintain this schedule. Older files without it need a schedule established on
+continuation; their missing fields do not authorize repeated immediate probes.
 
 ### Phase migration
 

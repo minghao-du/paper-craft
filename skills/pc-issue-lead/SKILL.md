@@ -27,7 +27,8 @@ Read ALL of these before making any judgment:
 4. Recent commits: `git log main..HEAD --oneline`
 5. Diff summary: `git diff main --stat`
 6. PR if it exists: `gh pr view --json title,body,state,checks`
-7. Partial experiment results: check output files, logs, remote jobs
+7. Existing partial experiment results and logs; query live jobs only under the
+   [adaptive-check schedule](../pc-issue-work/SKILL.md#adaptive-checks-for-long-tasks)
 
 ### Step 2: Scope check (mandatory every time)
 
@@ -97,7 +98,7 @@ iteration. Every lead invocation re-derives cold from the signals
 | **phase-complete** | Multi-phase issue, current phase done | Check gate criteria, advance or confirm done |
 | **needs-instrumentation** | "Fixed" something without proof | "Add measurements/tests that demonstrate the fix works" |
 | **needs-deeper-investigation** | Surface fix, no root cause understanding | "Design an experiment that reveals the fundamental issue" |
-| **awaiting-results** | Experiment running, not done | Check partial results: if sufficient to answer the question, tell worker to analyze what's available. Otherwise, the ralph-loop handles polling — each iteration checks and exits if not ready. |
+| **awaiting-results** | Experiment running, not done | Check partial results: if sufficient to answer the question, tell worker to analyze what's available. Otherwise, follow the adaptive-check schedule in /pc-issue-work; normal waiting is not a mechanical blocker. |
 | **run-production** | Works on test data, not on real data | "Run on production data with the new feature" |
 | **pr-ready** | Work done, no PR yet | Verify topic branch, instruct: push, PR, quality gate |
 | **quality-gate** | PR exists, needs checks | Instruct: run /pc-pr-check, fix all, run /pc-pr-review, fix all, repeat until clean |
@@ -275,38 +276,15 @@ the worker addresses feedback; filing only at `completed` means the
 final state is authoritative. The terminal comment, checked by the
 guard above, is what makes re-invocation idempotent.
 
-## Never Poll for a Subprocess
-
-If you launch a subprocess or background task, wait for it to finish
-rather than polling in a loop. If you must poll on something external,
-test the artifact (`test -s`, `test -f`) or the tool's exit status.
-Never use `pgrep -f <string>` where the string appears in your own
-command — the polling shell matches itself and the loop never exits.
-
 ## Awaiting-results Protocol
 
-When you determine the worker is waiting for experiment results:
-
-1. Ensure `.epic-status.json` has `phase: "awaiting-results"` with:
-   ```json
-   {
-     "awaiting": {
-       "description": "What we're waiting for",
-       "check_cmd": "command that exits 0 when done",
-       "check_files": ["paths whose existence means done"],
-       "started_at": "ISO 8601",
-       "timeout_hours": 12
-     }
-   }
-   ```
-
-2. The ralph-loop handles polling: each iteration reads status, runs
-   `check_cmd`, exits if not ready. You'll be spawned again when
-   results arrive (or timeout).
-
-3. When evaluating results: check if partial results are sufficient
-   to answer the issue's core question — if so, tell the worker to
-   stop the run and analyze what's available.
+For long tasks you launch or evaluate, read and follow
+[Adaptive checks for long tasks](../pc-issue-work/SKILL.md#adaptive-checks-for-long-tasks).
+Verify the durable schedule and wake-up/manual continuation, including SLURM queue
+state, before directing another check. Read existing partial results first; obtain
+fresh task status when due or prompted by an event. If available results already
+answer the issue's core question, tell the worker to analyze them and assess whether
+the remaining run is needed.
 
 ## Critical Rules
 

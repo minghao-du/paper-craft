@@ -90,6 +90,58 @@ Use the issue number as a branch prefix for traceability.
 - When a Snakemake run fails, follow [incremental recovery](../pc-pipeline-snakemake/SKILL.md#incremental-recovery) before rerunning: reuse valid completed outputs and execute only the affected dependency chain.
 - Continue until the issue is done and all tests pass
 
+#### Adaptive checks for long tasks
+
+Apply this protocol to local and remote computation, training, experiments and long tests.
+
+1. Launch through the configured platform/runtime and retain the exact job ID or PID,
+   execution environment, logs and completion probe. Use the captured identity: a
+   command-pattern search can match the worker's own session. Verify the probe returns
+   nonzero while unfinished and zero only on verified success; preserve pipeline/SSH
+   exit status rather than masking it with a successful print command. Remote output
+   paths are checked in their consuming environment, not assumed local.
+2. Estimate completion from comparable runs, input size or measured progress. Record
+   the estimate, its basis and the next check time before waiting. For hours-long work,
+   start with checks tens of minutes apart; shorten near expected completion. With no
+   reliable estimate, start at five minutes and double unchanged intervals up to thirty
+   minutes. Adjust these defaults to observed progress, deadlines and platform policy.
+3. On continuation or context recovery, read the saved schedule first. Query the task
+   when the next check is due or a completion/failure event arrives; an unrelated wake
+   preserves the schedule. At each check, distinguish normal waiting, probe failure,
+   stalled work and task failure. Progress updates the estimate; unchanged healthy work
+   backs off; suspected stalls prompt diagnosis. Three consecutive probe errors warrant
+   a mechanical-blocker/lead evaluation; normal unfinished results do not count.
+   An exceeded estimate prompts diagnosis and a revised schedule, never cancellation
+   or resubmission by itself. Verify exit status and required outputs before continuing.
+4. For **SLURM**, track submission, queue wait and actual execution separately, using
+   the exact job identity and the selected platform's status/accounting procedures:
+   - **PENDING:** base checks on the pending reason and scheduler start estimate when
+     available; otherwise use the unknown-estimate backoff above. Start predictions
+     can move. Ordinary resource/priority waiting remains healthy; holds, failed
+     dependencies and other actionable reasons need diagnosis.
+   - **RUNNING:** estimate completion from actual start and progress, excluding queue
+     wait from expected execution duration. Requeue returns to queue scheduling;
+     suspension or restart requires revising the estimate from the observed state.
+   - **Terminal or missing from queue:** inspect accounting/exit status and outputs.
+     Queue disappearance alone proves neither success nor failure; delayed accounting
+     remains unconfirmed. Distinguish terminal failure from automatic requeue before
+     recovery. A requested wall-time limit is a limit, not a duration forecast.
+5. Persist each check's result, estimate, next check time and rationale in
+   `.epic-worklog.md` (or the standalone task's durable worklog). In fleet mode set
+   `phase: awaiting-results` and populate `awaiting` using the
+   [status fields](../pc-conductor/SKILL.md#epic-statusjson-specification). Keep `started_at` as
+   the wait's original timestamp; `timeout_hours` measures that total wait, including
+   queue time; keep this overall waiting bound separate from runtime estimates.
+   Diagnose expiry; ordinary queueing does not consume the expected execution duration.
+6. Keep waiting responsive through completion events or a supported scheduled wake-up;
+   follow [Runtime wake-up](../lib/workflow.md#runtime-wake-up) when scheduling a worker
+   continuation. Reuse one verified timer for the saved next check. Without that support,
+   preserve the schedule and report `manual continuation required` with the resume command.
+   Repeated empty continuation turns are not a waiting mechanism.
+
+Completion criterion: the task has verified results or a diagnosed blocker, or its
+durable next check and verified wake-up/manual continuation are recorded.
+
 ### Step 4b: Selective staging and pre-commit cached diff audit
 
 Stage changes explicitly per-file to maintain zero transient artifacts in git history.

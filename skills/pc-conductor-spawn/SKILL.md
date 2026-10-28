@@ -274,6 +274,8 @@ EPIC STATUS PROTOCOL — You MUST follow this:
   awaiting — set when waiting for experiment results (description,
     check_cmd, check_files, started_at, timeout_hours). `started_at` is
     real UTC from `date -u`: it is compared against `timeout_hours`.
+    Include estimated_completion_at, next_check_at and check_basis per
+    /pc-issue-work's adaptive-check protocol.
 
 .epic-worklog.md format (append-only, never edit previous entries):
 Timestamped markdown entries with phase header.
@@ -325,28 +327,11 @@ WORKLOG: Append entries to .epic-worklog.md when:
 - Receiving lead guidance (copy it to the worklog)
 
 AWAITING RESULTS:
-If you launch a long-running experiment:
-1. Set phase to awaiting-results in .epic-status.json
-2. Set the awaiting field with check_cmd and check_files. If the work runs
-   on a host that does not share this filesystem, check_files cannot name
-   a local path: put the real check in check_cmd and omit check_files or
-   mark it remote.
-3. Run check_cmd once while the work is definitely unfinished and confirm
-   it EXITS NON-ZERO. The exit status is the whole interface; the loop never
-   reads stdout. Use a command whose status is the answer (`test -s`, the
-   tool's own status), keep `set -o pipefail` through any pipe, and never
-   wrap the probe in `|| echo`. For a remote probe, check the status of the
-   whole `ssh` call from outside it.
-4. Each supported continuation iteration: run check_cmd, if not ready end the turn
-5. After 3 consecutive check failures, set stop_reason to
-   mechanical-blocker and invoke the lead
-
-WAITING: poll a PID you captured at launch (`$!`), never a pattern —
-`pgrep -f` or `ps | grep` on any fragment of your own commands matches your
-own session (this prompt is your argv) and never exits. Better: background
-the command and let the harness re-invoke you. Any long foreground command
-makes you unreachable to SendMessage; never hold the foreground for
-something that is not work.
+For any long local or remote task, read and follow /pc-issue-work's
+"Adaptive checks for long tasks" before launching or resuming it.
+Persist the next check and its rationale; continuation turns honor that
+schedule, including SLURM queue wait. Use completion events or a verified
+scheduled wake-up so waiting leaves you reachable to messages.
 
 GIT: write any multi-line commit message to a file and use `git commit -F`;
 a nested `"` in `-m "..."` truncates the message and breaks the `&&` chain.
