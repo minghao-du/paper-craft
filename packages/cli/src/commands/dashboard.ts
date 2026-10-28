@@ -17,12 +17,17 @@ export function registerDashboardCommand(program: Command): void {
         'Dashboard-owned registration and observation directory',
         join(homedir(), '.config', 'pc', 'dashboard'),
       )
-      .option('--interval <milliseconds>', 'Local collection interval', '15000');
+      .option('--interval <milliseconds>', 'Local collection interval', '15000')
+      .option('--git-interval <milliseconds>', 'Cached Git collection interval', '60000');
   const options = (opts: Record<string, unknown>) => {
     const intervalMs = Number(opts.interval);
     if (!Number.isFinite(intervalMs) || intervalMs < 100)
       throw new Error('Expected interval of at least 100 milliseconds');
+    const gitIntervalMs = Number(opts.gitInterval);
+    if (!Number.isFinite(gitIntervalMs) || gitIntervalMs < 100)
+      throw new Error('Expected Git interval of at least 100 milliseconds');
     return {
+      gitIntervalMs,
       dataDir: resolve(String(opts.dataDir)),
       configs: (opts.config as string[] | undefined)?.map((p) => resolve(p)),
       intervalMs,

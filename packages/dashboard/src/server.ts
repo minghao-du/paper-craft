@@ -1,5 +1,6 @@
 /** Protected local HTTP adapter over shared file evidence. */
 import { Hono } from 'hono';
+import { collectGit } from './git.js';
 import { Worker } from 'node:worker_threads';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -14,6 +15,7 @@ export interface DashboardOptions {
   token?: string;
   host?: string;
   intervalMs?: number;
+  gitIntervalMs?: number;
 }
 /** Assemble shared collection and authenticated HTTP reads. */
 function collectFleet(registration: FleetRegistration): Promise<DashboardFleet> {
@@ -75,6 +77,8 @@ export async function createDashboard(options: DashboardOptions) {
   await writeFile(registry, registrations.map((r) => JSON.stringify(r)).join('\n') + '\n', {
     mode: 0o600,
   });
+  const gitEvidence = collectGit(registrations, options.gitIntervalMs);
+  await gitEvidence.refresh();
   let fleets: DashboardFleet[] = [];
   let snapshot = { version: 0, generatedAt: new Date().toISOString(), fleets };
   let collecting: Promise<void> | undefined;
@@ -82,6 +86,7 @@ export async function createDashboard(options: DashboardOptions) {
   const failures = new Map<string, number>();
   const due = new Map<string, number>();
   const refresh = async (force = false): Promise<void> => {
+    if (force) await gitEvidence.refresh(true);
     if (collecting) return collecting;
     if (!force && Date.now() < next) return;
     collecting = (async () => {
@@ -144,6 +149,7 @@ export async function createDashboard(options: DashboardOptions) {
     }
     await next();
   });
+  app.get('/api/git', (c) => c.json(gitEvidence.read()));
   app.get('/api/snapshot', (c) => c.json(snapshot));
   app.get('/api/health', (c) =>
     c.json({
@@ -153,7 +159,7 @@ export async function createDashboard(options: DashboardOptions) {
     }),
   );
   app.get('/api/refresh', async (c) => {
-    await refresh();
+    await Promise.all([refresh(), gitEvidence.refresh()]);
     return c.json(snapshot);
   });
   app.get('/api/tasks/:id', (c) => {
@@ -178,5 +184,13 @@ export async function createDashboard(options: DashboardOptions) {
       return c.text('Build Dashboard assets with pnpm run build', 503);
     }
   });
-  return { app, token, refresh, stop: () => clearInterval(timer) };
+  return {
+    app,
+    token,
+    refresh,
+    stop: () => {
+      clearInterval(timer);
+      gitEvidence.stop();
+    },
+  };
 }

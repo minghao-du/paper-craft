@@ -10,3 +10,5 @@ Open the startup link privately. The access token stays in the URL fragment and 
 `pc dashboard status --config /absolute/path/.epic-config.json` prints the same file-evidence contract as JSON and exits. Omit `--config` to inspect remembered registrations. Build with `pnpm run build` before launch.
 
 Expand each row for attributed sources, observation times, blockers and collection failures. Runtime occupancy and execution attempts remain unknown. A phase record does not establish a running agent, completion or slot availability. Refresh is bounded by the collection schedule; clients share cached observations. The Dashboard writes only its own registration/cache data and exposes no workflow controls.
+
+Expand “Git checkout constraints” for per-Fleet branch, changed files, cached-base relation, holds and collision evidence. Git observations refresh independently every 60 seconds (configure with `--git-interval` in milliseconds), with bounded probes and per-Fleet failure backoff. Failed collections retain attributed stale successes. Reads never fetch Git refs; a clean checkout does not establish slot availability.
