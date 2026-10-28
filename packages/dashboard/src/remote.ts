@@ -79,7 +79,7 @@ export function collectRemote(registrations: FleetRegistration[], intervalMs = 3
   const failures = new Map<string, number>();
   let active: Promise<void> | undefined;
   const refresh = (force = false): Promise<void> => {
-    if (active) return active;
+    if (active) return force ? active.then(() => refresh(true)) : active;
     active = (async () => {
       const retained = new Set<string>();
       await Promise.all(

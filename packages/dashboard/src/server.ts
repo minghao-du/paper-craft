@@ -1,3 +1,4 @@
+import { observationHistory } from './history.js';
 import { readTaskLog } from './logs.js';
 import { loadFleetConfig, workflowSource } from '@paper-craft/core/workflow/fleet-config';
 /** Protected local HTTP adapter over shared file evidence. */
@@ -22,6 +23,7 @@ import { type FleetRegistration, type DashboardFleet } from '@paper-craft/core/w
 /** Local setup and collection options; no workflow writers are exposed. */
 export interface DashboardOptions {
   dataDir: string;
+  historyNow?: () => number;
   configs?: string[];
   project?: string;
   token?: string;
@@ -72,6 +74,7 @@ export async function createDashboard(options: DashboardOptions) {
   const host = options.host ?? '127.0.0.1:4317';
   const interval = Math.max(100, options.intervalMs ?? 15000);
   await mkdir(options.dataDir, { recursive: true, mode: 0o700 });
+  const history = await observationHistory(options.dataDir, options.historyNow);
   const registry = join(options.dataDir, 'fleets.jsonl');
   let registrations: FleetRegistration[] = [];
   try {
@@ -137,6 +140,7 @@ export async function createDashboard(options: DashboardOptions) {
       void github.refresh(fleets);
       snapshot = { version: snapshot.version + 1, generatedAt: new Date().toISOString(), fleets };
       next = Math.min(...due.values(), Date.now() + interval);
+      await recordHistory();
     })().finally(() => {
       collecting = undefined;
     });
@@ -212,9 +216,36 @@ export async function createDashboard(options: DashboardOptions) {
       tasks: f.tasks.map(runtimeTask),
     })),
   });
+  const recordHistory = () =>
+    history.observe([
+      ...fleets.map((f) => ({ fleetId: f.id, subject: f.id, source: 'local', value: f })),
+      ...gitEvidence
+        .read()
+        .map((g) => ({ fleetId: g.fleetId, subject: g.fleetId, source: 'git', value: g })),
+      ...fleets.flatMap((f) =>
+        f.tasks.map((t) => ({
+          fleetId: f.id,
+          subject: t.id,
+          source: 'runtime',
+          value: runtimeCache.get(t.id),
+        })),
+      ),
+      ...remoteEvidence
+        .read()
+        .map((r) => ({
+          fleetId: r.fleetId,
+          subject: `${r.slot}:${r.host}:${r.jobId}`,
+          source: 'remote',
+          value: r,
+        })),
+      ...github
+        .values()
+        .map((g) => ({ fleetId: g.fleetId, subject: g.taskId, source: 'github', value: g })),
+    ]);
   await refresh();
   await github.refresh(fleets);
   await refreshRuntime();
+  await recordHistory();
   const runtimeTimer = setInterval(
     () => {
       void refreshRuntime().catch(() => {
@@ -254,6 +285,7 @@ export async function createDashboard(options: DashboardOptions) {
     }
     await next();
   });
+  app.get('/api/history', (c) => c.json(history.read()));
   app.get('/api/remote', (c) => c.json(remoteEvidence.read()));
   app.get('/api/git', (c) => c.json(gitEvidence.read()));
   app.get('/api/snapshot', (c) => {
@@ -294,6 +326,7 @@ export async function createDashboard(options: DashboardOptions) {
       refreshRuntime(),
       remoteEvidence.refresh(),
     ]);
+    await recordHistory();
     return c.json(runtimeSnapshot());
   });
   app.get('/api/tasks/:id/logs', async (c) => {

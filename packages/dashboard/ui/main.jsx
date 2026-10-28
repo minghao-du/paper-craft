@@ -1,3 +1,4 @@
+import RecentChanges from './RecentChanges.jsx';
 import { TaskLogs } from './TaskLogs.jsx';
 import RemoteEvidence from './RemoteEvidence.jsx';
 import React, { useEffect, useState } from 'react';
@@ -173,6 +174,7 @@ function App() {
             ))}
         </>
       )}
+      <RecentChanges read={read} fleetId={fleetId}/>
     </main>
   );
 }
