@@ -226,7 +226,7 @@ Fill in two lines in COMPLETION every time:
 - **`EPIC:`** — required owning EPIC, with the brief and semantic constraints.
 - **Approval protocol** — follow the shared workflow's Scheduling and approval contract; the worker reports a clean PR to the conductor and retains its state for landing-agent handoff.
 
-For an epic-reserved artifact, the gate is the shape of the edit: additive-only → land and notify; any removal or alteration of epic-recorded text → announce intent-to-land and wait for an ack. Check with a three-dot diff; a two-dot diff against `origin/main` reports everything landed since the fork as deletions:
+For an EPIC-reserved artifact, report additions and alterations to the conductor as evidence for EPIC confirmation under the shared approval contract. Compare with a three-dot diff to isolate the branch’s edits:
 
 ```bash
 git diff origin/main...HEAD -- <the owned files>
@@ -493,7 +493,7 @@ runs after the merge; say so on the `Landed:` line.
 ```
 ═══ COMPLETED: #N — TITLE ═══
 PR: <full PR URL>
-Landed: <merged by me | left open — REASON>
+Landed: <verified landing-agent merge | left open — REASON>
 
 Summary:
   <2-5 sentence narrative — what changed and key decisions>
@@ -512,10 +512,10 @@ Doc alterations: <none — additive only | ALTERED: <files>, N removed tokens>
 ═══════════════════════════════
 ```
 
-The `Doc alterations` line is computed, not recalled — an in-place rewrite
-of an epic-recorded doc is the item that needs a second signature. Run it
-from anywhere in the repo; `:(top)` anchors the pathspec to the root and
-the quotes keep the shell from expanding it:
+Compute the `Doc alterations` line for the EPIC review evidence. Both additions
+and rewrites follow the shared approval contract. Run this from anywhere
+in the repo; `:(top)` anchors the pathspec to the root and the quotes keep
+the shell from expanding it:
 
 ```sh
 git diff --word-diff=porcelain origin/main...HEAD -- ':(top)*.md' | grep '^-' | grep -v '^--- '
