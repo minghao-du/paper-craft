@@ -1,3 +1,4 @@
+import RecentChanges from './RecentChanges.jsx';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
@@ -170,6 +171,7 @@ function App() {
             ))}
         </>
       )}
+      <RecentChanges read={read} fleetId={fleetId}/>
     </main>
   );
 }
