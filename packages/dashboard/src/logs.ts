@@ -1,5 +1,6 @@
 /** Bounded on-demand log reads from registered task sources. */
 import { open, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { loadFleetConfig, workflowSource, within } from '@paper-craft/core/workflow/fleet-config';
 import { observeRuntime, type RuntimeExecutor } from './runtime.js';
@@ -68,7 +69,10 @@ export async function readTaskLog(
     const source = join(directory, '.epic-worklog.md');
     const physical = await realpath(source);
     if (!within(directory, physical)) throw new Error('Worklog escapes registered source');
-    const file = await open(physical, 'r');
+    const file = await open(
+      physical,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
     try {
       const metadata = await file.stat();
       if (!metadata.isFile()) throw new Error('Expected regular worklog file');
