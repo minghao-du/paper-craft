@@ -116,3 +116,40 @@ test('adoption backlog permits only existing unpaired documents and orphan artif
     rmSync(root, { recursive: true, force: true });
   }
 }, 30000);
+
+test('adoption snapshot cannot move forward to exempt newly introduced documents', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pc-docs-adoption-'));
+  const git = (...args: string[]) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  const put = (p: string, text: string) => writeFileSync(join(root, p), text);
+  const check = () =>
+    spawnSync(process.execPath, [tsx, script, 'check'], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+  try {
+    git('init', '-q');
+    git('config', 'user.name', 'Fixture');
+    git('config', 'user.email', 'fixture@example.test');
+    put('OLD.md', '# Old\n');
+    git('add', '.');
+    git('commit', '-qm', 'legacy');
+    const adoption = git('rev-parse', 'HEAD').stdout.trim();
+    const manifest = (revision: string, backlog: string) =>
+      `include: ["*.md"]\nexclude: []\nadoption: ${revision}\nbacklog: ${backlog}\n`;
+    put('docs-i18n.yaml', manifest(adoption, '{OLD.md: existing}'));
+    git('add', '.');
+    git('commit', '-qm', 'adopt bilingual policy');
+    put('OLD.md', '# Edited legacy\n');
+    expect(check().status).toBe(0);
+    put('NEW.md', '# New\n');
+    git('add', '.');
+    git('commit', '-qm', 'new unpaired document');
+    const moved = git('rev-parse', 'HEAD').stdout.trim();
+    put('docs-i18n.yaml', manifest(moved, '{OLD.md: existing, NEW.md: existing}'));
+    expect(check().status).toBe(1);
+    expect(check().stderr).toContain('adoption snapshot');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30000);

@@ -8,7 +8,7 @@ English is the default display language. English and Simplified Chinese carry eq
 
 `docs-i18n.yaml` defines the final controlled scope and explicit execution-document exclusions. Skills, agent instructions, execution prompts, machine templates, fixtures and downstream research material remain outside pairing. Discovery never follows symbolic links.
 
-An English `name.md`, Chinese `name.zh.md` and sibling `name.i18n.yaml` form one unit. Create, rename or delete all three together and update references. Existing untranslated documents are listed in the temporary adoption backlog. Editing those documents alone does not require translation. New documents cannot enter that backlog; migrated documents cannot return. Remove the mechanism when migration finishes.
+An English `name.md`, Chinese `name.zh.md` and sibling `name.i18n.yaml` form one unit. Create, rename or delete all three together and update references. Existing untranslated documents are listed in the temporary adoption backlog. Editing those documents alone does not require translation. New documents cannot enter that backlog; migrated documents cannot return. The first committed manifest fixes the adoption revision and original backlog membership. Remove the mechanism when migration finishes.
 
 ## Contributor commands
 
