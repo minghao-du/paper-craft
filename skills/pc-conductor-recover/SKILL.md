@@ -15,17 +15,15 @@ landing agent waits for the conductor's verified next assignment/transfer before
 The lifecycle contract determines the next operation, including when merge already
 succeeded. Conversation restoration alone grants no authorization or checkout ownership.
 
-For a managed Fleet, first reconcile original execution receipts and results:
+For a managed Fleet, reconcile original execution receipts and continue recorded workflows:
 
 ```sh
 pc workflow conductor recover --config /absolute/path/.epic-config.json
-pc workflow conductor issue <number> --config /absolute/path/.epic-config.json
 ```
 
-Recovery collects the original attempt; it does not launch replacement work or release
-ownership. A lost driver lock is reclaimable only with a recorded PID proven absent;
-legacy unknown locks remain blocked for inspection. Re-entering the original Issue
-continues its recorded stages, including merged PRs and verified postmerge cleanup.
+Recovery collects original attempts and automatically continues recorded Issue or EPIC stages.
+Unknown execution retains ownership and blocks continuation until reconciled. A lost driver lock is reclaimable only with a recorded PID proven absent;
+legacy unknown locks remain blocked for inspection. Continuation includes merged PRs and verified postmerge cleanup.
 Persisted explicit human EPIC-close confirmation survives recovery; silence remains
 unconfirmed. Missing startup receipts, unknown execution and missing archive evidence
 retain the checkout and require the specific missing evidence, never generic approval.

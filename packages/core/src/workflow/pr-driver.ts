@@ -68,6 +68,7 @@ export async function drivePullRequest(
     const state = run!;
     save(file, state);
     let repair = false;
+    let repairEvidence = '';
     for (let round = 0; round < 12; round++) {
       const live = await github.read(state.pr);
       if (live.state === 'MERGED') {
@@ -120,7 +121,7 @@ export async function drivePullRequest(
         created: new Date().toISOString(),
         directory,
         checkout: delivery.checkout,
-        brief: `Read project AGENTS.md and applicable checkout guidance. ${delivery.repository} Issue #${delivery.issue}, PR #${state.pr}, head ${live.head}. ${failed ? 'Repair failed checks or conflicts; push fixes and return evidence.' : 'Run pc-pr-check and pc-pr-review quality gates at this head; return JSON {"passed":true,"head":"' + live.head + '","evidence":"quality outcomes"} only if all applicable gates pass. Do not merge; the driver performs compare-and-merge.'}`,
+        brief: `Read project AGENTS.md and applicable checkout guidance. ${delivery.repository} Issue #${delivery.issue}, PR #${state.pr}, head ${live.head}. ${failed ? `Repair failed checks, conflicts or a stale base; fetch and integrate the latest base, push fixes and return evidence. ${repairEvidence}` : 'Run pc-pr-check and pc-pr-review quality gates at this head; return JSON {"passed":true,"head":"' + live.head + '","evidence":"quality outcomes"} only if all applicable gates pass. Do not merge; the driver performs compare-and-merge.'}`,
       };
       const retained =
         previous?.role === role && previous.brief === turn.brief ? previous : undefined;
@@ -159,7 +160,9 @@ export async function drivePullRequest(
         const changed = await github.read(state.pr);
         if (changed.state === 'MERGED') continue;
         if (changed.head !== live.head) continue;
-        throw error;
+        repair = true;
+        repairEvidence = String(error);
+        continue;
       }
       const merged = await github.read(state.pr);
       if (merged.state !== 'MERGED') throw new Error('Merge not verified');

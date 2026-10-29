@@ -47,8 +47,8 @@ Use the absolute authoritative conductor config in every shell invocation; worke
 - **Intent file present**: it is the base for the `IMPORTANT CONTEXT` section of Step 4's prompt — don't re-derive what it already says.
   Check it against live fleet state (Step 2b) and append fleet facts it structurally couldn't know: which host/clone is actually free, a concurrent worker editing an overlapping file, a build running on a target remote host.
   Mark it consumed after a successful launch (Step 6).
-  An epic-written brief carries an `EPIC:` reference near the top; the conductor counts live slots by it. Match it tolerantly — `grep -iE '^\**EPIC\**:? *#?([0-9]+)'` — since both `EPIC: 369` and `**EPIC**: #369` are in use. If an epic brief lacks one, ask the epic rather than inferring it. Every brief, including user-originated work, requires an explicit owning EPIC.
-- **No intent file** — compose the prompt from the issue directly. This is a first-class path: a user-originated spawn, a conductor-initiated respawn, routine maintenance. Obtain an explicit owning EPIC and its scope/readiness brief before dispatch. See `/pc-conductor`'s "Intake and planning".
+  An epic-written brief carries an `EPIC:` reference near the top; the conductor counts live slots by it. Match it tolerantly — `grep -iE '^\**EPIC\**:? *#?([0-9]+)'` — since both `EPIC: 369` and `**EPIC**: #369` are in use. If an epic brief lacks one, ask the epic rather than inferring it. Standalone Issue briefs need no EPIC.
+- **No intent file** — compose the prompt from the issue directly. This is a first-class path: a user-originated spawn, a conductor-initiated respawn, routine maintenance. Read verified parent membership; use its EPIC scope/readiness brief when present, otherwise dispatch the standalone Issue. See `/pc-conductor`'s "Intake and planning".
 
 If the intent conflicts with current fleet state, resolve it from measured state and say so in your report — a contended host or a taken clone is a placement decision. Escalate only if either resolution risks an actual problem (see the shared workflow's **Multi-EPIC registration and scheduling** contract).
 
@@ -223,7 +223,7 @@ Re-read every issue-specific *sentence* when reusing a previous prompt, not just
 
 Fill in two lines in COMPLETION every time:
 
-- **`EPIC:`** — required owning EPIC, with the brief and semantic constraints.
+- **`EPIC:`** — owning EPIC when applicable, with the brief and semantic constraints; omit for standalone Issues.
 - **Approval protocol** — follow the shared workflow's Scheduling and approval contract; the worker reports a clean PR to the conductor and retains its state for landing-agent handoff.
 
 For an EPIC-reserved artifact, report additions and alterations to the conductor as evidence for EPIC confirmation under the shared approval contract. Compare with a three-dot diff to isolate the branch’s edits:
@@ -413,10 +413,10 @@ COMPLETION: When done (or when lead says completed):
    log of how it got there.
 5. When quality checks pass, report the PR URL, full current head SHA,
    completion evaluation, check outcomes and unresolved findings to the conductor.
-   Keep phase quality-gate and stop_reason awaiting-human-merge; retain status/worklog.
+   Keep phase quality-gate and stop_reason awaiting-landing; retain status/worklog.
    Invoke issue-lead for this stopping point; if it requests correction, continue.
-   The conductor obtains EPIC confirmation and explicit user PR/SHA approval
-   under the shared Scheduling and approval contract. Do not land this PR yourself.
+   The conductor obtains applicable current-head EPIC professional confirmation and dispatches Landing automatically.
+   Explicit human confirmation applies only to closing the whole EPIC. Do not land this PR yourself.
    Report independent follow-up or successor work with /pc-conductor-handoff.
    On resumption, revalidate current head and record a live phase before edits.
    Print the final recap and ISSUE WORK COMPLETE as the stopping-point report,

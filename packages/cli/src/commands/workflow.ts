@@ -14,7 +14,7 @@ import {
 } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
-import { driveEpicIssue, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
+import { driveEpic, driveEpicIssue, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
@@ -69,17 +69,28 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     conductor
       .command('recover')
-      .description(
-        'Reconcile durable Runner receipts and collect original results; retain all ownership',
-      ),
+      .description('Reconcile original attempts and automatically continue persisted workflows'),
   ).action(async (options: Options) => {
     try {
+      const config = loadFleetConfig(options.config);
+      const runner = new CodexRunner();
       output(
-        await recoverFleet(
-          loadFleetConfig(options.config),
-          new CodexRunner(),
-          new CodexShortRunner(),
-        ),
+        await recoverFleet(config, runner, new CodexShortRunner(), async (work) => {
+          const issue = readIssue(config.project, work.number);
+          if (issue.repository !== work.repository)
+            throw new Error('Recovered repository differs from live Issue');
+          if (work.epic) return finishEpic(config, runner, await driveEpic(config, runner, issue));
+          const task = await driveIssue(config, runner, issue);
+          return landDelivery(
+            config,
+            runner,
+            new GitHubPullRequests(
+              existsSync(task.checkout) ? task.checkout : config.project,
+              work.repository,
+            ),
+            { repository: work.repository, issue: work.number, checkout: task.checkout },
+          );
+        }),
         opts.human(),
       );
     } catch (error) {

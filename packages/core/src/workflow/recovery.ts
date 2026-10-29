@@ -19,9 +19,11 @@ export async function recoverFleet(
   config: FleetConfig,
   runner: RoundRunner & { collectable?(attempt: IssueTurn): boolean },
   shortRunner?: ShortRunner,
+  resume?: (work: { repository: string; number: number; epic: boolean }) => Promise<unknown>,
 ) {
   const root = stateDirectory(config, '.runtime');
   const outcomes: { file: string; attempt: string; status: string; error?: string }[] = [];
+  const workflows = new Map<string, { repository: string; number: number; epic: boolean }>();
   async function visit(directory: string): Promise<void> {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) throw new Error('Recovery refuses symlink state');
@@ -42,6 +44,14 @@ export async function recoverFleet(
       )
         continue;
       const record = JSON.parse(readFileSync(file, 'utf8'));
+      if (record.repository && (entry.name === 'task.json' || entry.name === 'epic.json')) {
+        const work = {
+          repository: record.repository as string,
+          number: Number(record.issue ?? record.epic),
+          epic: entry.name === 'epic.json',
+        };
+        workflows.set(`${work.repository}:${work.number}:${work.epic}`, work);
+      }
       const attempts: IssueTurn[] = Array.isArray(record.turns)
         ? record.turns
         : record.id && record.directory
@@ -57,23 +67,10 @@ export async function recoverFleet(
           throw new Error('Attempt outside configured state');
         if (a.result !== undefined) continue;
         // Startup evidence may have arrived after the launching driver was interrupted.
-        const events = join(a.directory, 'events.jsonl');
-        if (!a.conversation && existsSync(events)) {
-          const lines = readFileSync(events, 'utf8')
-            .split('\n')
-            .flatMap((line) => {
-              try {
-                return [JSON.parse(line)];
-              } catch {
-                return [];
-              }
-            });
-          const thread = lines.find((e) => e.type === 'thread.started' && e.thread_id);
-          if (thread && lines.some((e) => e.type === 'turn.started')) {
-            a.conversation = thread.thread_id;
-            a.evidence = 'Recovered thread.started and turn.started from durable Runner events';
-            a.address = a.address ?? `tmux:pc-${a.fleet.slice(0, 12)}-${a.id}`;
-            a.status = 'running';
+        if (!a.conversation && runner.recoverReceipt) {
+          const receipt = await runner.recoverReceipt(a);
+          if (receipt) {
+            Object.assign(a, receipt, { status: 'running' });
             changed = true;
           }
         }
@@ -114,9 +111,22 @@ export async function recoverFleet(
     for (const task of queue.list()) await queue.reconcile(task.id, shortRunner);
   }
   await visit(root);
+  const continuations = [];
+  if (resume && !outcomes.some((o) => o.status === 'unknown' || o.status === 'retained')) {
+    for (const work of workflows.values()) {
+      try {
+        continuations.push({ ...work, result: await resume(work) });
+      } catch (error) {
+        continuations.push({ ...work, error: String(error) });
+      }
+    }
+  }
   return {
+    continuations,
     outcomes,
     ownership: 'retained',
-    next: 'Resume original Issue or EPIC workflow; no execution was relaunched',
+    next: resume
+      ? 'Original workflows continued; inspect continuation results'
+      : 'Reconciliation only; supply a workflow continuation handler',
   };
 }
