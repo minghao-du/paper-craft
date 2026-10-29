@@ -14,6 +14,17 @@ role boundaries, durable evidence and the commit-bound user approval gate.
 Use this skill at cold start and every reconciliation to inventory clones, tmux and
 hosts. Topic decomposition, readiness and confirmation belong to `/pc-epic`.
 
+## Managed startup
+
+Launch the Fleet Conductor with `pc workflow conductor start --config <authoritative-config> --prompt-file <brief>`.
+The brief supplies the Conductor instructions; the launcher uses installed Codex and tmux.
+`pc workflow conductor status --config <authoritative-config>` reads its persisted identity.
+Only Runner conversation and turn acknowledgements yield startup success (exit 0).
+Exit 2 reports failure or unknown; retain the brief, attempt and occupancy under the configured
+clone root's `.runtime/<fleet-id>/` and inspect the recorded logs. Do not remove the lock
+or start a replacement merely because a pane disappeared. Status is durable startup evidence,
+not a live execution probe. The automatic dispatch loop is supplied by the subsequent workflow stages.
+
 ## Intake and planning
 
 1. Load the authoritative config and register this conductor's verified runtime address
