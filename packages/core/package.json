@@ -121,6 +121,11 @@
       "paper-craft-source": "./src/workflow/subagents.ts",
       "types": "./dist/workflow/subagents.d.ts",
       "default": "./dist/workflow/subagents.js"
+    },
+    "./workflow/epic-driver": {
+      "paper-craft-source": "./src/workflow/epic-driver.ts",
+      "types": "./dist/workflow/epic-driver.d.ts",
+      "default": "./dist/workflow/epic-driver.js"
     }
   },
   "files": [

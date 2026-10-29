@@ -18,6 +18,18 @@ finish every coordination turn by arming its native wake-up, or report manual co
 For fleet state (which clones are free, what's running where, tmux/host occupancy), ask `/pc-conductor` instead — this skill does not scan clones or tmux itself.
 It does *consume* a conductor-supplied occupancy table when the Step 2 handshake succeeds: Step 2 uses it to scope Group A's re-verification, and Step 6 uses it as a readiness filter.
 
+
+## Managed automatic planning
+
+`pc workflow conductor issue <number> --config /path/to/project/.epic-config.json`
+reads the Issue parent and starts the matching repository-scoped EPIC Agent in tmux.
+Return the requested JSON plan with original goal, constraints, task scopes, Worker briefs,
+dependencies and readiness. Keep existing tasks and delivery evidence in revised plans.
+Conductor allocates fresh configured worktrees and runs up to two independent ready
+Workers concurrently; it returns attributed results for your next professional assessment.
+Blocked dependencies or unknown checkout ownership hold dispatch with durable evidence.
+A delivered plan is stage delivery, not acceptance or permission to close the EPIC.
+
 ## One EPIC at a time
 
 This skill is scoped to exactly one EPIC per session. `/pc-epic 369` means EPIC #369 and nothing else. If the invocation does not name an EPIC number, **ask which one before doing anything else** — do not infer it from the repo, the most recently updated EPIC, or what the fleet is running.

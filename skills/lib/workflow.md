@@ -129,9 +129,9 @@ scope, task order, dependencies, readiness and professional judgments. Workers o
 implementation and task-local implementation, diagnosis, review and issue-lead helpers.
 Independent issues and successor workers return to the conductor as requests.
 
-Before dispatch, record an explicit owning EPIC and its brief for every task, including
-direct user requests. Ask the user to assign an owner when the assignment requires
-professional judgment. A missing owner holds dispatch while other ready work proceeds.
+Resolve the Issue repository and actual parent before dispatch. Standalone Issues need
+no EPIC. For an EPIC task, retain its attributed goal, constraints, dependency/readiness
+plan and Worker brief. Ask only about ambiguity that configuration and GitHub cannot resolve.
 The conductor routes scope and semantic conflicts to the EPIC; it decides resource
 placement from measured fleet facts. Relay expert findings with attribution and evidence
 through the conductor, which asks the user about unresolved substantive decisions.
