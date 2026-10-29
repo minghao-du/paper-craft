@@ -25,7 +25,7 @@ Skills remain English-only. See the [skill directory](skills/) for the complete 
 
 - [Principles](CONSTITUTION.md), [architecture](DESIGN.md) and [glossary](GLOSSARY.md)
 - [Local MCP setup](docs/guides/mcp.md)
-- [Bilingual documentation maintenance](docs/guides/documentation.md)
+- [Bilingual documentation maintenance](docs/guides/documentation.md#navigation)
 
 ## Status and license
 

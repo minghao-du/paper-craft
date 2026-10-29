@@ -25,7 +25,7 @@ paper-craft 将研究想法与实现连接起来：手稿会话将发现转化�
 
 - [原则](CONSTITUTION.md)、[架构](DESIGN.md)和[术语表](GLOSSARY.md)
 - [本地 MCP 配置](docs/guides/mcp.md)
-- [双语文档维护](docs/guides/documentation.zh.md)
+- [双语文档维护](docs/guides/documentation.zh.md#navigation)
 
 ## 状态与许可证
 

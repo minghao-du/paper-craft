@@ -33,3 +33,9 @@ Sections correspond by heading occurrence order. Keys use English heading-slug p
 Both checking and recording reject differences in heading depth/order, list kinds, ordered-list starts and item counts, and table dimensions. Code blocks must preserve their kind, fence metadata and bodies byte for byte, including comments and sample output. Translate explanations outside code fences. Inserting or reordering duplicate headings can change multiple record keys; manually assigned section IDs are not used.
 
 The record format follows DeepSeek Harness's inspected revision `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`. Its MIT license was reviewed; this tooling is independently implemented. Records are canonical ordered YAML mappings with separate `en` and `zh` hashes. Values need not match or differ.
+
+<a id="navigation"></a>
+
+## Navigation
+
+Place a reciprocal language link immediately after the main heading. Links into active pairs select the reader's language and corresponding destination, preserving query strings and fragments; excluded or backlog destinations keep their authored paths. Local destinations must exist. When a section is linked, both versions provide the same explicit English anchor, for example `<a id="navigation"></a>`, before their translated headings. This shared-anchor convention is a paper-craft adaptation; upstream preserves fragments but does not map translated headings automatically. Update inbound references when renaming or deleting a pair. Recording rejects invalid navigation before writing confirmations.

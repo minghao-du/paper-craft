@@ -8,7 +8,15 @@ const script = resolve('scripts/docs-i18n.ts');
 const tsx = resolve('node_modules/tsx/dist/cli.mjs');
 test('reviewed pairs detect stale content, preserve unrelated sections and only record named pairs', () => {
   const root = mkdtempSync(join(tmpdir(), 'pc-docs-'));
-  const put = (p: string, s: string) => writeFileSync(join(root, p), s);
+  const put = (p: string, s: string) => {
+    const counterpart = p.endsWith('.zh.md')
+      ? p.replace(/\.zh\.md$/, '.md')
+      : p.replace(/\.md$/, '.zh.md');
+    writeFileSync(
+      join(root, p),
+      p.endsWith('.md') ? s.replace(/^(# [^\n]+)\n/, `$1\n\n[Language](${counterpart})\n`) : s,
+    );
+  };
   const run = (...args: string[]) =>
     spawnSync(process.execPath, [tsx, script, ...args], {
       cwd: root,
@@ -51,7 +59,15 @@ test('reviewed pairs detect stale content, preserve unrelated sections and only 
 
 test('adoption backlog permits only existing unpaired documents and orphan artifacts fail', () => {
   const root = mkdtempSync(join(tmpdir(), 'pc-docs-'));
-  const put = (p: string, s: string) => writeFileSync(join(root, p), s);
+  const put = (p: string, s: string) => {
+    const counterpart = p.endsWith('.zh.md')
+      ? p.replace(/\.zh\.md$/, '.md')
+      : p.replace(/\.md$/, '.zh.md');
+    writeFileSync(
+      join(root, p),
+      p.endsWith('.md') ? s.replace(/^(# [^\n]+)\n/, `$1\n\n[Language](${counterpart})\n`) : s,
+    );
+  };
   const git = (...args: string[]) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
   const run = (...args: string[]) =>
     spawnSync(process.execPath, [tsx, script, ...args], {
