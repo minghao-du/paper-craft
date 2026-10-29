@@ -45,3 +45,48 @@ replacing the placeholder with the same absolute path:
 An [optional entry template](research-state-template.md) is a starting point;
 merge or remove sections freely. Existing projects adopt this convention on demand;
 this guide does not move their materials or retire untransferred workflow capabilities.
+
+## Integrating findings and handing over
+
+Designate one coordinating session as the sole integrator of shared scientific
+state. Same-machine workers read the fixed entry; remote workers receive the
+question, relevant context and evidence pointers from the coordinator. Workers
+return findings, evidence locations, limitations and suggested next steps, rather
+than maintaining another authoritative state. At handover explicitly name the
+successor, transfer pending findings and unresolved evidence gaps, and relinquish
+integration before the successor takes over. Re-reading before writing helps
+merge edits but does not replace this responsibility; no lock service is required.
+
+For an important experiment, keep its question, data identifiers, necessary
+parameters and commands, key numbers and figure pointers, interpretation, scope
+and unresolved questions together in its authoritative analysis. For findings
+that affect direction or manuscript claims, distinguish the specific run: record
+code version and result-relevant uncommitted changes, data version, configuration
+and output locations as needed. A replaceable `latest` path alone is insufficient;
+use a run identifier and evidence that still distinguishes that run. Remote
+locations include host and path. Raw outputs stay where produced; checksums for
+every file are not required.
+
+The coordinator integrates returned evidence as follows:
+
+1. Inspect the evidence supporting the claim, distinguishing previously verified
+   findings from evidence checked this time. Report inaccessible evidence and
+   broken links, with their effect on what can be established. Inaccessibility
+   alone neither disproves a past finding nor confirms it anew.
+2. When text conflicts with data or runs disagree, check conditions and
+   comparability before revising the interpretation. Preserve unresolved
+   disagreements. Promote or revise conclusions on inspectable evidence within
+   its stated scope; no universal human approval gate applies. Insufficient
+   evidence remains an observation, interpretation or open question.
+3. Update the authoritative detailed analysis, related current analyses, entry
+   summaries and necessary references, including the route and next steps.
+   Mark affected content pending review when it cannot yet be reassessed;
+   this is an editing responsibility, not an automatic dependency system.
+4. Retain negative results, rejected explanations and method limits when useful
+   to future judgment. Remove valueless duplication; keep a brief reason for
+   important changes of direction. Ordinary execution errors and live task
+   status belong in the original run or task system.
+
+For cross-repository updates or remote result retrieval, use
+[`/pc-ms-poll`](../../skills/pc-ms-poll/SKILL.md). Despite its legacy name, it
+works before a manuscript exists and submits evidence to this same coordinator.
