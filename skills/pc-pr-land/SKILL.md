@@ -10,6 +10,13 @@ The conductor dispatch names one phase: `merge` or `cleanup`, the repository/PR,
 full evaluated head, checkout, authoritative config and durable evidence paths.
 Workers remain available for remediation and final records while releasing checkout ownership.
 
+For delivered managed tasks, `pc workflow conductor issue <number> --config <file>`
+automatically enters the PR check/repair/merge loop. To resume Landing directly, use
+`pc workflow conductor land <issue> --config <file>`. For EPIC tasks, supply
+`--confirmation-file <file>` with professional `{epic, head, evidence}` JSON.
+This confirms scope at the live head; user confirmation is reserved for closing the EPIC.
+The driver retains PR results and original execution receipts under configured runtime state.
+
 ## Merge phase
 
 1. **Accept ownership.** Read the conductor's transfer record and worker release.
@@ -18,7 +25,7 @@ Workers remain available for remediation and final records while releasing check
    Record acceptance in the coordination ledger and worker worklog.
    This step ends with one verified owner of the checkout.
 
-2. **Verify the authorized PR.** Read live GitHub state and the recorded user answer,
+2. **Verify the evaluated PR.** Read live GitHub state,
    evaluated SHA, applicable completion/review outcomes and every required EPIC confirmation.
    Use `gh pr view <N> --json url,state,headRefOid,baseRefName,closingIssuesReferences`.
    Match repository, PR, local HEAD and live head to that SHA. Inspect `git status --porcelain`.
@@ -32,8 +39,7 @@ Workers remain available for remediation and final records while releasing check
    (including any rebase state), and release ownership before worker remediation.
    If a successful rebase changes HEAD, push with `--force-with-lease`, report the new
    SHA and release. The conductor repeats applicable checks, EPIC confirmations and
-   user approval before another merge dispatch. A successful rebase is not permission
-   to continue merging under the previous approval.
+   professional confirmation before another merge dispatch.
    With unchanged HEAD, verify current-base ancestry and required checks using
    `gh pr checks <N> --required`; inspect installed `gh pr checks --help` for supported
    output fields. Pending checks remain pending; failures return to the conductor.
@@ -41,20 +47,20 @@ Workers remain available for remediation and final records while releasing check
 
 4. **Merge the evaluated head.** Check GitHub's `closingIssuesReferences` against the
    intended issue set; correct a defective PR body through the worker. Re-read live
-   head and fetch base immediately before merging. For the recorded approved SHA:
+   head and fetch base immediately before merging. For the recorded evaluated SHA:
 
    ```sh
-   test "$(git rev-parse HEAD)" = "<approved-sha>" &&
-   test "$(gh pr view <N> --json headRefOid -q .headRefOid)" = "<approved-sha>" &&
+   test "$(git rev-parse HEAD)" = "<evaluated-sha>" &&
+   test "$(gh pr view <N> --json headRefOid -q .headRefOid)" = "<evaluated-sha>" &&
    git fetch -q origin <base> &&
-   git merge-base --is-ancestor origin/<base> <approved-sha> &&
-   gh pr merge <N> --squash --match-head-commit <approved-sha> --body "closes #<issue>"
+   git merge-base --is-ancestor origin/<base> <evaluated-sha> &&
+   gh pr merge <N> --squash --match-head-commit <evaluated-sha> --body "closes #<issue>"
    ```
 
    Use an explicit squash body containing only intended closing references (or `--body ""`).
    The match-head guard rejects a moved head; it does not make the separate base check
-   atomic. A moved head returns to checks, confirmation and user approval. A moved base
-   requires current-base revalidation and, if rebase changes head, fresh approval.
+   atomic. A moved head returns to checks and applicable EPIC confirmation. A moved base
+   requires current-base revalidation and, if rebase changes head, fresh quality and professional confirmation.
    Never replace a failed guard with an unguarded merge.
 
 5. **Report merge separately.** Verify `gh pr view <N> --json state,mergedAt,mergeCommit`.
@@ -67,7 +73,7 @@ Workers remain available for remediation and final records while releasing check
 ## Cleanup phase
 
 Read this phase only after the conductor verifies merge success, final worker records
-and a new worker release. Approval to merge alone does not dispatch cleanup.
+and a new worker release. A merge result alone does not dispatch cleanup.
 
 1. **Verify prerequisites.** Accept exclusive checkout ownership using the shared transfer
    contract. Verify merged PR, all linked issues closed, terminal issue-lead comment and

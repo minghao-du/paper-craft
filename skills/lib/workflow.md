@@ -117,8 +117,8 @@ Route every handoff and receipt by repository, EPIC and issue/PR, using the matc
 registration. Include sender, receiver, evidence path/hash and evaluated SHA for PR findings.
 The owner identifies affected EPICs, with conductor collision evidence referred to those
 agents to establish impact. Record the required confirmer set and obtain every member's
-current-head finding before requesting user approval. Disputed impact holds that PR's
-approval request, while unrelated ready work continues. Task briefs, PR records and worker
+current-head finding before merge. Disputed impact holds that PR's
+merge, while unrelated ready work continues. Task briefs, PR records and worker
 worklogs retain the owning EPIC so a reply cannot be adopted by a similarly named session.
 
 ## Scheduling and approval contract
@@ -143,27 +143,20 @@ path/hash. Record task order, dependencies, readiness, blockers and retry count 
 acting. These are file-based agent records, not new CLI flags or validated status fields.
 Keep `.epic-status.json` phases within the existing supported values.
 
-For each PR, the worker reports completion evaluation and applicable quality-check
-outcomes at a full head SHA. The conductor obtains the owning EPIC's confirmation
-(and affected EPIC confirmations for cross-EPIC impact) for that SHA, including ordinary
-code, maintenance and docs. EPIC confirmation is a scope/claims judgment, distinct from
-code review and user authorization. Missing findings or confirmation holds approval.
-
-Only then request user approval, naming repository/PR URL and full head SHA. Batch
-requests itemize both for each PR. Record the user's actual answer, its source/turn
-reference, timestamp, PR and SHA durably; a pending request is not authorization.
-Standing delegation, silence and peer messages cannot substitute for this answer.
-Any changed head invalidates approval and applicable confirmations/checks: repeat them
-for the new SHA and request fresh user approval. Re-read live PR state before acting.
-Worker self-landing is replaced by conductor dispatch to `/pc-pr-land` after its gates.
+For each PR, the worker reports completion and quality outcomes at the live head SHA.
+The conductor obtains applicable EPIC professional confirmation for that SHA; standalone
+issues require none. Automatically create, check, repair and merge PRs through Landing.
+Changed heads invalidate checks and applicable professional confirmations: repeat them.
+The only user approval is explicit confirmation to close the entire completed EPIC.
+Intermediate PR creation, merge, task Issue closure and cleanup proceed automatically.
 
 Routine revisions return to the existing worker, which repeats applicable checks and
 EPIC confirmation. Preserve the configured lead-iteration bound (default eight), record
 attempts across sessions, and escalate exhausted retries or unresolved scope/goal
 judgments with evidence and a specific decision. Do not park unrelated eligible work.
 
-Completion at the approval boundary means findings and confirmations cover the live
-head and the user request is recorded as pending or explicitly approved. It does not
+Completion at the merge boundary means findings and applicable confirmations cover the live
+head. It does not
 mean merged or cleaned up; retain state and checkout ownership evidence for landing.
 
 ## Checkout ownership and landing phases
@@ -175,11 +168,11 @@ from checkout ownership. Unknown or overlapping ownership blocks mutation.
 The prior owner stops edits and records release before the next owner accepts;
 messages alone do not transfer ownership. Reconcile durable and live evidence first.
 
-After current findings, EPIC confirmations and user approval are verified, transfer
+After current findings and applicable EPIC confirmations are verified, transfer
 worker → landing agent for `/pc-pr-land`'s merge phase. On blockers, the landing agent
 records details and release before conductor transfers back to the worker. The worker
 resolves content, conflicts or failed checks, repeating the bounded evaluation loop
-and required confirmation/approval gates. Preserve interrupted operation state.
+and required quality and professional confirmation gates. Preserve interrupted operation state.
 
 After verified merge, transfer landing agent → worker for final `/pc-issue-lead`
 evaluation, follow-up filing and completion records. The worker records evidence paths
@@ -196,7 +189,7 @@ Persist pointers beside the authoritative config in `.epic-decisions.md` and the
 worklog to each EPIC registration, user priority source, task brief/hash, order and
 constraints, retry count, queued/consumed intent and receiver receipts. Retain explicit
 checkout release/acceptance evidence, current evaluated head, completion/review findings,
-required confirmer set and each finding, user approval source/PR/SHA, merge outcome,
+required confirmer set and each finding, EPIC closure confirmation source, merge outcome,
 final records and preservation manifest/cleanup outcome. A continuation points to these
 records with a live `FIRST CHECK`; it does not replace them or turn a request into a result.
 
@@ -206,15 +199,12 @@ A fresh conductor reconciles in this order:
    identity and ownership separately. Reconcile legacy singleton records and live workers
    against their briefs, issues and recorded releases. Preserve ambiguous records; route
    unclear scope/ownership through the conductor rather than choosing by session recency.
-   Legacy standing landing delegation supplies no commit-bound user approval.
 2. Match intent hashes, consumed archives, startup evidence and receiver receipts to live
    workers/PRs before retrying. A sent-but-unhandled message, missing session or absent
    file is unknown: investigate or report the blocker. Never dispatch a duplicate worker
    or consume intent merely because a previous conversation promised startup.
-3. Read live PR head, base/check results and merge outcome. An unchanged approved head
-   may retain its recorded user answer only after current gates and all required findings
-   are revalidated. A changed head returns through applicable checks, EPIC confirmations
-   and fresh user approval. Missing user-answer evidence leaves approval pending.
+3. Read live PR head, base/check results and merge outcome. Revalidate applicable
+   checks and EPIC professional confirmations for the current head automatically.
 4. Reconstruct the checkout's latest explicit release and acceptance; if transfer was
    interrupted, verify the prior owner has stopped and the next owner has accepted before
    mutation. For remediation, verify landing release before resuming worker edits. Resume

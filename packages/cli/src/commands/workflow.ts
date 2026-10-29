@@ -10,6 +10,8 @@ import {
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
+import { drivePullRequest, GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
+import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
 import { readFileSync } from 'node:fs';
 import { output } from '../utils/output.js';
 
@@ -95,8 +97,20 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   ).action(async (number: string, options: Options) => {
     try {
       const config = loadFleetConfig(options.config);
+      const issue = readIssue(config.project, Number(number));
+      const runner = new CodexRunner();
+      const task = await driveIssue(config, runner, issue);
       output(
-        await driveIssue(config, new CodexRunner(), readIssue(config.project, Number(number))),
+        await drivePullRequest(
+          config,
+          runner,
+          new GitHubPullRequests(task.checkout, issue.repository),
+          {
+            repository: issue.repository,
+            issue: issue.number,
+            checkout: task.checkout,
+          },
+        ),
         opts.human(),
       );
     } catch (error) {
@@ -105,6 +119,45 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       });
     }
   });
+  configured(
+    conductor
+      .command('land <issue>')
+      .description('Check, repair and merge delivered PR stages automatically'),
+  )
+    .option(
+      '--confirmation-file <file>',
+      'EPIC professional confirmation JSON: epic, head, evidence',
+    )
+    .action(async (number: string, options: Options & { confirmationFile?: string }) => {
+      try {
+        const config = loadFleetConfig(options.config);
+        const issue = readIssue(config.project, Number(number));
+        const task = inspectIssueRun(config, issue.repository, issue.number);
+        if (!task || task.status !== 'done')
+          throw new Error('Expected delivered Issue stages before landing');
+        output(
+          await drivePullRequest(
+            config,
+            new CodexRunner(),
+            new GitHubPullRequests(task.checkout, issue.repository),
+            {
+              repository: issue.repository,
+              issue: issue.number,
+              checkout: task.checkout,
+              epic: issue.parent,
+              confirmation: options.confirmationFile
+                ? JSON.parse(readFileSync(options.confirmationFile, 'utf8'))
+                : undefined,
+            },
+          ),
+          opts.human(),
+        );
+      } catch (error) {
+        run(() => {
+          throw error;
+        });
+      }
+    });
   const intent = workflow.command('intent').description('Queue, find and consume task briefs');
   configured(intent.command('find <issue>').description('Find queued intent; exit 1 when absent'))
     .option('--path', 'Print only the path for shell assignment')
