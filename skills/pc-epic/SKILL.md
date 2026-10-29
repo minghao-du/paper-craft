@@ -33,8 +33,8 @@ The epic session does strategy, not fleet ops:
 - Composes and prunes EPIC bodies
 - Flags dependency-direction conflicts and file-overlap collisions between open issues, before either gets spawned — by the time branches exist the cost of a collision is already sunk
 - Decides an issue is ready and drafts the spawn brief, but does not spawn it — that goes to `/pc-conductor` as intent, not action
-- Owns the user-facing topic channel: this is where scientific reasoning gets presented and where scientific decisions get made.
-  `/pc-conductor` narrates fleet state only and points here for substance (see that skill's "The fleet/topic line"), so expect a semantic question raised in the conductor's window to arrive here rather than be answered there.
+- Returns attributed planning, findings and substantive questions through the conductor,
+  the primary user conversation. Preserve supporting evidence and professional judgment.
 - Never writes code, creates branches, or spawns tmux windows for numbered issues itself
 
 ## Conventions
@@ -48,7 +48,7 @@ Tmux window naming, reboot recovery, and the live-worker `SendMessage` mechanics
 
 ### Message economy
 
-Cross-session messages are nudges, not transcripts: lead with the decision or the ask, give the reasoning the receiver cannot reconstruct, and cite the EPIC body, the issue, or `.epic-decisions.md` for the rest instead of restating it. This never licenses a bare pointer where Step 7 requires substance: a drafted worker correction states the change itself, not "re-read the EPIC body." Send raw measurements rather than conclusions, and keep corrections to one line in either direction. See `/pc-conductor`'s "Message economy" section; it applies symmetrically here.
+Cross-session messages are nudges, not transcripts: lead with the decision or the ask, give the reasoning the receiver cannot reconstruct, and cite the EPIC body, the issue, or `.epic-decisions.md` for the rest instead of restating it. This never licenses a bare pointer where Step 7 requires substance: a drafted worker correction states the change itself, not "re-read the EPIC body." Send raw measurements rather than conclusions, and keep corrections to one line in either direction.
 
 ### The epic's own claims
 
@@ -56,7 +56,7 @@ Cross-session messages are nudges, not transcripts: lead with the decision or th
 - **Run a skeptic subagent on your own artifacts**: before claiming a question answered, and before filing an issue you wrote yourself.
 - **Before repeating who found something**, check the attribution against the log or the PR; it is the part of a claim nobody tests.
 - **Before escalating a question to the user, ask whether its answers lead to different actions.** If they do not, do not escalate. If the options share a first step within the authorized scope, take that step now and ask only about the point where the actions diverge; keep work that depends on the answer pending.
-  Put a question for the user as one line in your report, page them per `/pc-conductor`'s "Paging the user", park only that item, and keep working the rest. Use the current harness's supported user-input mechanism and continue independent work while waiting.
+  Return a specific question with evidence to the conductor, park only the dependent item, and keep independent planning moving.
 
 ## Configuration
 
@@ -88,9 +88,7 @@ git ls-files | /usr/bin/grep -E '(CLAUDE|AGENTS)\.md$'
 
 Use `git ls-files`, not `find`: vendored copies and stale nested clones also contain files named `CLAUDE.md`. Before claiming a measured number is new, grep the experiment's own README for it.
 
-**Self-register for completion pushes**: resolve `CLONE_ROOT` and write this session's own `ListAgents` name (the "This session is ..." row) as the sole line of `$CLONE_ROOT/.epic-session` — this is how the conductor finds the epic to push a `needs-human`/`completed` notification without guessing among `ListAgents` rows.
-See `/pc-conductor`'s Conventions section ("Completion pushes").
-Re-run this write every time `/pc-epic` starts a fresh cycle, since the address can drift mid-session.
+**Register this EPIC** using the shared workflow's **Multi-EPIC registration and scheduling** contract. Verify the assigned EPIC and refresh only `$CLONE_ROOT/.epic-sessions/<N>.json`; preserve other EPICs' records. Reconcile its active/paused state, pending findings and conductor decisions before planning. Finish with a verified registration or a specific identity/delivery blocker.
 
 ### Step 2: Fan out scanners
 
@@ -151,7 +149,7 @@ Brief:
 
 **Group B does not cover the backlog.** `--limit 20` reaches back only as far as the last 20 touched issues, a couple of days on an active repo. Coverage is Group A's job plus a periodic audit for issues no EPIC references (see `matsengrp/phyz`#2093); Group B only answers "what moved lately".
 
-**Never ask the user a question you could answer yourself, and never ask a sequencing or staging one at all.** Issue/PR status is a `gh` query. Order, placement, and timing are for this session and the conductor to settle; `/pc-conductor`'s "Arbitration" section applies symmetrically here — escalate only what it names or a genuinely scientific question about whether work is worth doing.
+**Resolve observable status yourself.** This EPIC supplies internal order and constraints; the conductor schedules shared resources under the user's priorities. Return unresolved substantive judgments and proposed priority changes through the conductor under the shared scheduling contract.
 
 ### Step 3: Reconcile
 
@@ -252,6 +250,7 @@ This directory lives outside every clone's git and is the handoff point to `/pc-
 Without verified startup, report prepared and keep intent queued.
 
 **What a brief contains:**
+- **Scheduling constraints:** internal order, dependencies, readiness/holds and resource needs; the conductor combines these with user priorities under the shared scheduling contract.
 - **Only what the issue does not say.** Point at the issue's scope sections rather than restating them — open the issue before writing a brief, every time.
 - **Its own issue's footprint, and no parallel-safety verdict**: "this issue touches A, B, C; ask the conductor whether that intersects live work."
 - **Collision constraints in 4b's vocabulary** ("cannot run concurrently with `iN`, because both edit X"). Never another issue's gate, hold, or queue status.
@@ -268,8 +267,7 @@ Without verified startup, report prepared and keep intent queued.
   self-registered address. Report `queued; conductor handling unconfirmed` until its receipt
   or verified startup/consumption is observed. On wake, read the receipt and handle any topic
   blocker; acknowledgement alone needs no reply. Follow the shared wake-up contract before yielding.
-- **No conductor addressable**: say so, and offer both real options — start one now (`/pc-conductor` in a separate tmux window), or, for a single small job, run `/pc-conductor-spawn` yourself from this session for just this intent file.
-  The second option is a deliberate, user-confirmed exception to "don't spawn yourself" — say plainly that it mixes the two roles for this one spawn, and let the user pick.
+- **No conductor addressable**: retain queued intent and report delivery pending with the conductor continuation instruction. Resume through the conductor after its registration is verified.
 
 On subsequent wakes, retain the bound EPIC number and reconcile conductor receipts,
 worker/PR transitions and the existing dashboard before filing follow-up issues. A timer
@@ -297,15 +295,15 @@ A worker correction is often more time-sensitive than spawn intent. If the condu
 
 **Editing an issue a live worker holds is a Step 7 correction.** The worker read the issue once at spawn and will not re-read it, so the body edit is the record and the relayed delta is the delivery. Before editing an issue, ask the conductor whether a slot is live on it. If a worker reports something you already fixed, the relay did not happen: tell it, and check what else failed to reach it.
 
-### Step 8: Approving a merge, holding, or discharging a gate — post it to the PR
+### Step 8: Confirm the PR head for the conductor
 
-When you approve a worker's merge, place a hold, or discharge a gate you set, post a `🤖`-prefixed comment on the PR as well as messaging the worker. Not `gh pr review --approve` — you review claims, not code.
-
-1. **Post at decision time, not after the merge.** A comment timestamped after the merge cannot show the approval preceded it; label a retroactive one as a record.
-2. **Say what was approved or held and on what grounds**: the commit, what changed, what you checked. For a hold: `🤖 Hold (claims) at <sha>: <condition>`, plus what you have already ruled on.
-3. **Say explicitly that it is not a code review.**
-
-For any ruling a future reader will need, prefer the PR (body or comment) over a slot's own files, which `/pc-pr-land` deletes at land time.
+For every owned PR and every PR affecting this EPIC, including maintenance and docs, inspect scope and claims after
+applicable worker completion and review findings. Post a `🤖`-prefixed PR comment
+identifying this EPIC, full head SHA, judgment, evidence and any required revision.
+State that this is EPIC confirmation, distinct from code review and user merge approval.
+Notify the conductor with the comment pointer; it collects confirmations and asks the
+user. A changed head requires renewed applicable confirmation under the shared contract.
+Done when the current-head confirmation or specific blocker is durable and routed.
 
 ## EPIC body update pattern
 
@@ -317,10 +315,10 @@ These files are gitignored via the `ISSUE-*.md` pattern.
 
 ```bash
 # Pull current body and record the timestamp
-gh issue view <number> --json body,updatedAt > /tmp/epic-pull.json
-jq -r .body /tmp/epic-pull.json > ISSUE-EPIC-<N>.md
-PULLED_AT=$(jq -r .updatedAt /tmp/epic-pull.json)
-rm -f /tmp/epic-pull.json
+gh issue view <number> --json body,updatedAt > /tmp/epic-<N>-pull.json
+jq -r .body /tmp/epic-<N>-pull.json > ISSUE-EPIC-<N>.md
+PULLED_AT=$(jq -r .updatedAt /tmp/epic-<N>-pull.json)
+rm -f /tmp/epic-<N>-pull.json
 
 # Edit the file (add findings, check boxes, cut finished sections)
 # ...

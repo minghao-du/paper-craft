@@ -5,13 +5,15 @@ The continuation is a navigation aid; issues, PRs and recorded work remain autho
 
 ## Role and location
 
-Use the explicitly assigned role: `ms`, `spawn`, `epic`, `conductor` or `generic`.
+Use the explicitly assigned role: `ms`, `spawn`, `epic`, `conductor`, `landing` or `generic`.
 Otherwise inspect task markers: `.ms-config.json` identifies a manuscript and `.epic-status.json` identifies a worker.
 When roles overlap or several continuation files fit, ask which assignment to resume.
 Native session addresses are optional routing information and cannot establish role or ownership.
 
 Write inside the assigned project or slot at `_ignore/CONTINUE-<role>.md`.
 For an epic, use `CONTINUE-epic-<N>.md` to distinguish topics.
+For landing, use `CONTINUE-landing-<PR>.md`; after checkout release, the conductor
+writes it in its own project and supplies its absolute path to the resumed agent.
 Keep this path stable so a fresh agent can locate it without the old session's memory.
 
 ## Required content
@@ -21,7 +23,7 @@ Keep this path stable so a fresh agent can locate it without the old session's m
 - Issue/PR references, branch and exact commit for any recorded approval.
 - Decisions and user instructions that still apply, with their durable sources.
 - Each unfinished item, its next action and a runnable `FIRST CHECK` that verifies whether it is still relevant.
-- Evidence, brief, archive and worklog paths.
+- Evidence, brief, archive and worklog paths. For coordinated roles, include the keyed EPIC registration and pending lifecycle/ownership pointers required by [Lifecycle recovery](workflow.md#lifecycle-recovery).
 - Outstanding user decisions, uncertain occupancy and preservation or delivery failures.
 
 Record enough instruction to resume; reference existing evidence rather than duplicating it.

@@ -66,7 +66,7 @@ Completion criterion: every prerequisite input has passed the verification above
 
 ### Step 3: Create a feature branch
 
-If another live session works in this checkout (the co-tenancy check in `/pc-pr-land`'s "Where to stand"), don't move its `HEAD`: branch in a worktree outside it and do all remaining steps there. If you were started in this checkout to own it and the other process is exiting (a session whose window was just killed), wait until it is gone, then take the checkout path.
+If another live session works in this checkout (see [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases)), don't move its `HEAD`: branch in a worktree outside it and do all remaining steps there. If you were started in this checkout to own it and the other process is exiting (a session whose window was just killed), wait until it is gone, then take the checkout path.
 
 ```bash
 git fetch origin
@@ -211,9 +211,11 @@ If the work involved experiments or benchmarks, include key results (tables, num
 Don't just point at branch files — the PR body is the permanent record.
 When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed (such as a preserved path or ephemeral directory) alongside their reproduction command, environment specifications, and reproduction duration or cost.
 
-### Step 8: Summary for the user
+### Step 8: Report to the conductor
 
-After creating the PR, provide a concise summary that highlights things the user needs to **judge**:
+Before execution, verify an explicit owning EPIC and its brief under the shared workflow contract.
+After creating the PR, report the full head SHA and current completion/check evidence to the conductor for EPIC confirmation and user approval. Retain status and worklog; workers release ownership only through the landing handoff. Independent follow-up work uses `/pc-conductor-handoff`.
+Provide a concise summary that highlights things the user needs to **judge**:
 
 - **Underlying bugs or tech debt** discovered during the work (even if worked around)
 - **Structural concerns** — places where the fix is a workaround rather than a root-cause fix
@@ -222,3 +224,13 @@ After creating the PR, provide a concise summary that highlights things the user
 Record any deferred work in the PR body `DEFERRED` section (one line per item, with rationale per the DEFERRAL RULE).
 In EPIC mode the issue-lead will scan these at terminal `completed` and file the legitimate ones as follow-up issues; standalone users can review the list and run `/pc-issue-next` for the ones worth filing.
 Either way, do not list follow-ups in this summary — the PR body is the source of truth.
+
+### Step 9: Landing handoff and final records
+
+Follow [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases)
+when the conductor requests release. Stop edits, record explicit release and wait for
+ownership to return before remediation or final records. After verified merge, invoke
+`/pc-issue-lead` independently at the retained checkout for its full terminal protocol.
+Record the final assessment, follow-up outcomes and terminal comment path in the worklog;
+notify the conductor and release again for preservation/cleanup. Missing or failed
+records remain pending and keep the checkout intact.

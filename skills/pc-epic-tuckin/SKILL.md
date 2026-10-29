@@ -20,7 +20,9 @@ Fleet-side state (clone/slot status, `.epic-status.json`, pending spawn intent) 
 
 ### Step 1: Push EPIC body edits
 
-For each `ISSUE-EPIC-*.md` file in the repo root, follow the **EPIC body update pattern** from `/pc-epic` (pull with `updatedAt` tracking → edit → conflict-check → push).
+For this session's assigned EPIC only, verify its keyed registration under the shared [workflow contract](../lib/workflow.md) and persist its pending findings/confirmation routes under **Lifecycle recovery**. Preserve other EPICs' files and registrations.
+
+For `ISSUE-EPIC-<N>.md`, follow the **EPIC body update pattern** from `/pc-epic` (pull with `updatedAt` tracking → edit → conflict-check → push).
 Extract the issue number from the filename (`ISSUE-EPIC-284.md` → 284).
 Prune completed sections while you're in there — this is the same discipline as `/pc-epic`'s regular update pattern, not a separate cleanup pass.
 
@@ -59,7 +61,7 @@ Only what survives both gates gets a destination:
 Its path, its under-a-page shape, and the rule that every action item carries its falsifier inline are [the continuation contract](../lib/continuation.md); the next session loads it with `/pc-continue`.
 On top of that, the EPIC prompt adds the `/pc-epic <N>` invocation, a one-line pointer to `CONTINUATION-<N>.md` (the long file above), and **the two or three traps that would cost the most if rediscovered** — put those in the prompt itself, not only in the file, since they are what a fresh session gets wrong before it has read anything.
 
-**Record approvals as `approved at <SHA>`, never as a state.** "Approved by both" is true when written and becomes misleading the moment anyone pushes. Same class of defect: a fact that expires silently.
+Retain the current-head EPIC confirmation pointer and pending conductor receipts under the shared **Lifecycle recovery** contract. EPIC confirmation and explicit user approval remain separate evidence.
 
 ### Step 3: Report
 
@@ -68,8 +70,7 @@ Print a summary:
 ```
 ## Tuckin Complete
 
-- EPICs pushed: i281, i295
-- EPICs skipped (conflict): i310
+- Assigned EPIC: i<N> (pushed | conflict, with evidence)
 - Topic-level findings: <none survived the filter | routed to CLAUDE.md/skill/EPIC body as listed>
 - Continuation: CONTINUATION-<N>.md (long) + _ignore/CONTINUE-epic-<N>.md (prompt) written; prompt printed below
 

@@ -17,7 +17,7 @@ EPIC workers already have their own persistence built into `/pc-conductor-spawn`
 /pc-spawn-tuckin
 ```
 
-Run from inside the slot's worktree/clone, on its branch.
+Run from inside the slot's worktree/clone, on its branch. Before any mutation, verify current ownership under [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases). A worker that released its checkout records continuation through the conductor; it waits for verified transfer before committing, pushing or editing state. Persist coordinated task evidence under **Lifecycle recovery**, preserving all pending landing phases.
 
 ## Workflow
 
