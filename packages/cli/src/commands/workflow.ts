@@ -1,3 +1,4 @@
+import { landDelivery } from '@paper-craft/core/workflow/postmerge';
 import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
 import { Command } from 'commander';
@@ -12,7 +13,7 @@ import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
 import { driveEpicIssue } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
-import { drivePullRequest, GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
+import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
 import { readFileSync } from 'node:fs';
 import { output } from '../utils/output.js';
@@ -108,7 +109,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       }
       const task = await driveIssue(config, runner, issue);
       output(
-        await drivePullRequest(
+        await landDelivery(
           config,
           runner,
           new GitHubPullRequests(task.checkout, issue.repository),
@@ -130,7 +131,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     conductor
       .command('land <issue>')
-      .description('Check, repair and merge delivered PR stages automatically'),
+      .description('Merge, record, preserve and clean delivered PR stages automatically'),
   )
     .option(
       '--confirmation-file <file>',
@@ -144,7 +145,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         if (!task || task.status !== 'done')
           throw new Error('Expected delivered Issue stages before landing');
         output(
-          await drivePullRequest(
+          await landDelivery(
             config,
             new CodexRunner(),
             new GitHubPullRequests(task.checkout, issue.repository),

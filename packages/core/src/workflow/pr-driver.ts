@@ -206,6 +206,17 @@ export class GitHubPullRequests implements PullRequestProvider {
     );
     return { head: p.headRefOid, state: p.state, conflict: p.mergeable !== 'MERGEABLE' };
   }
+  /** Verify merge state before post-merge side effects. */
+  async merged(pr: number): Promise<boolean> {
+    return (await this.read(pr)).state === 'MERGED';
+  }
+  /** GitHub close is idempotent; verify actual state after the request. */
+  async close(issue: number): Promise<void> {
+    const args = ['issue', 'view', String(issue), '--repo', this.repository, '--json', 'state'];
+    if (JSON.parse(this.gh(args)).state !== 'CLOSED')
+      this.gh(['issue', 'close', String(issue), '--repo', this.repository]);
+    if (JSON.parse(this.gh(args)).state !== 'CLOSED') throw new Error('Issue closure not verified');
+  }
   /** Required check results only; no required checks is permitted. */
   async checks(pr: number): Promise<'passed' | 'failed' | 'pending'> {
     let raw: string;
