@@ -1,8 +1,15 @@
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
 import { Command } from 'commander';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
-import { consumeIntent, findIntent, preserveState, writeIntent } from '@paper-craft/core/workflow/handoff';
+import {
+  consumeIntent,
+  findIntent,
+  preserveState,
+  writeIntent,
+} from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
+import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
+import { readFileSync } from 'node:fs';
 import { output } from '../utils/output.js';
 
 interface Options {
@@ -46,6 +53,40 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         else output({ path: config.root }, opts.human());
       }),
     );
+  const conductor = workflow
+    .command('conductor')
+    .description('Start or inspect the Fleet managed Conductor');
+  configured(
+    conductor.command('status').description('Read durable Conductor identity and occupancy'),
+  ).action((options: Options) =>
+    run(() => {
+      output(
+        inspectConductor(loadFleetConfig(options.config)) ?? { status: 'absent' },
+        opts.human(),
+      );
+    }),
+  );
+  configured(
+    conductor
+      .command('start')
+      .description('Launch Codex in tmux; require actual Runner acknowledgement'),
+  )
+    .requiredOption('--prompt-file <file>', 'UTF-8 Conductor instructions')
+    .action(async (options: Options & { promptFile: string }) => {
+      try {
+        const result = await startConductor(
+          loadFleetConfig(options.config),
+          new CodexRunner(),
+          readFileSync(options.promptFile, 'utf8'),
+        );
+        output(result, opts.human());
+        if (result.status !== 'running') process.exitCode = 2;
+      } catch (error) {
+        run(() => {
+          throw error;
+        });
+      }
+    });
   const intent = workflow.command('intent').description('Queue, find and consume task briefs');
   configured(intent.command('find <issue>').description('Find queued intent; exit 1 when absent'))
     .option('--path', 'Print only the path for shell assignment')
