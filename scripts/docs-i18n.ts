@@ -10,6 +10,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import type { Root, RootContent, Nodes } from 'mdast';
+import { validateStructure } from './docs-i18n-structure.js';
 
 const root = process.cwd();
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 16);
@@ -149,7 +150,9 @@ function main() {
         zh,
         new Set([...sources].filter((p) => !Object.hasOwn(manifest.backlog, p))),
       );
+      validateStructure(markdown(en), markdown(zh), en, zh);
       const current = computeRecord(en, zh);
+
       if (command === 'record') writeFileSync(paths.record, stringify(current, { lineWidth: 0 }));
       else {
         const stored = parse(readFileSync(paths.record, 'utf8'));
