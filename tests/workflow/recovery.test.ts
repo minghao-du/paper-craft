@@ -121,9 +121,22 @@ test('lost startup notification recovers attributed receipt and result without r
     join(dir, 'events.jsonl'),
     '{}\n{"type":"thread.started","thread_id":"original-thread"}\n{"type":"turn.started"}\n',
   );
+  const taskFile = join(dir, 'task.json');
+  writeFileSync(
+    taskFile,
+    JSON.stringify({ repository: 'owner/repo', issue: 12, status: 'blocked', turns: [] }),
+  );
+  let continued = 0;
   let collected = 0;
   const runner = {
     name: 'controlled',
+    async recoverReceipt() {
+      return {
+        conversation: 'original-thread',
+        address: 'controlled:receipt',
+        evidence: 'received',
+      };
+    },
     async preflight() {},
     async start() {
       throw Error('must not relaunch');
@@ -135,7 +148,17 @@ test('lost startup notification recovers attributed receipt and result without r
     },
   };
   try {
-    expect((await recoverFleet(config, runner)).ownership).toBe('retained');
+    const recovered = await recoverFleet(config, runner, undefined, async (work) => {
+      expect(work).toEqual({ repository: 'owner/repo', number: 12, epic: false });
+      expect(JSON.parse(readFileSync(file, 'utf8')).result).toBe('original result');
+      continued++;
+      return { status: 'done' };
+    });
+    expect(recovered.ownership).toBe('retained');
+    expect(recovered.continuations).toEqual([
+      { repository: 'owner/repo', number: 12, epic: false, result: { status: 'done' } },
+    ]);
+    expect(continued).toBe(1);
     await recoverFleet(config, runner);
     expect(collected).toBe(1);
     expect(JSON.parse(readFileSync(file, 'utf8')).result).toBe('original result');

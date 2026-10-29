@@ -220,7 +220,7 @@ The dashboard is **slot-centric** — the epic's dashboard is issue-centric; thi
 
 **Pending spawn intent**: list any `.spawn-prompts/` files found in Step 4 (either naming pattern), with the available slots that could run them.
 
-**EPIC distribution**: count live slots by the required owning `EPIC:` header, including user-originated work. Show each EPIC's active/paused state, user priority, eligible queue and resource blockers alongside its slots. Legacy work without an owner is unresolved intake; reconcile it before further dispatch.
+**EPIC distribution**: count EPIC-owned live slots by their `EPIC:` header and list standalone Issue slots separately. Show each EPIC's active/paused state, user priority, eligible queue and resource blockers alongside its slots. Work with unresolved repository or Issue ownership needs intake reconciliation before dispatch.
 
 ```
 EPIC #369: 5 slots    EPIC #402: 2 slots    unresolved legacy owner: 1 slot

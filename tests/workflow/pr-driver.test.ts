@@ -27,9 +27,10 @@ test('landing repairs failed checks and rechecks changed heads without human app
     },
     async checks() {
       checks++;
-      return checks === 1 ? ('failed' as const) : ('passed' as const);
+      return 'passed' as const;
     },
     async merge(_p: number, sha: string) {
+      if (sha === 'a') throw new Error('Worker must update stale base before merge');
       expect(sha).toBe('b');
       merged++;
     },
@@ -53,7 +54,7 @@ test('landing repairs failed checks and rechecks changed heads without human app
       checkout: project,
     });
     expect(result.status).toBe('merged');
-    expect(roles).toEqual(['worker', 'landing']);
+    expect(roles).toEqual(['landing', 'worker', 'landing']);
     expect(checks).toBeGreaterThanOrEqual(3);
     expect(merged).toBe(1);
     await drivePullRequest(config, runner, github, {

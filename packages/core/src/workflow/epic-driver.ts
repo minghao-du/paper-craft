@@ -266,6 +266,27 @@ export async function driveEpic(
         owned.set(task.number, checkout);
         save(file, run);
       }
+      // A stage result unlocks scheduling only after its code is present locally.
+      for (const task of ready) {
+        for (const number of task.blockedBy) {
+          const prerequisite = run.tasks.find((t) => t.number === number)!;
+          if (!prerequisite.checkout) throw new Error('Missing prerequisite checkout evidence');
+          const git = (cwd: string, args: string[]) =>
+            execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+          if (git(prerequisite.checkout, ['status', '--porcelain']))
+            throw new Error('Prerequisite must commit its delivery before dependent dispatch');
+          const head = git(prerequisite.checkout, ['rev-parse', 'HEAD']);
+          git(task.checkout!, [
+            '-c',
+            'user.name=paper-craft',
+            '-c',
+            'user.email=pc@localhost',
+            'merge',
+            '--no-edit',
+            head,
+          ]);
+        }
+      }
       const results = await Promise.allSettled(
         ready.map(async (t) => {
           t.result = await turn(

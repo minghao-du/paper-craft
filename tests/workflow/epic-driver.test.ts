@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -67,7 +67,11 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
       }
       if (a.role === 'worker') {
         const n = Number(a.brief.match(/Issue #(\d+)/)?.[1]);
-        if (n === 9) expect(delivered.sort()).toEqual([7, 8]);
+        if (n === 9) {
+          expect(delivered.sort()).toEqual([7, 8]);
+          expect(readFileSync(join(a.checkout, 'api-7'), 'utf8')).toBe('API 7');
+          expect(readFileSync(join(a.checkout, 'api-8'), 'utf8')).toBe('API 8');
+        }
         active++;
         peak = Math.max(peak, active);
         await new Promise((r) => setTimeout(r, 10));
@@ -75,6 +79,23 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
         if (n === 7 && !interrupted) {
           interrupted = true;
           throw Error('lost collection');
+        }
+        if (n !== 9) {
+          writeFileSync(join(a.checkout, `api-${n}`), `API ${n}`);
+          execFileSync('git', ['add', '.'], { cwd: a.checkout });
+          execFileSync(
+            'git',
+            [
+              '-c',
+              'user.name=Test',
+              '-c',
+              'user.email=test@example.org',
+              'commit',
+              '-m',
+              `API ${n}`,
+            ],
+            { cwd: a.checkout },
+          );
         }
         delivered.push(n);
         return `result ${n}`;

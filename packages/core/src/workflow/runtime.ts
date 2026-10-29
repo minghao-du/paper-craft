@@ -25,6 +25,10 @@ export interface ManagedAttempt {
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
   name: string;
+  /** Recover normalized startup evidence from this Runner only. */
+  recoverReceipt?(
+    attempt: ManagedAttempt,
+  ): Promise<{ conversation: string; address: string; evidence: string } | undefined>;
   cancellation?: boolean;
   cancel?(attempt: ManagedAttempt): Promise<{ evidence: string }>;
   preflight(): Promise<void>;
@@ -137,6 +141,27 @@ export class CodexRunner implements RunnerAdapter {
   }
   /** Collect a completed turn from durable Runner output, never from pane disappearance. */
   /** Recovery never blocks on an execution whose exit is not yet observed. */
+  /** Read this adapter's durable startup protocol after a lost notification. */
+  async recoverReceipt(attempt: ManagedAttempt) {
+    const events = join(attempt.directory, 'events.jsonl');
+    if (!existsSync(events)) return undefined;
+    const lines = readFileSync(events, 'utf8')
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      });
+    const thread = lines.find((e) => e.type === 'thread.started' && e.thread_id);
+    if (!thread || !lines.some((e) => e.type === 'turn.started')) return undefined;
+    return {
+      conversation: thread.thread_id as string,
+      address: attempt.address ?? `tmux:pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`,
+      evidence: 'Recovered thread.started and turn.started from durable Runner events',
+    };
+  }
   collectable(attempt: ManagedAttempt): boolean {
     return existsSync(join(attempt.directory, 'exit-code'));
   }
