@@ -108,3 +108,10 @@ and a new worker release. A merge result alone does not dispatch cleanup.
    primary synchronization and final checkout status. Report preservation and cleanup
    independently from merge success. Release ownership and notify the conductor; only
    verified cleanup releases a fleet resource for another task.
+
+The managed `workflow conductor issue` and `land` paths continue after merge:
+Worker final assessment and records, verified task-Issue closure, Landing evidence,
+verified state archive and Git bundle, checkout release, then Conductor reporting.
+Unknown execution occupancy or unaccounted checkout files retain the checkout.
+A blocked completion resumes its persisted stages; inspect the original execution
+before retrying a missing receipt. EPIC closure remains a separate user decision.

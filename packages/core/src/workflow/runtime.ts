@@ -116,6 +116,17 @@ export class CodexRunner implements RunnerAdapter {
         'Codex must support JSON event/result output and resume input for automatic round trips',
       );
   }
+  /** Exit receipt plus absent runtime session verifies this managed process stopped. */
+  async stopped(attempt: ManagedAttempt): Promise<boolean> {
+    if (!existsSync(join(attempt.directory, 'exit-code')) || !attempt.address?.startsWith('tmux:'))
+      return false;
+    try {
+      execFileSync('tmux', ['has-session', '-t', attempt.address.slice(5)], { stdio: 'ignore' });
+      return false;
+    } catch {
+      return true;
+    }
+  }
   /** Collect a completed turn from durable Runner output, never from pane disappearance. */
   async collect(attempt: ManagedAttempt): Promise<string> {
     const exit = join(attempt.directory, 'exit-code');
