@@ -50,8 +50,9 @@ Corrections that change worker scope or gates are appended to its worklog before
 notification. Preserve sender attribution; the issue-lead's `lead_guidance` is its own.
 Log decisions beside the authoritative config in append-only `.epic-decisions.md`.
 When paging the user, consolidate pending decisions, notify once, and keep independent
-work moving. For planned reboot use `/pc-conductor-prepare-reboot`; for interruption
-use `/pc-conductor-recover`, preserving the selected runner's recovery capabilities.
+work moving. For planned shutdown use `/pc-conductor-prepare-reboot` to verify pane identities and save immediately.
+Use `/pc-conductor-recover` for periodic tmux saves and workspace/conversation restoration, loading only the relevant runner reference.
+Apply recovery setup to every independently configured tmux server.
 
 ## Configuration
 

@@ -1,10 +1,9 @@
 ---
 name: pc-conductor-prepare-reboot
-description: Persist coordination and ownership before a planned reboot; park Claude Code tmux sessions when applicable.
-allowed-tools: Bash, Read
+description: Save a tmux workspace and verified agent conversation identities before a planned shutdown or reboot.
 ---
 
-# /pc-conductor-prepare-reboot
+# Save before shutdown
 
 Before parking runtime sessions, persist each project's state under the shared
 [Lifecycle recovery](../lib/workflow.md#lifecycle-recovery) contract. The conductor holds
@@ -18,142 +17,28 @@ retain file-based continuation and report manual recovery required. Let local op
 reach a safe point or preserve their interrupted state. Saving a conversation does not
 preserve a running job or authorize a PR merge.
 
-## Claude Code host parking
+Run on the machine about to shut down. Set `HELPER` to this skill directory plus `/epic-prepare-reboot`. This saves every session on the selected tmux server; repeat for independently configured servers.
 
-The remaining host-wide procedure applies only to Claude Code with the bundled
-`epic-prepare-reboot` helper. It records tmux layout and conversation identity, separately
-from the lifecycle records above. Run it on the host about to reboot.
+## 1. Check what can resume
 
-## Usage
-
-```
-/pc-conductor-prepare-reboot [--shutdown]
-```
-
-Run it once, host-wide, *before* the reboot.
-There is no project argument — the manifest spans the entire tmux host, not one epic project.
-
-## The bundled helper
-
-This skill ships the `epic-prepare-reboot` helper next to `SKILL.md` — no separate install.
-At the start of the run, set `HELPER` to its absolute path (this skill's base directory, given at invocation, + `/epic-prepare-reboot`) and use `"$HELPER"` in every command below:
-
-```bash
-HELPER="<this-skill-dir>/epic-prepare-reboot"
-```
-
-It needs `tmux`, `jq`, bash ≥ 4, and a GNU `date` (or `gdate`): it runs on Linux out of the box, and on macOS with `brew install coreutils bash`.
-Session-id resolution reads Linux `/proc` first and falls back to `ps` (so it is fully functional on macOS too, just second-resolution start times).
-It exits 2 with guidance if a prerequisite is missing.
-
-## Workflow
-
-### Step 1: Dry-run and review the resolved table
-
-Always look before you write.
-`--dry-run` walks every pane, resolves each window, and prints the table **without** writing or shutting anything down:
-
-```bash
+```sh
 "$HELPER" --dry-run
 ```
 
-Each row shows `SESSION  IDX  WINDOW  METHOD  CONF  SESSION_ID/CWD`.
-The resolution `method` per Claude window, in priority order:
+For missing plugin configuration or unresolved conversation identities, follow [workspace recovery](../pc-conductor-recover/SKILL.md) and load only the relevant runner reference. Save ongoing task state in files and let in-flight local operations reach a safe stopping point. Conversation recovery restarts a CLI; it does not preserve a running build, editor buffer, or shell process.
 
-- **registry** (`high`) — `~/.claude/sessions/<pid>.json`, which Claude Code keeps current for each live process.
-  The only method that follows `/clear`: after one, the cmdline and start time still point at the pre-clear conversation.
-- **cmdline** (`high`) — `--resume <id>` was in the Claude process args.
-- **starttime** (`medium`) — a *fresh* session (launched without `--resume`) carries no id in its cmdline, so the helper correlates the Claude process start time with the cwd's jsonl that *began* closest.
-  Handles fresh windows, including two fresh windows in one cwd.
-- **newest** (`low`) — last resort: the newest jsonl for the cwd.
-- **shell** (`none`) — no Claude descendant; a bare shell or editor.
-  Recorded with its cwd so the layout returns, recreated as a plain window.
+Done when every pane is accounted for and unresolved IDs or unfinished local work have been surfaced.
 
-When start-time correlation finds two jsonls that fit a fresh process nearly equally (within a few seconds), the window is flagged **`ambiguous`** and both candidate ids are recorded — recover will ask rather than guess.
+## 2. Save immediately
 
-Present a short summary to the user: how many sessions/windows, how many Claude windows resolved by each method, and call out any `ambiguous` rows by name.
-Also relay the closing list of live Claude sessions that no reachable pane holds — `claude --bg` sessions, or panes on a tmux server whose socket was unlinked. They are not in the manifest; their ids are, so the user can `--resume` them by hand.
-This is the moment to catch a misresolved window before it goes in the manifest.
-
-### Step 2: Ask every session to pause
-
-`SendMessage` every `ListAgents` peer (not this session) the same message, filling in the reboot time:
-
-> Planned reboot of <host> at <time>; your conversation will be resumed afterwards. Start no new long local work. Run `/pc-tuckin` (not `/pc-cycle`, and don't `/clear`). Then reply `READY`, or `NOT READY: <what would be lost> | <when it will be safe>`.
-
-What a reboot loses is local: background shells, monitors, and session-scoped crons; builds or runs on this host; a half-done rebase or land.
-Jobs on other hosts survive, so a session waiting on a remote job is `READY`.
-
-Replies arrive as messages. Keep a table of every peer, marked `READY`, `NOT READY` (with its reason), or silent.
-A silent session is not ready: a session in another permission mode holds peer messages until its user approves them.
-Show the user the table, and re-ask a `NOT READY` session once its stated time passes.
-The user decides when to go ahead; a session's `NOT READY` is information for that decision, not a veto.
-
-### Step 3: Write the manifest
-
-Run the helper for real, after the replies are in: a session that clears changes its id, and the manifest records ids as they are when it runs.
-Without `--shutdown` it stops after writing the manifest, leaving tmux running so you can verify:
-
-```bash
+```sh
 "$HELPER"
 ```
 
-The manifest lands at `~/.epic-recover/manifest.json` (override the dir with `EPIC_RECOVER_DIR`).
-It preserves your real session names, window names, order, cwds, and each split window's pane layout, with a `session_id`, `method`, and `confidence` per Claude pane — a **host-level** file so recover finds it without knowing the project list.
+The snapshot pairs layout, directories, and verified conversation IDs in one resurrect file. Existing settings are described by [plugin setup](../pc-conductor-recover/references/tmux.md).
 
-### Step 4: Shut down (optional)
+Done when saving succeeds and the final recording table has been checked. If a pane changes conversation or layout afterwards, save again before shutdown. This helper saves state; the user shuts down through their usual controls.
 
-When you are ready to reboot, either reboot the box yourself, or let the helper tear tmux down only **after** the manifest is on disk:
+## 3. Recover
 
-```bash
-"$HELPER" --shutdown      # writes the manifest, then `tmux kill-server`
-```
-
-`--shutdown` never kills the server before the manifest write succeeds.
-
-### Step 5: After the reboot
-
-On the rebooted box, run `/pc-conductor-recover`.
-It detects the manifest (parked before the current boot, not yet consumed), rebuilds **every** session by its real name with windows in order — Claude windows `--resume`'d to their exact ids, plain windows as bare shells — reports "(from manifest)", and asks about any `ambiguous` windows.
-After a successful replay it stamps the manifest consumed so a later *unplanned* reboot falls back to the jsonl scan instead of replaying a stale park.
-
-## The manifest (what recover consumes)
-
-```json
-{
-  "host": "pax",
-  "parked_at": "2026-05-29T06:00:00Z",
-  "sessions": [
-    {"name": "phyz", "windows": [
-      {"index": 0, "name": "claude",     "cwd": "/home/matsen/re/phyz",     "session_id": "30ebe63e-…", "method": "registry", "confidence": "high", "issue": null, "pane": 0, "layout": "f511,188x53,0,0{…}"},
-      {"index": 0, "name": "claude",     "cwd": "/home/matsen/re/phyz",     "session_id": "93533da0-…", "method": "registry", "confidence": "high", "issue": null, "pane": 1, "layout": "f511,188x53,0,0{…}"},
-      {"index": 1, "name": "1483-alder", "cwd": "/home/matsen/re/pz/alder", "session_id": "ee906cc5-…", "method": "cmdline",  "confidence": "high", "issue": 1483, "pane": 0, "layout": "…"}
-    ]}
-  ]
-}
-```
-
-`confidence` ∈ `high` (cmdline) · `medium` (starttime) · `low` (newest) · `ambiguous` · `none` (shell).
-An `ambiguous` window also carries a `candidates: [id, id]` array.
-`session_id` is `null` for shell windows.
-Each entry is one pane: entries sharing an `index` are splits of one window, which recover rebuilds and then sets to the saved `layout`.
-
-## Manual verification
-
-These helpers introspect live tmux and the process tree, so they are verified by exercising them, not by a unit-test suite (the same convention as `epic-recover`).
-To check a change, against any host with a few tmux windows open:
-
-1. **Fidelity** — `"$HELPER" --dry-run`; confirm the table's panes match `tmux -S <sock> list-panes -a` on every server socket, and that the Claude rows' ids equal the `sessionId`s in `~/.claude/sessions/<pid>.json` for live pids with a `tmux` pane.
-2. **Resolution** — with a registry entry, every Claude window shows `method=registry`, including one that ran `/clear`. Move a registry file aside to exercise the fallbacks: a resumed window shows `cmdline`, a fresh one `starttime`, and two fresh windows in one cwd with near-identical start times show `ambiguous`.
-3. **Roundtrip** — run for real, then on the same host `epic-recover --manifest-status` reports VALID and `--manifest-resume` rebuilds the sessions by real name with windows in order.
-   (See `pc-conductor-recover`'s own verification notes for staleness/consumed/fallback.)
-4. **Guards** — `--shutdown` kills every tmux server only after the manifest exists.
-
-## Notes
-
-- `--dry-run` mutates nothing.
-  Only a real run writes the manifest, or (with `--shutdown`) kills tmux.
-- The skill is **host-wide and project-agnostic** — it does *not* require `.epic-config.json` and records every session on the host, not just epic clones.
-- Naming pairs it with `pc-conductor-recover`, though it operates beyond epic clones.
-  Related: `pc-conductor-tuckin` persists *fleet* state for a context reset — distinct from parking the *whole host* for a reboot.
-- Driving a remote box from elsewhere: prefix with `ssh <host> 'bash <skill-dir>/epic-prepare-reboot …'`, but it is cleanest run from a shell on the box itself.
+On the next tmux server start, continuum restores the latest saved workspace and opens recorded conversations without sending a prompt. Follow [workspace recovery](../pc-conductor-recover/SKILL.md) to resolve startup failures or missing identities. Without a prior snapshot, report the missing evidence rather than promising a complete reconstruction.

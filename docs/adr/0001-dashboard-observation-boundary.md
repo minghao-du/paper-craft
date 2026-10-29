@@ -1,0 +1,3 @@
+# Dashboard history records observations, not execution identity
+
+The read-only Dashboard consumes existing workflow evidence without requiring Workers to produce a new execution identity contract. Existing records cannot reliably distinguish every retry, so the Dashboard preserves unknown execution attempts and records changes it actually observes, including monitoring gaps, rather than claiming a complete execution audit. This trades complete run history for an MVP that does not change the workflow's writers or scheduling protocol; complete execution history would require a separate identity contract.
