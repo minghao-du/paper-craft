@@ -116,6 +116,11 @@
       "paper-craft-source": "./src/workflow/issue-driver.ts",
       "types": "./dist/workflow/issue-driver.d.ts",
       "default": "./dist/workflow/issue-driver.js"
+    },
+    "./workflow/subagents": {
+      "paper-craft-source": "./src/workflow/subagents.ts",
+      "types": "./dist/workflow/subagents.d.ts",
+      "default": "./dist/workflow/subagents.js"
     }
   },
   "files": [
