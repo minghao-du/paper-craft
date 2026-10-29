@@ -102,6 +102,27 @@ function main() {
     adoption?: string;
     backlog: Record<string, string>;
   };
+  if (manifest.adoption) {
+    const firstManifest = execFileSync(
+      'git',
+      ['log', '--reverse', '--format=%H', '--diff-filter=A', '--', 'docs-i18n.yaml'],
+      { encoding: 'utf8' },
+    )
+      .trim()
+      .split('\n')[0];
+    if (firstManifest) {
+      const snapshot = parse(
+        execFileSync('git', ['show', `${firstManifest}:docs-i18n.yaml`], {
+          encoding: 'utf8',
+        }),
+      ) as typeof manifest;
+      if (manifest.adoption !== snapshot.adoption)
+        throw new Error('adoption snapshot is immutable; restore the original adoption revision');
+      for (const path of Object.keys(manifest.backlog))
+        if (!Object.hasOwn(snapshot.backlog, path))
+          throw new Error(`document was not in adoption snapshot backlog: ${path}`);
+    }
+  }
   const eligible = (p: string) =>
     manifest.include.some((g) => matchesGlob(p, g)) &&
     !manifest.exclude.some((g) => matchesGlob(p, g));
