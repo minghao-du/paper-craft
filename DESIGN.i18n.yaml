@@ -1,0 +1,27 @@
+/paper-craft-design-decisions:
+  en: 0149dedbef993f81
+  zh: ee4d03bd511c8a3f
+/paper-craft-design-decisions/i-jsonl-source-of-truth:
+  en: ec964641b27cacab
+  zh: 98ae4fd4d8ee8845
+/paper-craft-design-decisions/ii-pure-typescript-no-native-addons:
+  en: b25314d8a369ffd0
+  zh: 308fe68d029e3707
+/paper-craft-design-decisions/iii-local-first-cloud-optional:
+  en: d362c3fdd36a5d46
+  zh: ef82f10a8c0107da
+/paper-craft-design-decisions/iv-nexus-pattern:
+  en: cb5b5c3db66e9ac5
+  zh: b9ddf5d48d64c8a8
+/paper-craft-design-decisions/v-git-compatible-collaboration:
+  en: df05f80c944f3daf
+  zh: 8f0ab184f15a2d2b
+/paper-craft-design-decisions/vi-typescript-skill-modules:
+  en: 97266c8c30c76d37
+  zh: dd42dc893cf8cbfc
+/paper-craft-design-decisions/vii-runtime-independent-workflows:
+  en: 8ab80afe7a15a96b
+  zh: 420137a2f4809993
+/paper-craft-design-decisions/viii-host-adapters-depend-on-core:
+  en: 71ed57ad4d304bac
+  zh: 7b213eb60aa28256

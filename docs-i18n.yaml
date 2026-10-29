@@ -1,0 +1,25 @@
+include:
+  - "*.md"
+  - docs/**/*.md
+  - packages/**/*.md
+exclude:
+  - docs/guides/translation-terminology.md
+  - skills/**
+  - docs/agents/**
+  - "**/AGENTS.md"
+  - "**/CLAUDE.md"
+  - EVIDENCE-DISCIPLINE.md
+  - PROSE-DISCIPLINE.md
+  - SUBAGENT-SCAN.md
+  - "**/fixtures/**"
+  - "**/templates/**"
+  - docs/prompts/**
+  - docs/research/**
+adoption: 7c715089788793c72c0dacf8c06cb5ad5ca871bb
+backlog:
+  docs/adr/0001-dashboard-observation-boundary.md: existing at adoption
+  docs/guides/dashboard-design.md: existing at adoption
+  docs/guides/dashboard-spec.md: existing at adoption
+  docs/guides/mcp.md: existing at adoption
+  docs/guides/research-state-template.md: existing at adoption
+  docs/guides/research-state.md: existing at adoption

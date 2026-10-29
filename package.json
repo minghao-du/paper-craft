@@ -8,12 +8,16 @@
   },
   "scripts": {
     "build": "pnpm -r run build",
-    "lint": "eslint packages/",
+    "lint": "eslint packages/ scripts/docs-*.ts",
     "format": "prettier --write 'packages/*/src/**/*.ts' 'tests/**/*.ts'",
     "format:check": "prettier --check 'packages/*/src/**/*.ts' 'tests/**/*.ts'",
     "typecheck": "tsc --noEmit",
     "test": "pnpm run build && vitest run",
-    "test:watch": "pnpm run build && vitest"
+    "test:watch": "pnpm run build && vitest",
+    "docs:i18n:list": "tsx scripts/docs-i18n.ts list",
+    "docs:i18n:check": "tsx scripts/docs-i18n.ts check",
+    "docs:i18n:record": "tsx scripts/docs-i18n.ts record",
+    "docs:check": "tsx scripts/docs-i18n.ts check"
   },
   "keywords": [],
   "author": "",
@@ -28,24 +32,28 @@
   "packageManager": "pnpm@12.8.1",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^26.6.3",
     "@types/sql.js": "^1.4.11",
+    "commander": "^15.0.0",
     "eslint": "^10.11.0",
     "prettier": "^3.9.9",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "sql.js": "^1.14.2",
     "tsx": "^4.23.15",
     "typescript": "~5.7.3",
     "typescript-eslint": "^8.71.0",
+    "unified": "^11.0.5",
     "vitest": "^5.0.3",
-    "commander": "^15.0.0",
-    "sql.js": "^1.14.2",
     "yaml": "^2.9.1",
-    "zod": "^4.6.5",
-    "@modelcontextprotocol/client": "^2.4.0"
+    "zod": "^4.6.5"
   },
   "private": true,
   "dependencies": {
-    "@paper-craft/core": "workspace:*",
     "@paper-craft/cli": "workspace:*",
+    "@paper-craft/core": "workspace:*",
     "@paper-craft/mcp": "workspace:*"
   }
 }

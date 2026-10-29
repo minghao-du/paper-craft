@@ -47,6 +47,8 @@ facts no skill carries.
 
 ## Docs conventions
 
+- Follow the [bilingual documentation contract](docs/guides/documentation.md).
+
 - A skill or agent file carries procedure an agent must follow and facts it can't get by
   looking — no incident stories, dated measurements, or markers.
 - `README.md` stays short (overview, motivation, skill table). Detailed guides live in

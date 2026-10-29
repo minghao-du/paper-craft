@@ -1,5 +1,7 @@
 # Paper Craft
 
+[简体中文](GLOSSARY.zh.md)
+
 Research organization and agent workflow terminology.
 
 ## Language
