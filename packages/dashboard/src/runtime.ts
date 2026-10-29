@@ -1,4 +1,5 @@
 /** Bounded runtime observations. Presence never authorizes scheduling or reclaim. */
+import { constants } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { realpath, open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -53,8 +54,12 @@ async function runnerRecord(path: string): Promise<RuntimeEvidence['runner']> {
     const physical = await realpath(source);
     if (!within(path, physical))
       return { ...unknown, detail: 'Runner record escapes registered directory' };
-    const file = await open(physical, 'r');
+    const file = await open(
+      physical,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
     try {
+      if (!(await file.stat()).isFile()) return unknown;
       const buffer = Buffer.alloc(4096);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
       const header = buffer
