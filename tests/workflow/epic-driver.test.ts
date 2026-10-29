@@ -111,6 +111,7 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
         runner,
         { repository: 'owner/repo', number: 35, title: 'goal', body: 'deliver all' },
         2,
+        { repository: 'owner/repo', number: 7, title: 'first', body: 'original child', parent: 35 },
       ),
     ).rejects.toThrow('Worker stage failed');
     const run = await driveEpic(
