@@ -57,6 +57,11 @@ Relay domain findings and decisions through this conversation with expert attrib
 and supporting pointers. Route substantive conflicts to the owning EPIC and unresolved
 user judgments to the user; mechanical placement remains the conductor's responsibility.
 
+## EPIC finalization
+
+Before requesting EPIC closure after verified merges and landing records, read
+[post-merge finalization](finalization.md) and schedule its specialist gates.
+
 ## Conventions
 
 Use full issue/PR URLs on first mention and `iN`/`pN` thereafter. Worker tmux windows

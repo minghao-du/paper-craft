@@ -65,7 +65,7 @@ export async function recoverFleet(
           realpathSync(a.directory) !== a.directory
         )
           throw new Error('Attempt outside configured state');
-        if (a.result !== undefined) continue;
+        if (a.result !== undefined || a.retired) continue;
         // Startup evidence may have arrived after the launching driver was interrupted.
         if (!a.conversation && runner.recoverReceipt) {
           const receipt = await runner.recoverReceipt(a);

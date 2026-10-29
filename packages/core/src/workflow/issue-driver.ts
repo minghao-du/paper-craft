@@ -21,6 +21,8 @@ export interface RoundRunner extends RunnerAdapter {
 }
 /** A result belongs to its persisted turn and execution attempt. */
 export interface IssueTurn extends ManagedAttempt {
+  /** Explicit replacement after verified termination preserves the old attempt without recollecting it. */
+  retired?: boolean;
   result?: string;
 }
 /** Durable task, including reserved checkout and all acknowledged turns. */

@@ -10,15 +10,21 @@ import type { FleetConfig } from './fleet-config.js';
 export interface ManagedAttempt {
   id: string;
   fleet: string;
-  role: 'conductor' | 'worker' | 'epic' | 'landing';
+  role: 'conductor' | 'worker' | 'epic' | 'landing' | 'pipeline-audit' | 'research-state';
   runner: string;
   brief: string;
   status: 'starting' | 'running' | 'unknown';
   created: string;
   directory: string;
   checkout: string;
+  /** Existing fleet session required for specialist windows. */
+  terminalSession?: string;
+  /** Explicit local writing roots passed to capable runners. */
+  writableDirectories?: string[];
   conversation?: string;
   address?: string;
+  windowId?: string;
+  paneId?: string;
   evidence?: string;
   error?: string;
 }
@@ -120,6 +126,7 @@ export class CodexRunner implements RunnerAdapter {
       timeout: 5000,
     });
     if (
+      !help.includes('--add-dir') ||
       !help.includes('--json') ||
       !help.includes('--output-last-message') ||
       !resume.includes('--json')
@@ -128,13 +135,21 @@ export class CodexRunner implements RunnerAdapter {
         'Codex must support JSON event/result output and resume input for automatic round trips',
       );
   }
-  /** Exit receipt plus absent runtime session verifies this managed process stopped. */
+  /** Exit receipt plus absent or dead panes verifies this managed process stopped. */
   async stopped(attempt: ManagedAttempt): Promise<boolean> {
-    if (!existsSync(join(attempt.directory, 'exit-code')) || !attempt.address?.startsWith('tmux:'))
+    const terminal = join(attempt.directory, 'terminal.json');
+    const address: string | undefined =
+      attempt.address ??
+      (existsSync(terminal) ? JSON.parse(readFileSync(terminal, 'utf8')).address : undefined);
+    if (!existsSync(join(attempt.directory, 'exit-code')) || !address?.startsWith('tmux:'))
       return false;
     try {
-      execFileSync('tmux', ['has-session', '-t', attempt.address.slice(5)], { stdio: 'ignore' });
-      return false;
+      const panes = execFileSync(
+        'tmux',
+        ['list-panes', '-t', address.slice(5), '-F', '#{pane_dead}'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      ).trim();
+      return !!panes && panes.split('\n').every((value) => value === '1');
     } catch {
       return true;
     }
@@ -156,9 +171,14 @@ export class CodexRunner implements RunnerAdapter {
       });
     const thread = lines.find((e) => e.type === 'thread.started' && e.thread_id);
     if (!thread || !lines.some((e) => e.type === 'turn.started')) return undefined;
+    const terminal = join(attempt.directory, 'terminal.json');
     return {
       conversation: thread.thread_id as string,
-      address: attempt.address ?? `tmux:pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`,
+      address:
+        attempt.address ??
+        (existsSync(terminal)
+          ? JSON.parse(readFileSync(terminal, 'utf8')).address
+          : `tmux:pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`),
       evidence: 'Recovered thread.started and turn.started from durable Runner events',
     };
   }
@@ -187,20 +207,57 @@ export class CodexRunner implements RunnerAdapter {
   async start(
     attempt: ManagedAttempt,
   ): Promise<{ conversation: string; address: string; evidence: string }> {
+    const specialist = ['pipeline-audit', 'research-state'].includes(attempt.role);
+    if (specialist && !attempt.terminalSession)
+      throw new Error('Specialist requires a verified existing tmux session');
     const session = `pc-${attempt.fleet.slice(0, 12)}-${attempt.id}`;
+    let address = specialist ? `${attempt.terminalSession}:${session}` : session;
+    attempt.address = `tmux:${address}`;
+    writeFileSync(
+      join(attempt.directory, 'terminal.json'),
+      JSON.stringify({ address: attempt.address }),
+    );
     const events = join(attempt.directory, 'events.jsonl');
     const result = join(attempt.directory, 'result.md');
     const script = join(attempt.directory, 'launch.sh');
     writeFileSync(
       script,
-      `#!/bin/sh\ncodex exec ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''}-c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(result)} - < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
+      `#!/bin/sh\n${attempt.role === 'conductor' ? `tmux set-option -w -t ${shell(session + ':0')} remain-on-exit on\n` : ''}codex exec ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''} -c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(result)} - < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
       { mode: 0o700 },
     );
-    execFileSync(
+    if (specialist) execFileSync('tmux', ['has-session', '-t', attempt.terminalSession!]);
+    const terminal = execFileSync(
       'tmux',
-      ['new-session', '-d', '-s', session, '-c', attempt.checkout, 'sh', script],
-      { timeout: 5000 },
+      specialist
+        ? [
+            'new-window',
+            '-P',
+            '-F',
+            '#{window_id} #{pane_id}',
+            '-d',
+            '-t',
+            attempt.terminalSession + ':',
+            '-n',
+            session,
+            '-c',
+            attempt.checkout,
+            'sh',
+            script,
+          ]
+        : ['new-session', '-d', '-s', session, '-c', attempt.checkout, 'sh', script],
+      { timeout: 5000, encoding: 'utf8' },
     );
+    if (specialist) {
+      const [windowId, paneId] = terminal.trim().split(/\s+/);
+      if (!/^@\d+$/.test(windowId ?? '') || !/^%\d+$/.test(paneId ?? ''))
+        throw new Error('Expected actual tmux window and pane identities');
+      address = `${attempt.terminalSession}:${windowId}`;
+      Object.assign(attempt, { windowId, paneId, address: `tmux:${address}` });
+      writeFileSync(
+        join(attempt.directory, 'terminal.json'),
+        JSON.stringify({ address: attempt.address, windowId, paneId }),
+      );
+    }
     const deadline = Date.now() + 15000;
     let conversation: string | undefined;
     let receipt: string | undefined;
@@ -214,7 +271,7 @@ export class CodexRunner implements RunnerAdapter {
               receipt = line;
             }
             if (event.type === 'turn.started' && conversation && receipt)
-              return { conversation, address: `tmux:${session}`, evidence: receipt + '\n' + line };
+              return { conversation, address: `tmux:${address}`, evidence: receipt + '\n' + line };
           } catch {
             /* Incomplete final JSONL line is retried. */
           }

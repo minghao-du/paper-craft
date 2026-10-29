@@ -26,11 +26,16 @@ test('collection failure resumes the original acceptance attempt and preserves e
       starts++;
       return { conversation: 'same', address: 'tmux:test', evidence: 'receipt' };
     },
-    async collect(a: { role: string }) {
+    async collect(a: { role: string; brief: string }) {
       if (fail) {
         fail = false;
         throw Error('collection unavailable');
       }
+      if (a.brief.includes('Confirm applicability'))
+        return JSON.stringify({
+          pipeline: { run: false, reason: 'No workflow impact' },
+          research: { run: false, reason: 'No research changes' },
+        });
       return a.role === 'epic'
         ? JSON.stringify({ satisfied: true, criteria: ['verified goal'], blockers: [] })
         : 'Confirm closure';
@@ -57,6 +62,14 @@ test('collection failure resumes the original acceptance attempt and preserves e
     status: 'delivered' as const,
   };
   const provider = {
+    async finalizationContext() {
+      return {
+        head: 'a'.repeat(40),
+        checkout: project,
+        terminalSession: 'fleet',
+        changes: 'verified PR files',
+      };
+    },
     async deliver() {
       return 'archived';
     },
@@ -79,9 +92,9 @@ test('collection failure resumes the original acceptance attempt and preserves e
         evidence: 'yes',
       }),
     ).rejects.toThrow('network');
-    expect(starts).toBe(2);
+    expect(starts).toBe(4);
     expect((await completeEpic(config, runner, provider, epic)).status).toBe('closed');
-    expect(starts).toBe(2);
+    expect(starts).toBe(4);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

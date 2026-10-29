@@ -416,3 +416,5 @@ confirms the target, record their exact words with
 Only the human-facing Conductor may supply that flag from actual human input;
 Worker, EPIC and Landing output never counts as human confirmation. Confirmation
 continues closure and durable archival without further approval.
+
+Before final human EPIC closure, read [post-merge finalization](../pc-conductor/finalization.md). Confirm specialist applicability and reassess the original goal after verified receipts; managed closure enforces these gates.

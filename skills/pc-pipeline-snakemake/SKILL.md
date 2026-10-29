@@ -7,6 +7,9 @@ description: Review, scaffold, and optimize Snakemake workflows with modular rul
 
 Guidance, scaffolding, and auditing for Snakemake workflows adhering to official best practices and reproducible execution standards.
 
+For Conductor-dispatched EPIC post-merge audits, read
+[the finalization audit branch](finalization.md) before selecting scope or running checks.
+
 ## Standard Directory Layout
 
 A production Snakemake workflow strictly separates version-controlled orchestration and configuration from ephemeral, generated data assets:

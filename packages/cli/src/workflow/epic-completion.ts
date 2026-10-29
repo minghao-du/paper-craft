@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { completeEpic, type EpicCloseDecision } from '@paper-craft/core/workflow/epic-completion';
+import { inspectConductor } from '@paper-craft/core/workflow/runtime';
 import { landDelivery, finishDelivery } from '@paper-craft/core/workflow/postmerge';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { stateDirectory } from '@paper-craft/core/workflow/handoff';
@@ -17,6 +18,7 @@ export async function finishEpic(
   runner: CompletionRunner,
   epic: EpicRun,
   decision?: EpicCloseDecision,
+  retryFinalization = false,
 ) {
   return completeEpic(
     config,
@@ -110,6 +112,69 @@ export async function finishEpic(
         );
         return JSON.stringify(result);
       },
+      async finalizationContext() {
+        const git = (...args: string[]) =>
+          execFileSync('git', args, {
+            cwd: config.project,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }).trim();
+        git('fetch', 'origin', config.base);
+        const head = git('rev-parse', 'FETCH_HEAD');
+        const changes = epic.tasks.map((task) => {
+          const key = createHash('sha256')
+            .update(`${config.file}:${epic.repository}:${task.number}`)
+            .digest('hex');
+          const record = JSON.parse(
+            readFileSync(
+              join(stateDirectory(config, '.runtime', 'pull-requests', key), 'pr.json'),
+              'utf8',
+            ),
+          );
+          const api = (...args: string[]) =>
+            execFileSync('gh', args, { cwd: config.project, encoding: 'utf8' });
+          const pull = JSON.parse(api('api', `repos/${epic.repository}/pulls/${record.pr}`));
+          if (!pull.merged_at || !pull.merge_commit_sha)
+            throw new Error('Expected independently verified merged PR');
+          git('merge-base', '--is-ancestor', pull.merge_commit_sha, head);
+          const files = JSON.parse(
+            api(
+              'api',
+              '--paginate',
+              '--slurp',
+              `repos/${epic.repository}/pulls/${record.pr}/files`,
+            ),
+          ).flat();
+          return {
+            issue: task.number,
+            pr: record.pr,
+            base: pull.base.sha,
+            head: pull.head.sha,
+            merged: pull.merge_commit_sha,
+            files,
+            result: task.result,
+          };
+        });
+        const checkout = join(stateDirectory(config, '.runtime', 'epic-snapshots'), head);
+        if (!existsSync(checkout)) git('worktree', 'add', '--detach', checkout, head);
+        if (
+          execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkout, encoding: 'utf8' }).trim() !==
+            head ||
+          execFileSync('git', ['status', '--porcelain'], { cwd: checkout, encoding: 'utf8' }).trim()
+        )
+          throw new Error('Finalization snapshot changed; preserve and reconcile checkout');
+        const conductor = inspectConductor(config);
+        const terminalSession = process.env.TMUX
+          ? execFileSync('tmux', ['display-message', '-p', '#S'], { encoding: 'utf8' }).trim()
+          : conductor?.address?.replace(/^tmux:/, '').split(':')[0];
+
+        return {
+          head,
+          checkout,
+          terminalSession: terminalSession ?? '',
+          changes: JSON.stringify(changes),
+        };
+      },
       async close(number) {
         const existing = execFileSync(
           'gh',
@@ -150,5 +215,6 @@ export async function finishEpic(
     },
     epic,
     decision,
+    retryFinalization,
   );
 }

@@ -131,6 +131,30 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     });
   configured(
     conductor
+      .command('finalize-epic <number>')
+      .description('Run or resume specialist finalization and EPIC acceptance')
+      .requiredOption('--repository <owner/name>', 'Target repository')
+      .option(
+        '--retry',
+        'Start a fresh finalization round only after verified specialist termination',
+      ),
+  ).action(async (number: string, options: Options & { repository: string; retry?: boolean }) => {
+    try {
+      const config = loadFleetConfig(options.config);
+      const epic = inspectEpicRun(config, options.repository, Number(number));
+      if (!epic) throw new Error('Expected delivered EPIC record');
+      output(
+        await finishEpic(config, new CodexRunner(), epic, undefined, options.retry),
+        opts.human(),
+      );
+    } catch (error) {
+      run(() => {
+        throw error;
+      });
+    }
+  });
+  configured(
+    conductor
       .command('close-epic <number>')
       .description('Record explicit human confirmation, close and archive an accepted EPIC')
       .requiredOption('--repository <owner/name>', 'Target repository')
