@@ -104,6 +104,10 @@ test('adoption backlog permits only existing unpaired documents and orphan artif
     expect(run('check').status).toBe(0);
     git('add', '.');
     git('commit', '-qm', 'migrate');
+    put('OLD.zh.md', '# 旧文档\n\n审阅后的更新\n');
+    expect(run('check').stdout).toContain('stale');
+    expect(run('record', 'OLD.md').status).toBe(0);
+    expect(run('check').status).toBe(0);
     rmSync(join(root, 'OLD.zh.md'));
     rmSync(join(root, 'OLD.i18n.yaml'));
     put('docs-i18n.yaml', manifest('{OLD.md: existing}'));

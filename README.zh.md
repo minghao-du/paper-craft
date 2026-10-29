@@ -23,7 +23,7 @@ paper-craft 将研究想法与实现连接起来：手稿会话将发现转化�
 
 ## 指南
 
-- [原则](CONSTITUTION.md)、[架构](DESIGN.md)和[术语表](GLOSSARY.md)
+- [原则](CONSTITUTION.zh.md)、[架构](DESIGN.zh.md)和[术语表](GLOSSARY.zh.md)
 - [本地 MCP 配置](docs/guides/mcp.md)
 - [双语文档维护](docs/guides/documentation.zh.md#navigation)
 

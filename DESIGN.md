@@ -1,5 +1,7 @@
 # paper-craft Design Decisions
 
+[简体中文](DESIGN.zh.md)
+
 Technical architecture decisions for paper-craft. These are
 load-bearing choices — changing them has wide impact.
 

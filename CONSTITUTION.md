@@ -1,5 +1,7 @@
 # paper-craft Constitution
 
+[简体中文](CONSTITUTION.zh.md)
+
 Development principles for the paper-craft project.
 
 ## I. Agents Execute, Humans Steer
