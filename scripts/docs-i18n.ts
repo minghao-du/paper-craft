@@ -1,3 +1,4 @@
+import { validateNavigation } from './docs-i18n-navigation.js';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
@@ -140,7 +141,15 @@ function main() {
       const paths = pairPaths(path);
       for (const file of [paths.en, paths.zh, ...(command === 'record' ? [] : [paths.record])])
         if (!existsSync(file)) throw new Error(`missing ${file}`);
-      const current = computeRecord(readFileSync(paths.en, 'utf8'), readFileSync(paths.zh, 'utf8'));
+      const en = readFileSync(paths.en, 'utf8'),
+        zh = readFileSync(paths.zh, 'utf8');
+      validateNavigation(
+        path,
+        en,
+        zh,
+        new Set([...sources].filter((p) => !Object.hasOwn(manifest.backlog, p))),
+      );
+      const current = computeRecord(en, zh);
       if (command === 'record') writeFileSync(paths.record, stringify(current, { lineWidth: 0 }));
       else {
         const stored = parse(readFileSync(paths.record, 'utf8'));

@@ -31,3 +31,9 @@ Translate affected content incrementally, review meaning and terminology, then e
 Sections correspond by heading occurrence order. Keys use English heading-slug paths, with `~2` suffixes for repeats. Each side hashes its own top-level authored blocks, joined by newlines, using the first 16 hexadecimal characters of SHA-256. Fenced code is excluded from prose hashes. No generated prose exclusion is supported. Isolated body changes preserve unrelated entries; heading or hierarchy changes can change multiple keys.
 
 The record format follows DeepSeek Harness's inspected revision `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`. Its MIT license was reviewed; this tooling is independently implemented. Records are canonical ordered YAML mappings with separate `en` and `zh` hashes. Values need not match or differ.
+
+<a id="navigation"></a>
+
+## Navigation
+
+Place a reciprocal language link immediately after the main heading. Links into active pairs select the reader's language and corresponding destination, preserving query strings and fragments; excluded or backlog destinations keep their authored paths. Local destinations must exist. When a section is linked, both versions provide the same explicit English anchor, for example `<a id="navigation"></a>`, before their translated headings. This shared-anchor convention is a paper-craft adaptation; upstream preserves fragments but does not map translated headings automatically. Update inbound references when renaming or deleting a pair. Recording rejects invalid navigation before writing confirmations.
