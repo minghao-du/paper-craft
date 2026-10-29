@@ -9,6 +9,7 @@ import {
 } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
+import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { readFileSync } from 'node:fs';
 import { output } from '../utils/output.js';
 
@@ -87,6 +88,23 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         });
       }
     });
+  configured(
+    conductor
+      .command('issue <number>')
+      .description('Automatically dispatch and collect standalone Issue stages'),
+  ).action(async (number: string, options: Options) => {
+    try {
+      const config = loadFleetConfig(options.config);
+      output(
+        await driveIssue(config, new CodexRunner(), readIssue(config.project, Number(number))),
+        opts.human(),
+      );
+    } catch (error) {
+      run(() => {
+        throw error;
+      });
+    }
+  });
   const intent = workflow.command('intent').description('Queue, find and consume task briefs');
   configured(intent.command('find <issue>').description('Find queued intent; exit 1 when absent'))
     .option('--path', 'Print only the path for shell assignment')

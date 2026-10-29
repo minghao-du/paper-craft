@@ -10,7 +10,7 @@ import type { FleetConfig } from './fleet-config.js';
 export interface ManagedAttempt {
   id: string;
   fleet: string;
-  role: 'conductor';
+  role: 'conductor' | 'worker' | 'epic' | 'landing';
   runner: string;
   brief: string;
   status: 'starting' | 'running' | 'unknown';
@@ -116,6 +116,25 @@ export class CodexRunner implements RunnerAdapter {
         'Codex must support JSON event/result output and resume input for automatic round trips',
       );
   }
+  /** Collect a completed turn from durable Runner output, never from pane disappearance. */
+  async collect(attempt: ManagedAttempt): Promise<string> {
+    const exit = join(attempt.directory, 'exit-code');
+    while (!existsSync(exit)) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (readFileSync(exit, 'utf8').trim() !== '0')
+      throw new Error(`Runner failed; inspect ${attempt.directory}`);
+    const events = readFileSync(join(attempt.directory, 'events.jsonl'), 'utf8');
+    if (
+      !events.split('\n').some((line) => {
+        try {
+          return JSON.parse(line).type === 'turn.completed';
+        } catch {
+          return false;
+        }
+      })
+    )
+      throw new Error('Expected completed turn evidence');
+    return readFileSync(join(attempt.directory, 'result.md'), 'utf8');
+  }
   /** Start in tmux and wait for the Runner-generated conversation acknowledgement. */
   async start(
     attempt: ManagedAttempt,
@@ -126,7 +145,7 @@ export class CodexRunner implements RunnerAdapter {
     const script = join(attempt.directory, 'launch.sh');
     writeFileSync(
       script,
-      `#!/bin/sh\ncodex exec --json --output-last-message ${shell(result)} - < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
+      `#!/bin/sh\ncodex exec ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''}--full-auto --json --output-last-message ${shell(result)} - < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
       { mode: 0o700 },
     );
     execFileSync(

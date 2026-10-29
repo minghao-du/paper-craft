@@ -29,11 +29,19 @@ not a live execution probe. The automatic dispatch loop is supplied by the subse
 
 1. Load the authoritative config and register this conductor's verified runtime address
    in `$CLONE_ROOT/.conductor-session`; unavailable messaging uses durable files.
-2. Assign every requested task an explicit EPIC owner before execution. Start or resume
-   that EPIC's persistent `/pc-epic <number>` agent; reconcile its keyed registration
-   under the shared **Multi-EPIC registration and scheduling** contract. Start, pause
-   and resume EPICs independently, preserving every other EPIC's identity and work.
-   Ask for ownership when ambiguous rather than assigning scientific scope yourself.
+2. Read the Issue's repository and EPIC parent. For standalone work, use
+   `pc workflow conductor issue <number> --config <authoritative-config>` while the
+   managed Conductor is available. This command automatically resumes Conductor,
+   allocates a new configured local worktree, dispatches Worker stages and returns
+   their results until Conductor reports those stages delivered. Keep it running
+   to drive the turns. Existing checkouts retain unknown ownership and are refused.
+   It preserves each brief, receipt, result and attempt under the configured state
+   directory; repeated completed intake does not replay execution. Worker briefs
+   require project AGENTS.md and applicable lower directory guidance. Task stages
+   delivered here do not prove PR merge, final records or cleanup completed.
+   For an EPIC-owned Issue, start or resume its persistent `/pc-epic <number>`
+   agent and reconcile its keyed registration under the shared workflow contract.
+
 3. Obtain each active EPIC's scoped task briefs, order, dependencies, readiness and blockers.
    Record user priorities and apply the shared scheduling contract to the measured resource
    inventory below; dispatch eligible work with `/pc-conductor-spawn`.
