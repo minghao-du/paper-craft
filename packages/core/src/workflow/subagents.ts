@@ -39,11 +39,23 @@ export interface ShortTask extends ShortInput {
   evidence?: string;
   error?: string;
   collected?: boolean;
+  wait?: { timedOut: boolean; at: string };
+  cancellation?: {
+    requested: string;
+    outcome: 'unsupported' | 'failed' | 'confirmed';
+    evidence?: string;
+    error?: string;
+  };
   handoff?: { issue: number; status: 'requested' };
 }
 /** A short-task adapter must enforce mode and report verifiable termination. */
 export interface ShortRunner {
   name: string;
+  cancellation?: boolean;
+  cancel?(task: ShortTask): Promise<{ evidence: string }>;
+  observe?(
+    task: ShortTask,
+  ): Promise<{ status: 'running' | 'unknown' | 'failed'; evidence?: string }>;
   run(
     task: ShortTask,
   ): Promise<{ status: 'succeeded' | 'failed'; result: string; evidence: string }>;
@@ -160,6 +172,14 @@ export class Subagents {
           task.status = 'unknown';
           task.error = error instanceof Error ? error.message : String(error);
         }
+        const latest = this.get(task.id);
+        if (latest.cancellation?.outcome === 'confirmed') {
+          task.status = latest.status;
+          task.evidence = latest.evidence;
+          task.result = latest.result;
+        }
+        task.wait = latest.wait;
+        task.cancellation = latest.cancellation;
         save(this.path(task.id), task);
       }
     } finally {
@@ -167,12 +187,72 @@ export class Subagents {
     }
   }
   /** Wait observes durable execution; dispatch is owned by the parent driver. */
-  async wait(id: string): Promise<ShortTask> {
+  async wait(id: string, timeoutMs?: number): Promise<ShortTask> {
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0))
+      throw new Error('Expected nonnegative timeout');
+    const deadline = timeoutMs === undefined ? Infinity : Date.now() + timeoutMs;
     while (true) {
       const task = this.get(id);
       if (['succeeded', 'failed', 'unknown'].includes(task.status)) return task;
-      await new Promise((r) => setTimeout(r, 50));
+      if (Date.now() >= deadline) {
+        task.wait = { timedOut: true, at: new Date().toISOString() };
+        save(this.path(id), task);
+        return task;
+      }
+      await new Promise((r) => setTimeout(r, 10));
     }
+  }
+  /** Cancellation requests never imply execution stopped; only a receipt releases capacity. */
+  async cancel(id: string, runner: ShortRunner): Promise<ShortTask> {
+    let task = this.get(id);
+    if (!['running', 'unknown'].includes(task.status))
+      throw new Error('Expected occupied execution');
+    task.cancellation = { requested: new Date().toISOString(), outcome: 'failed' };
+    save(this.path(id), task);
+    try {
+      if (!runner.cancellation || !runner.cancel) {
+        task = this.get(id);
+        task.cancellation = { ...task.cancellation!, outcome: 'unsupported' };
+      } else {
+        const receipt = await runner.cancel(task);
+        if (!receipt.evidence) throw new Error('Expected verified termination receipt');
+        task = this.get(id);
+        task.cancellation = {
+          requested: task.cancellation!.requested,
+          outcome: 'confirmed',
+          evidence: receipt.evidence,
+        };
+        if (['running', 'unknown'].includes(task.status)) {
+          task.status = 'failed';
+          task.error = 'Execution cancelled with verified termination';
+          task.evidence = receipt.evidence;
+          task.result = '';
+        }
+      }
+    } catch (error) {
+      task = this.get(id);
+      task.cancellation = { ...task.cancellation!, outcome: 'failed', error: String(error) };
+    }
+    save(this.path(id), task);
+    return task;
+  }
+  /** Reconcile loss using adapter evidence; missing execution is unknown, never success. */
+  async reconcile(id: string, runner: ShortRunner): Promise<ShortTask> {
+    let task = this.get(id);
+    if (!['running', 'unknown'].includes(task.status)) return task;
+    try {
+      const observed = runner.observe ? await runner.observe(task) : { status: 'unknown' as const };
+      if (observed.status === 'failed' && !observed.evidence)
+        throw new Error('Expected termination evidence');
+      task = this.get(id);
+      if (!['running', 'unknown'].includes(task.status)) return task;
+      Object.assign(task, observed);
+    } catch (error) {
+      task.status = 'unknown';
+      task.error = String(error);
+    }
+    save(this.path(id), task);
+    return task;
   }
   /** Collect once or repeatedly without repeating execution. */
   collect(id: string): ShortTask {
@@ -201,6 +281,7 @@ export class Subagents {
 /** Direct Codex process with explicit sandbox permissions; never creates tmux. */
 export class CodexShortRunner implements ShortRunner {
   readonly name = 'codex-short';
+  readonly cancellation = false;
   /** Completion requires process exit, completed-turn event and attributed result. */
   async run(
     task: ShortTask,

@@ -98,3 +98,59 @@ test('missing capabilities refuse launch; an empty receipt cannot report success
     rmSync(root, { recursive: true, force: true });
   }
 }, 10000);
+
+test('core waits and cancellation preserve occupied identity until verified termination', async () => {
+  const { waitAttempt, cancelAttempt, inspectAttemptControl, reconcileAttempt } =
+    await import('../../packages/core/src/workflow/runtime.js');
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-core-control-')));
+  try {
+    const attempt = {
+      id: 'attempt',
+      fleet: 'fleet',
+      role: 'worker' as const,
+      runner: 'controlled',
+      brief: 'work',
+      status: 'running' as const,
+      created: 'now',
+      directory: root,
+      checkout: root,
+    };
+    let finish!: (value: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    expect(await waitAttempt(attempt, { collect: () => pending }, 1)).toEqual({ timedOut: true });
+    expect(attempt.status).toBe('running');
+    expect((await cancelAttempt(attempt, {})).cancellation?.outcome).toBe('unsupported');
+    expect(
+      (
+        await cancelAttempt(attempt, {
+          cancellation: true,
+          async cancel() {
+            throw new Error('refused');
+          },
+        })
+      ).cancellation?.outcome,
+    ).toBe('failed');
+    expect((await reconcileAttempt(attempt, {})).execution?.status).toBe('unknown');
+    finish('late result');
+    expect(await waitAttempt(attempt, { collect: () => pending }, 100)).toEqual({
+      timedOut: false,
+      result: 'late result',
+    });
+    expect(
+      (
+        await cancelAttempt(attempt, {
+          cancellation: true,
+          async cancel() {
+            return { evidence: 'verified process exit' };
+          },
+        })
+      ).execution?.status,
+    ).toBe('terminated');
+    expect(inspectAttemptControl(attempt).cancellation?.evidence).toBe('verified process exit');
+    expect(attempt.status).toBe('running'); // checkout and role ownership unchanged
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 10000);

@@ -109,3 +109,143 @@ test('unverified execution retains capacity and collected failures remain distin
     rmSync(root, { recursive: true, force: true });
   }
 }, 10000);
+
+test('wait timeout and failed cancellation retain execution and capacity until a terminal receipt', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-control-')));
+  const config = {
+    file: join(root, 'config'),
+    project: root,
+    root,
+    slots: [],
+    worktrees: false,
+    base: 'main',
+  };
+  try {
+    const manager = new Subagents(config, { fleet: 1, parent: 1 });
+    const input = {
+      parent: { id: 'worker', role: 'worker' as const, task: 'issue' },
+      checkout: root,
+      mode: 'read' as const,
+      files: [],
+      brief: 'inspect',
+    };
+    const first = manager.create(input);
+    let finish!: (value: { status: 'succeeded'; result: string; evidence: string }) => void;
+    const dispatch = manager.dispatch({
+      name: 'controlled',
+      run: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    });
+    const second = manager.create(input);
+    await manager.wait(first.id, 1);
+    expect(manager.get(first.id)).toMatchObject({ status: 'running', wait: { timedOut: true } });
+    await manager.cancel(first.id, {
+      name: 'unsupported',
+      cancellation: false,
+      async run() {
+        throw new Error('unused');
+      },
+    });
+    expect(manager.get(first.id)).toMatchObject({
+      status: 'running',
+      cancellation: { outcome: 'unsupported' },
+    });
+    await manager.cancel(first.id, {
+      name: 'failed',
+      cancellation: true,
+      async cancel() {
+        throw new Error('refused');
+      },
+      async run() {
+        throw new Error('unused');
+      },
+    });
+    expect(manager.get(first.id)).toMatchObject({
+      status: 'running',
+      cancellation: { outcome: 'failed' },
+    });
+    expect(manager.get(second.id).status).toBe('queued');
+    finish({ status: 'succeeded', result: 'late result', evidence: 'verified exit 0' });
+    // Second execution is also controlled; keep this test focused on the first receipt.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(manager.collect(first.id).result).toBe('late result');
+    finish({ status: 'succeeded', result: 'second', evidence: 'verified exit 0' });
+    await dispatch;
+    expect(manager.get(first.id).cancellation?.outcome).toBe('failed');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 10000);
+
+test('unknown execution reserves capacity and only verified cancellation permits another task', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'pc-cancel-')));
+  const config = {
+    file: join(root, 'config'),
+    project: root,
+    root,
+    slots: [],
+    worktrees: false,
+    base: 'main',
+  };
+  try {
+    const manager = new Subagents(config, { fleet: 1, parent: 1 });
+    const input = {
+      parent: { id: 'parent', role: 'landing' as const, task: 'task' },
+      checkout: root,
+      mode: 'read' as const,
+      files: [],
+      brief: 'inspect',
+    };
+    const first = manager.create(input);
+    await manager.dispatch({
+      name: 'lost',
+      async run() {
+        throw new Error('connection lost');
+      },
+    });
+    const second = manager.create(input);
+    expect(
+      (
+        await manager.reconcile(first.id, {
+          name: 'lost',
+          async run() {
+            throw new Error('unused');
+          },
+        })
+      ).status,
+    ).toBe('unknown');
+    await manager.dispatch({
+      name: 'blocked',
+      async run() {
+        throw new Error('must not dispatch');
+      },
+    });
+    expect(manager.get(second.id).status).toBe('queued');
+    await expect(Promise.resolve().then(() => manager.collect(first.id))).rejects.toThrow(
+      /terminal/,
+    );
+    const cancelled = await manager.cancel(first.id, {
+      name: 'verified',
+      cancellation: true,
+      async cancel() {
+        return { evidence: 'adapter confirmed exit for this attempt' };
+      },
+      async run() {
+        throw new Error('unused');
+      },
+    });
+    expect(cancelled).toMatchObject({ status: 'failed', cancellation: { outcome: 'confirmed' } });
+    await manager.dispatch({
+      name: 'next',
+      async run() {
+        return { status: 'succeeded', result: 'next done', evidence: 'exit0' };
+      },
+    });
+    expect(manager.collect(second.id).result).toBe('next done');
+    expect(manager.get(first.id).parent.id).toBe('parent');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 10000);
