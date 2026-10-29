@@ -1,6 +1,7 @@
+import { claimDriver } from './driver-lock.js';
 /** Goal acceptance and the sole human workflow approval: closing an EPIC. */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDirectory } from './handoff.js';
 import type { FleetConfig } from './fleet-config.js';
@@ -42,7 +43,7 @@ export async function completeEpic(
   const home = stateDirectory(config, '.runtime', 'epic-completion', key),
     file = join(home, 'completion.json');
   const lock = join(home, 'driver.lock');
-  mkdirSync(lock);
+  claimDriver(lock);
   try {
     const run: EpicCompletion = existsSync(file)
       ? JSON.parse(readFileSync(file, 'utf8'))
@@ -65,6 +66,18 @@ export async function completeEpic(
         save();
       }
     const turn = async (role: 'epic' | 'conductor', brief: string) => {
+      const retained = run.turns.find(
+        (t) =>
+          t.role === role && t.brief === brief && (t.result === undefined || role === 'conductor'),
+      );
+      if (retained) {
+        if (retained.result !== undefined) return retained.result;
+        if (!retained.conversation || retained.status !== 'running')
+          throw new Error('Missing original receipt; retain unknown occupancy');
+        retained.result = await runner.collect(retained);
+        save();
+        return retained.result;
+      }
       const id = randomUUID(),
         directory = stateDirectory(config, '.runtime', 'epic-completion', key, id);
       const attempt: IssueTurn = {

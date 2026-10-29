@@ -27,7 +27,8 @@ test('merged delivery records and archives before releasing a real worktree; unk
     base: 'HEAD',
   };
   let stopped = false,
-    closed = 0;
+    closed = 0,
+    interrupted = false;
   const roles: string[] = [];
   const runner = {
     name: 'controlled',
@@ -37,6 +38,10 @@ test('merged delivery records and archives before releasing a real worktree; unk
       return { conversation: a.id, address: 'tmux:test', evidence: 'started' };
     },
     async collect(a: IssueTurn) {
+      if (a.role === 'conductor' && !interrupted) {
+        interrupted = true;
+        throw Error('notification lost after cleanup');
+      }
       return a.role === 'worker'
         ? JSON.stringify({
             complete: true,
@@ -64,6 +69,10 @@ test('merged delivery records and archives before releasing a real worktree; unk
     expect(existsSync(checkout)).toBe(true);
     expect(closed).toBe(1);
     stopped = true;
+    await expect(
+      finishDelivery(config, runner, provider, { repository: 'o/r', issue: 7, checkout }, 4, []),
+    ).rejects.toThrow('notification lost');
+    expect(existsSync(checkout)).toBe(false);
     const done = await finishDelivery(
       config,
       runner,

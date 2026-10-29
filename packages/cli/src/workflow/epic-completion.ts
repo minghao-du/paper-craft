@@ -1,10 +1,10 @@
 /** Connect professional head gates and final human EPIC closure to public workflow. */
 import { execFileSync } from 'node:child_process';
-import { randomUUID, createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { completeEpic, type EpicCloseDecision } from '@paper-craft/core/workflow/epic-completion';
-import { landDelivery } from '@paper-craft/core/workflow/postmerge';
+import { landDelivery, finishDelivery } from '@paper-craft/core/workflow/postmerge';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { stateDirectory } from '@paper-craft/core/workflow/handoff';
 import type { FleetConfig } from '@paper-craft/core/workflow/fleet-config';
@@ -23,6 +23,34 @@ export async function finishEpic(
     runner,
     {
       async deliver(task) {
+        const completionKey = createHash('sha256')
+          .update(`${config.file}:${epic.repository}:${task.number}`)
+          .digest('hex');
+        const completed = join(
+          stateDirectory(config, '.runtime', 'completion', completionKey),
+          'completion.json',
+        );
+        if (existsSync(completed)) {
+          const record = JSON.parse(readFileSync(completed, 'utf8'));
+          if (record.status === 'done') return JSON.stringify(record);
+          if (record.releasePrepared) {
+            const prFile = join(
+              stateDirectory(config, '.runtime', 'pull-requests', completionKey),
+              'pr.json',
+            );
+            const pr = JSON.parse(readFileSync(prFile, 'utf8')).pr;
+            return JSON.stringify(
+              await finishDelivery(
+                config,
+                runner,
+                new GitHubPullRequests(config.project, epic.repository),
+                { repository: epic.repository, issue: task.number, checkout: task.checkout! },
+                pr,
+                epic.turns.filter((t) => t.checkout === task.checkout),
+              ),
+            );
+          }
+        }
         const checkout = task.checkout!,
           github = new GitHubPullRequests(checkout, epic.repository);
         const delivery = {
@@ -34,27 +62,35 @@ export async function finishEpic(
         const pr = await github.ensure(),
           head = (await github.read(pr)).head;
         const confirmHead = async (head: string) => {
-          const id = randomUUID(),
+          const id = createHash('sha256')
+              .update(`${config.file}:${epic.repository}:${task.number}:${head}`)
+              .digest('hex'),
             directory = stateDirectory(config, '.runtime', 'epic-gates', id);
           const brief = `Read AGENTS.md. Professionally review delivery ${epic.repository}#${task.number} PR #${pr} head ${head} against EPIC #${epic.epic} original objective ${epic.goal} and task ${task.body}. Result ${task.result}. Reply only JSON {"approved":true,"evidence":"review findings"}. Approval is professional judgment, not human EPIC closure.`;
-          const turn: IssueTurn = {
-            id,
-            directory,
-            brief,
-            role: 'epic',
-            fleet: createHash('sha256').update(config.file).digest('hex'),
-            runner: runner.name,
-            status: 'starting',
-            checkout: config.project,
-            created: new Date().toISOString(),
-          };
+          const persisted = join(directory, 'attempt.json');
+          const fresh = !existsSync(persisted);
+          const turn: IssueTurn = existsSync(persisted)
+            ? JSON.parse(readFileSync(persisted, 'utf8'))
+            : {
+                id,
+                directory,
+                brief,
+                role: 'epic',
+                fleet: createHash('sha256').update(config.file).digest('hex'),
+                runner: runner.name,
+                status: 'starting',
+                checkout: config.project,
+                created: new Date().toISOString(),
+              };
           const save = () =>
             writeFileSync(join(directory, 'attempt.json'), JSON.stringify(turn, null, 2));
           writeFileSync(join(directory, 'brief.md'), brief);
           save();
-          Object.assign(turn, await runner.start(turn), { status: 'running' });
+          if (fresh) Object.assign(turn, await runner.start(turn), { status: 'running' });
           save();
-          turn.result = await runner.collect(turn);
+          if (!turn.conversation || turn.status !== 'running')
+            throw new Error('Reconcile original professional gate before retry');
+          turn.result = turn.result ?? (await runner.collect(turn));
           save();
           const approval = JSON.parse(turn.result);
           if (
@@ -75,6 +111,22 @@ export async function finishEpic(
         return JSON.stringify(result);
       },
       async close(number) {
+        const existing = execFileSync(
+          'gh',
+          [
+            'issue',
+            'view',
+            String(number),
+            '--repo',
+            epic.repository,
+            '--json',
+            'state',
+            '--jq',
+            '.state',
+          ],
+          { cwd: config.project, encoding: 'utf8' },
+        ).trim();
+        if (existing === 'CLOSED') return;
         execFileSync('gh', ['issue', 'close', String(number), '--repo', epic.repository], {
           cwd: config.project,
         });

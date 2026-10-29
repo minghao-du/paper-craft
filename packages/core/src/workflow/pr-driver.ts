@@ -1,3 +1,4 @@
+import { claimDriver } from './driver-lock.js';
 /** Current-head PR quality, repair and automatic landing workflow. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
@@ -58,7 +59,7 @@ export async function drivePullRequest(
   mkdirSync(home, { recursive: true });
   const file = join(home, 'pr.json'),
     lock = join(home, 'driver.lock');
-  mkdirSync(lock);
+  claimDriver(lock);
   let run: PrRun | undefined;
   try {
     run = existsSync(file)
@@ -101,8 +102,12 @@ export async function drivePullRequest(
         throw new Error('Missing current-head EPIC professional confirmation');
       const role = failed ? 'worker' : 'landing';
       const previous = state.turns.at(-1);
-      if (previous && !previous.result)
-        throw new Error('Uncollected original execution; reconcile before another attempt');
+      if (previous && previous.result === undefined) {
+        if (!previous.conversation || previous.status !== 'running')
+          throw new Error('Missing original receipt; preserve unknown occupancy');
+        previous.result = await runner.collect(previous);
+        save(file, state);
+      }
       const id = randomUUID(),
         directory = stateDirectory(config, '.runtime', 'pull-requests', key, id);
       mkdirSync(directory, { recursive: true });
@@ -117,15 +122,20 @@ export async function drivePullRequest(
         checkout: delivery.checkout,
         brief: `Read project AGENTS.md and applicable checkout guidance. ${delivery.repository} Issue #${delivery.issue}, PR #${state.pr}, head ${live.head}. ${failed ? 'Repair failed checks or conflicts; push fixes and return evidence.' : 'Run pc-pr-check and pc-pr-review quality gates at this head; return JSON {"passed":true,"head":"' + live.head + '","evidence":"quality outcomes"} only if all applicable gates pass. Do not merge; the driver performs compare-and-merge.'}`,
       };
+      const retained =
+        previous?.role === role && previous.brief === turn.brief ? previous : undefined;
+      if (retained) {
+        Object.assign(turn, retained);
+      }
       writeFileSync(join(directory, 'brief.md'), turn.brief);
-      state.turns.push(turn);
+      if (!retained) state.turns.push(turn);
       save(file, state);
-      const receipt = await runner.start(turn);
+      const receipt = retained ?? (await runner.start(turn));
       if (!receipt.conversation || !receipt.address || !receipt.evidence)
         throw new Error('Missing execution receipt');
       Object.assign(turn, receipt, { status: 'running' });
       save(file, state);
-      turn.result = await runner.collect(turn);
+      turn.result = turn.result ?? (await runner.collect(turn));
       save(file, state);
       if (failed) continue;
       const gate = JSON.parse(turn.result);

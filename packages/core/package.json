@@ -141,6 +141,11 @@
       "paper-craft-source": "./src/workflow/epic-completion.ts",
       "types": "./dist/workflow/epic-completion.d.ts",
       "default": "./dist/workflow/epic-completion.js"
+    },
+    "./workflow/recovery": {
+      "paper-craft-source": "./src/workflow/recovery.ts",
+      "types": "./dist/workflow/recovery.d.ts",
+      "default": "./dist/workflow/recovery.js"
     }
   },
   "files": [

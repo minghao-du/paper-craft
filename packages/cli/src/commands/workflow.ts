@@ -1,3 +1,5 @@
+import { CodexShortRunner } from '@paper-craft/core/workflow/subagents';
+import { recoverFleet } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
 import { landDelivery } from '@paper-craft/core/workflow/postmerge';
 import { registerSubagentCommands } from './workflow-subagents.js';
@@ -16,7 +18,7 @@ import { driveEpicIssue, inspectEpicRun } from '@paper-craft/core/workflow/epic-
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { output } from '../utils/output.js';
 
 interface Options {
@@ -64,6 +66,27 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   const conductor = workflow
     .command('conductor')
     .description('Start or inspect the Fleet managed Conductor');
+  configured(
+    conductor
+      .command('recover')
+      .description(
+        'Reconcile durable Runner receipts and collect original results; retain all ownership',
+      ),
+  ).action(async (options: Options) => {
+    try {
+      output(
+        await recoverFleet(
+          loadFleetConfig(options.config),
+          new CodexRunner(),
+          new CodexShortRunner(),
+        ),
+        opts.human(),
+      );
+    } catch (error) {
+      output({ status: 'blocked', error: String(error) }, false);
+      process.exitCode = 2;
+    }
+  });
   configured(
     conductor.command('status').description('Read durable Conductor identity and occupancy'),
   ).action((options: Options) =>
@@ -147,7 +170,10 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         await landDelivery(
           config,
           runner,
-          new GitHubPullRequests(task.checkout, issue.repository),
+          new GitHubPullRequests(
+            existsSync(task.checkout) ? task.checkout : config.project,
+            issue.repository,
+          ),
           {
             repository: issue.repository,
             issue: issue.number,
@@ -183,7 +209,10 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           await landDelivery(
             config,
             new CodexRunner(),
-            new GitHubPullRequests(task.checkout, issue.repository),
+            new GitHubPullRequests(
+              existsSync(task.checkout) ? task.checkout : config.project,
+              issue.repository,
+            ),
             {
               repository: issue.repository,
               issue: issue.number,
