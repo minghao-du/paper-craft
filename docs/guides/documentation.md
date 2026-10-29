@@ -30,4 +30,6 @@ Translate affected content incrementally, review meaning and terminology, then e
 
 Sections correspond by heading occurrence order. Keys use English heading-slug paths, with `~2` suffixes for repeats. Each side hashes its own top-level authored blocks, joined by newlines, using the first 16 hexadecimal characters of SHA-256. Fenced code is excluded from prose hashes. No generated prose exclusion is supported. Isolated body changes preserve unrelated entries; heading or hierarchy changes can change multiple keys.
 
+Both checking and recording reject differences in heading depth/order, list kinds, ordered-list starts and item counts, and table dimensions. Code blocks must preserve their kind, fence metadata and bodies byte for byte, including comments and sample output. Translate explanations outside code fences. Inserting or reordering duplicate headings can change multiple record keys; manually assigned section IDs are not used.
+
 The record format follows DeepSeek Harness's inspected revision `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`. Its MIT license was reviewed; this tooling is independently implemented. Records are canonical ordered YAML mappings with separate `en` and `zh` hashes. Values need not match or differ.
