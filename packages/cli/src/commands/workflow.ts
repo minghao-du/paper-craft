@@ -1,3 +1,4 @@
+import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
 import { Command } from 'commander';
 import { loadFleetConfig } from '@paper-craft/core/workflow/fleet-config';
@@ -55,6 +56,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         else output({ path: config.root }, opts.human());
       }),
     );
+  registerSubagentCommands(workflow, opts);
   const conductor = workflow
     .command('conductor')
     .description('Start or inspect the Fleet managed Conductor');

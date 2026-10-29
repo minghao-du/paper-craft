@@ -70,6 +70,7 @@ paper-craft reimplements all bipartite skills in TypeScript, renaming the `bip-`
 | Skill (origin) | Purpose |
 |---------------|---------|
 | `pc-epic` (`bip-epic`) | EPIC sessions: track program strategy, triage issues/PRs |
+| `pc-subagent` | Temporary read/write delegation for all core roles |
 | `pc-conductor` (`bip-conductor`) | Conductor: manage clone pool, spawn workers |
 | `pc-conductor-spawn` (`bip-conductor-spawn`) | Spawn new workers in tmux windows |
 | `pc-conductor-handoff` (`bip-conductor-handoff`) | Task handoff between workers |
