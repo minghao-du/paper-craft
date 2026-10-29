@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,8 +20,16 @@ test('protected cached overview preserves registered workflow evidence after fai
       phase: 'implementing',
       summary: 'Build overview',
       blockers: ['decision'],
+      stop_reason: 'awaiting-human-merge',
+      lead_guidance: 'Review dataset decision',
     });
     writeFileSync(status, original);
+    const cli = await promisify(execFile)(
+      './pc',
+      ['dashboard', 'status', '--config', config, '--data-dir', join(root, 'cli-data')],
+      { timeout: 15000, maxBuffer: 1024 * 1024 },
+    );
+    expect(JSON.parse(cli.stdout).fleets[0].tasks[1].summary).toBe('Build overview');
     dashboard = await createDashboard({
       dataDir: join(root, 'data'),
       configs: [config],
@@ -48,6 +58,12 @@ test('protected cached overview preserves registered workflow evidence after fai
       runtime: 'unknown',
       executionIdentity: 'unknown',
     });
+    expect(snapshot.fleets[0].tasks[1].interventions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: 'awaiting-human-merge' }),
+        expect.objectContaining({ reason: 'Review dataset decision' }),
+      ]),
+    );
     expect(await (await request('/api/snapshot', headers)).json()).toEqual(snapshot);
     writeFileSync(status, '{broken');
     await dashboard.refresh(true);

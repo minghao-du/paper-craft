@@ -63,7 +63,8 @@ export async function readTaskLog(
         source: `tmux ${pane[0].id}`,
         text: sanitize(text.slice(0, 16384)),
         nextOffset: null,
-        detail: 'Latest bounded terminal segment; private prompt/credential lines omitted',
+        detail:
+          'Latest bounded terminal segment; recognized prompt/credential lines omitted. Prompt context before the captured window is unknown.',
       };
     }
     const source = join(directory, '.epic-worklog.md');
@@ -76,18 +77,39 @@ export async function readTaskLog(
     try {
       const metadata = await file.stat();
       if (!metadata.isFile()) throw new Error('Expected regular worklog file');
-      const buffer = Buffer.alloc(16384);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, offset);
-      let text = buffer.subarray(0, bytesRead).toString('utf8');
-      if (offset > 0) text = text.slice(text.indexOf('\n') + 1);
-      if (offset + bytesRead < metadata.size)
-        text = text.slice(0, Math.max(0, text.lastIndexOf('\n')));
+      // Read bounded preceding context so pagination cannot reset prompt redaction.
+      if (offset + 16384 > 1024 * 1024)
+        throw new Error('Worklog context exceeds safe 1 MiB read bound');
+      const buffer = Buffer.alloc(Math.min(metadata.size, offset + 16384));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      const end = Math.min(bytesRead, offset + 16384);
+      const prefix = buffer.subarray(0, Math.min(bytesRead, offset + 128)).toString('utf8');
+      let consumed = end;
+      let text: string;
+      if (/<(?:prompt|system|user_prompt)>/i.test(prefix)) {
+        text = '[private prompt omitted]';
+      } else {
+        let start = offset;
+        if (start && buffer[start - 1] !== 10) {
+          const newline = buffer.indexOf(10, start);
+          start = newline >= 0 ? newline + 1 : end;
+        }
+        if (end < metadata.size && buffer[end - 1] !== 10) {
+          const newline = buffer.lastIndexOf(10, end - 1);
+          if (newline >= start) consumed = newline + 1;
+          else {
+            text = '[oversized log line omitted]';
+            start = end;
+          }
+        }
+        text ??= buffer.subarray(start, consumed).toString('utf8');
+      }
       return {
         ...base,
         state: 'read',
         source,
         text: sanitize(text),
-        nextOffset: offset + bytesRead < metadata.size ? offset + bytesRead : null,
+        nextOffset: consumed < metadata.size ? consumed : null,
       };
     } finally {
       await file.close();
@@ -99,7 +121,10 @@ export async function readTaskLog(
       state: missing ? 'absent' : 'error',
       error: missing
         ? 'Worklog not present'
-        : 'Cannot read validated log source; check registration and file permissions',
+        : error instanceof Error &&
+            error.message === 'Worklog context exceeds safe 1 MiB read bound'
+          ? 'Worklog context exceeds safe 1 MiB read bound; inspect later records locally in a terminal'
+          : 'Cannot read validated log source; check registration and file permissions',
     };
   }
 }

@@ -40,7 +40,7 @@ function collectFleet(registration: FleetRegistration): Promise<DashboardFleet> 
   return new Promise((resolve) => {
     const worker = new Worker(
       `const { parentPort, workerData } = require('node:worker_threads'); import('@paper-craft/core/workflow/dashboard').then(m => m.readDashboardFleet(workerData)).then(value => parentPort.postMessage(value)).catch(error => { throw error; });`,
-      { eval: true, workerData: registration },
+      { eval: true, execArgv: [], workerData: registration },
     );
     const failed = (message: string): DashboardFleet => ({
       ...registration,
@@ -230,14 +230,12 @@ export async function createDashboard(options: DashboardOptions) {
           value: runtimeCache.get(t.id),
         })),
       ),
-      ...remoteEvidence
-        .read()
-        .map((r) => ({
-          fleetId: r.fleetId,
-          subject: `${r.slot}:${r.host}:${r.jobId}`,
-          source: 'remote',
-          value: r,
-        })),
+      ...remoteEvidence.read().map((r) => ({
+        fleetId: r.fleetId,
+        subject: `${r.slot}:${r.host}:${r.jobId}`,
+        source: 'remote',
+        value: r,
+      })),
       ...github
         .values()
         .map((g) => ({ fleetId: g.fleetId, subject: g.taskId, source: 'github', value: g })),

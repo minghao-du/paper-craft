@@ -42,13 +42,34 @@ test('authenticated logs are bounded, segmented and restricted to verified regis
     const url = `/api/tasks/${id}/logs`;
     expect((await get(url, false)).status).toBe(401);
     const first = await (await get(url)).json();
-    expect(first).toMatchObject({ kind: 'worklog', state: 'read', offset: 0, nextOffset: 16384 });
+    expect(first).toMatchObject({ kind: 'worklog', state: 'read', offset: 0, nextOffset: 16380 });
     expect(first.text.length).toBeLessThanOrEqual(16384);
     const last = await (await get(url + '?offset=79990')).json();
     expect(last.text).not.toContain('private-secret');
     expect((await get(url + '?path=/etc/passwd')).status).toBe(400);
     expect((await get(url + '?source=runner')).status).toBe(200);
     expect(await (await get(url + '?source=runner')).json()).toMatchObject({ state: 'unknown' });
+    const crossing = 'prefix\n' + 'x'.repeat(16370) + '\ncrossing-line-must-survive\nlast\n';
+    writeFileSync(log, crossing);
+    let combined = '',
+      cursor = 0;
+    do {
+      const page = await (await get(url + '?offset=' + cursor)).json();
+      combined += page.text;
+      cursor = page.nextOffset;
+    } while (cursor !== null);
+    expect(combined).toBe(crossing);
+    writeFileSync(log, '<prompt>\n' + 'PRIVATE-CONTINUATION\n'.repeat(2000));
+    const privatePage = await (await get(url + '?offset=16384')).json();
+    expect(privatePage.text).not.toContain('PRIVATE-CONTINUATION');
+    const splitMarker = await (await get(url + '?offset=2')).json();
+    expect(splitMarker.text).not.toContain('PRIVATE-CONTINUATION');
+    writeFileSync(log, 'x'.repeat(20000));
+    const oversized = await (await get(url)).json();
+    expect(oversized).toMatchObject({ text: '[oversized log line omitted]', nextOffset: 16384 });
+    const refused = await (await get(url + '?offset=1048576')).json();
+    expect(refused).toMatchObject({ state: 'error' });
+    expect(refused.error).toContain('1 MiB');
     rmSync(log);
     symlinkSync('/etc/passwd', log);
     expect(await (await get(url)).json()).toMatchObject({ state: 'error' });

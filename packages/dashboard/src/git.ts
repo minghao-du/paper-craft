@@ -21,7 +21,7 @@ function probe(config: string): Promise<FleetReport> {
       Promise.all([import('@paper-craft/core/workflow/fleet-config'),import('@paper-craft/core/workflow/fleet')])
         .then(([c,f])=>parentPort.postMessage(f.checkFleet(c.loadFleetConfig(workerData),'collisions',false)));
     `,
-      { eval: true, workerData: config },
+      { eval: true, execArgv: [], workerData: config },
     );
     let settled = false;
     const finish = (error?: Error, value?: FleetReport) => {

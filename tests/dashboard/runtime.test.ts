@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,8 @@ test('runtime HTTP evidence attributes panes by physical directory, keeps shell 
     writeFileSync(status, JSON.stringify({ phase: 'coding', summary: 'Working' }));
     const oldTime = new Date(Date.now() - 60 * 60000);
     utimesSync(status, oldTime, oldTime);
+    mkdirSync(join(root, 'pool', 'worker', '.claude'));
+    execFileSync('mkfifo', [join(root, 'pool', 'worker', '.claude', 'ralph-loop.local.md')]);
     let failed = false;
     let calls = 0;
     service = await createDashboard({

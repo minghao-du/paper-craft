@@ -89,6 +89,10 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
             reason: 'Recorded phase requests human intervention',
             source: task.source,
           });
+        for (const field of ['stop_reason', 'lead_guidance']) {
+          if (typeof record[field] === 'string' && record[field])
+            task.interventions.push({ reason: record[field], source: `${task.source}#${field}` });
+        }
         const awaiting =
           record.awaiting && typeof record.awaiting === 'object'
             ? (record.awaiting as Record<string, unknown>)
