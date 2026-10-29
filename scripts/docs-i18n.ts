@@ -9,6 +9,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import type { Root, RootContent, Nodes } from 'mdast';
+import { validateStructure } from './docs-i18n-structure.js';
 
 const root = process.cwd();
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 16);
@@ -140,7 +141,10 @@ function main() {
       const paths = pairPaths(path);
       for (const file of [paths.en, paths.zh, ...(command === 'record' ? [] : [paths.record])])
         if (!existsSync(file)) throw new Error(`missing ${file}`);
-      const current = computeRecord(readFileSync(paths.en, 'utf8'), readFileSync(paths.zh, 'utf8'));
+      const english = readFileSync(paths.en, 'utf8'),
+        chinese = readFileSync(paths.zh, 'utf8');
+      validateStructure(markdown(english), markdown(chinese), english, chinese);
+      const current = computeRecord(english, chinese);
       if (command === 'record') writeFileSync(paths.record, stringify(current, { lineWidth: 0 }));
       else {
         const stored = parse(readFileSync(paths.record, 'utf8'));
