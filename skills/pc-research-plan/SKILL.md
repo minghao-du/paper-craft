@@ -1,19 +1,20 @@
 ---
 name: pc-research-plan
-description: Create or update a project's research overview and phased research plan.
+description: Create or update the research route in a Project's shared local research state.
 disable-model-invocation: true
 ---
 
 # /pc-research-plan
 
-Create or update `RESEARCH-PLAN.md` in the target project root so a new agent can understand the research intent and proposed route before work begins.
+Read [the research-state convention](../../docs/guides/research-state.md) and create or update the route in the Project’s designated research entry.
 This skill produces a research overview, independent of code implementation; its scope is the plan and its discovery pointer, not research execution.
 Use the user's language for the plan and discussion.
 
 ## 1. Establish the research intent
 
 Resolve the target project from the user's request or the current project when unambiguous; ask when the target is unclear.
-Read its agent guidance, existing research plan, and relevant research materials available in the project or supplied by the user.
+Resolve its fixed entry from agent/startup guidance and read the entry, relevant linked records and materials supplied by the user.
+If absent, report available sources and information gaps, then establish one designated home and pointer under the convention; label reconstructed or unverified content explicitly.
 Use existing discussions and documents rather than restarting settled decisions.
 Papers, a manuscript, and implementation code are not prerequisites.
 
@@ -45,27 +46,23 @@ Use as many stages as the research needs, without imposing a fixed sequence or r
 
 **Done:** Each stage has all four elements, its place in the route is clear, and every scientific assertion is either source-grounded or explicitly prospective or unresolved.
 
-## 3. Write the plan and discovery pointer
+## 3. Update the shared research state
 
-Write `RESEARCH-PLAN.md` at the target project root.
-On subsequent manual invocations, update the same file to express the current research intent and route, preserving relevant user-authored material and resolving conflicting proposals with the user.
-Keep actual findings in their existing manuscript or research records and reference them where they affect the plan.
-Keep task progress in the project's issue tracker rather than creating a second execution ledger.
+Write the agreed route into the same entry, with detail linked only when complexity warrants it.
+Preserve relevant findings, interpretations and useful unfinished discussion; keep each full analysis in one place.
+The coordinating session integrates updates; other sessions submit proposed changes and sources to it.
+Stop maintaining a parallel `RESEARCH-PLAN.md`; existing materials are inputs, not a second authority.
+Keep task progress in the original task system.
+Add or update the discovery sentence from the convention in related repository/startup guidance, resolving to the same absolute entry from every checkout and preserving unrelated instructions.
+A recorded plan does not authorize research execution.
 
-Add or update one sentence in the target project's root `AGENTS.md`, in the project's language, equivalent to:
-
-> Before interpreting the project's research goals or planning research work, read [RESEARCH-PLAN.md](RESEARCH-PLAN.md) for the current research intent and proposed stages; the plan itself does not authorize execution.
-
-Create `AGENTS.md` with this pointer if absent; otherwise preserve unrelated guidance and maintain a single pointer.
-Reading the plan does not trigger this skill or an automatic plan update; updates require another manual invocation.
-
-**Done:** The root plan expresses the current agreed direction and `AGENTS.md` contains one resolving discovery pointer.
+**Done:** The shared state expresses the agreed route and related guidance resolves to its unique entry.
 
 ## 4. Verify and report
 
-Read the written files and check that the research question, motivation, contribution, scope, stages, and unresolved questions match the discussion.
+Read the updated state and check that the research question, motivation, contribution, scope, stages, and unresolved questions match the discussion.
 Verify every stage's question, method, expected output, and progression condition, and check that plans and hypotheses are distinguishable from established findings.
 Check that local source links and the discovery pointer resolve, and that unrelated agent guidance is preserved.
 Report missing source access or broken references as gaps rather than implying they were verified.
 
-**Done:** Report links to the plan and agent pointer, summarize whether this was a creation or update, and identify any remaining research decisions or evidence gaps.
+**Done:** Report links to the research entry and discovery pointer, summarize whether this was a creation or update, and identify any remaining research decisions or evidence gaps.

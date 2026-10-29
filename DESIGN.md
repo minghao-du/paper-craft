@@ -5,7 +5,9 @@ load-bearing choices — changing them has wide impact.
 
 ## I. JSONL Source of Truth
 
-All persistent data lives in JSONL files (refs, projects, repos).
+Structured persistent data lives in JSONL files (refs, projects, repos).
+Project research state is an explicit exception: local-only Markdown in one
+designated research home, outside Git history (see [research state](docs/guides/research-state.md)).
 Indexes are ephemeral artifacts — rebuilt from JSONL via `pc rebuild`.
 Schema changes require deleting the index and rebuilding, never
 migration scripts.
@@ -27,13 +29,15 @@ pc never phones home.
 
 ## IV. Nexus Pattern
 
-Research data lives in a single git-backed nexus repository. Path comes
+Structured research data lives in a single git-backed nexus repository. Path comes
 from `~/.config/pc/config.yml` → `nexus_path`. The nexus is a git
 repo — research data is versioned and shareable.
 Workflow state may also be written inside the project and clone pool explicitly
 configured by the authoritative `.epic-config.json`: task briefs, slot state,
 holds and verified archives.
 Paths are resolved physically and writes must stay inside these configured roots.
+Project research state may live in its designated local research home, shared
+across repositories and checkouts; it requires neither backup nor synchronization.
 Other pc data stays in the nexus or pc's own config directory.
 
 ## V. Git-Compatible Collaboration

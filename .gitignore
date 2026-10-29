@@ -40,3 +40,6 @@ dist/
 *.tsbuildinfo
 
 /packages/dashboard/web/
+
+# Local Project research state (entire workspace)
+/research-state/

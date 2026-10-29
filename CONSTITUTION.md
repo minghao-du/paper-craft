@@ -23,6 +23,9 @@ stores), not conversation history. A fresh agent reading the files MUST
 be able to pick up where the last one left off.
 
 Corollary: if you can't reconstruct state from files, you have a bug.
+Project research state is file-based but intentionally local-only and outside Git;
+loss of those files may irrecoverably lose scientific judgments.
+No backup or synchronization is required (see DESIGN.md §I and §IV).
 
 ## III. Skills Are the Product
 
