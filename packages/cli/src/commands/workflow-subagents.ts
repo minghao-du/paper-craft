@@ -15,6 +15,8 @@ export function registerSubagentCommands(workflow: Command, opts: { human: () =>
     'get',
     'dispatch',
     'wait',
+    'cancel',
+    'reconcile',
     'collect',
     'cleanup',
     'handoff',
@@ -22,6 +24,7 @@ export function registerSubagentCommands(workflow: Command, opts: { human: () =>
     group
       .command(operation)
       .option('--config <file>', 'Authoritative Fleet configuration', '.epic-config.json')
+      .option('--timeout-ms <number>', 'Bounded wait; timeout preserves execution occupancy')
       .option('--id <uuid>', 'Task identity')
       .option('--input <file>', 'JSON task request (parent, checkout, mode, brief, files)')
       .option('--issue <number>', 'Worker Issue for Conductor handoff')
@@ -31,6 +34,7 @@ export function registerSubagentCommands(workflow: Command, opts: { human: () =>
         async (o: {
           config: string;
           id?: string;
+          timeoutMs?: string;
           input?: string;
           issue?: string;
           fleetLimit: string;
@@ -56,7 +60,16 @@ export function registerSubagentCommands(workflow: Command, opts: { human: () =>
                   result = manager.get(o.id);
                   break;
                 case 'wait':
-                  result = await manager.wait(o.id);
+                  result = await manager.wait(
+                    o.id,
+                    o.timeoutMs === undefined ? undefined : Number(o.timeoutMs),
+                  );
+                  break;
+                case 'cancel':
+                  result = await manager.cancel(o.id, new CodexShortRunner());
+                  break;
+                case 'reconcile':
+                  result = await manager.reconcile(o.id, new CodexShortRunner());
                   break;
                 case 'collect':
                   result = manager.collect(o.id);

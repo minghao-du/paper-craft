@@ -456,3 +456,5 @@ Legacy phases from older `.epic-status.json` files:
 `.epic-config.json`'s `clone_root` / `clone_names` / `local_worktrees` keep working untouched.
 Use the authoritative `.epic-config.json` for clone/worktree layout; this CLI does not implement the upstream global `layout:` launcher.
 EPIC orchestration still reads `.epic-config.json` for now.
+
+For managed execution, public runtime `waitAttempt` records bounded wait timeout separately from execution, `cancelAttempt` records capability and verified receipt or failure, and `reconcileAttempt` verifies terminal evidence without releasing role or checkout ownership. Codex cancellation is unsupported; keep resources reserved on timeout, failed cancellation or unknown execution. Collect the original attempt before considering a new execution.

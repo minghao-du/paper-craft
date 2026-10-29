@@ -25,6 +25,8 @@ export interface ManagedAttempt {
 /** Adapter owns capability checks and evidence; a terminal alone is insufficient. */
 export interface RunnerAdapter {
   name: string;
+  cancellation?: boolean;
+  cancel?(attempt: ManagedAttempt): Promise<{ evidence: string }>;
   preflight(): Promise<void>;
   start(
     attempt: ManagedAttempt,
@@ -99,6 +101,12 @@ function shell(value: string): string {
  */
 export class CodexRunner implements RunnerAdapter {
   readonly name = 'codex';
+  readonly cancellation = false;
+  /** Verified process exit releases execution capacity, never checkout ownership. */
+  async termination(attempt: ManagedAttempt): Promise<boolean> {
+    const file = join(attempt.directory, 'exit-code');
+    return existsSync(file) && /^-?\d+$/.test(readFileSync(file, 'utf8').trim());
+  }
   /** Probe installed CLI capabilities instead of inferring support from its name. */
   async preflight(): Promise<void> {
     execFileSync('tmux', ['-V'], { timeout: 5000 });
@@ -180,4 +188,85 @@ export class CodexRunner implements RunnerAdapter {
       `No Runner acknowledgement within 15s; preserve occupancy and inspect ${attempt.directory}`,
     );
   }
+}
+
+/** Control observations do not overwrite the persisted execution identity or ownership. */
+export interface AttemptControl {
+  execution?: { status: 'running' | 'unknown' | 'terminated'; evidence?: string };
+  wait?: { timedOut: boolean; at: string };
+  cancellation?: {
+    requested: string;
+    outcome: 'unsupported' | 'failed' | 'confirmed';
+    evidence?: string;
+    error?: string;
+  };
+}
+/** Read durable wait/cancellation observations, independently of execution status. */
+export function inspectAttemptControl(attempt: ManagedAttempt): AttemptControl {
+  const file = join(attempt.directory, 'control.json');
+  return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+}
+/** A bounded wait leaves the original collection running and permits later collection. */
+export async function waitAttempt(
+  attempt: ManagedAttempt,
+  runner: { collect(attempt: ManagedAttempt): Promise<string> },
+  timeoutMs: number,
+): Promise<{ timedOut: boolean; result?: string }> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('Expected nonnegative timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      runner.collect(attempt).then((result) => ({ timedOut: false, result })),
+      new Promise<{ timedOut: boolean }>((resolve) => {
+        timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+      }),
+    ]);
+    const control = inspectAttemptControl(attempt);
+    control.wait = { timedOut: result.timedOut, at: new Date().toISOString() };
+    writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(control));
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+/** Cancellation is unsupported unless the adapter explicitly supplies a terminal receipt. */
+export async function cancelAttempt(
+  attempt: ManagedAttempt,
+  runner: {
+    cancellation?: boolean;
+    cancel?(attempt: ManagedAttempt): Promise<{ evidence: string }>;
+  },
+): Promise<AttemptControl> {
+  const control = inspectAttemptControl(attempt);
+  control.cancellation = { requested: new Date().toISOString(), outcome: 'failed' };
+  const file = join(attempt.directory, 'control.json');
+  writeFileSync(file, JSON.stringify(control));
+  try {
+    if (!runner.cancellation || !runner.cancel) control.cancellation.outcome = 'unsupported';
+    else {
+      const receipt = await runner.cancel(attempt);
+      if (!receipt.evidence) throw new Error('Expected verified termination receipt');
+      Object.assign(control.cancellation, { outcome: 'confirmed', evidence: receipt.evidence });
+      control.execution = { status: 'terminated', evidence: receipt.evidence };
+    }
+  } catch (error) {
+    control.cancellation.error = String(error);
+  }
+  writeFileSync(file, JSON.stringify(control));
+  return control;
+}
+
+/** Reconcile execution without changing logical role or checkout ownership. */
+export async function reconcileAttempt(
+  attempt: ManagedAttempt,
+  runner: { termination?(attempt: ManagedAttempt): Promise<boolean> },
+): Promise<AttemptControl> {
+  const control = inspectAttemptControl(attempt);
+  if (control.execution?.status === 'terminated') return control;
+  const terminated = runner.termination ? await runner.termination(attempt) : false;
+  control.execution = terminated
+    ? { status: 'terminated', evidence: 'Adapter verified execution exit' }
+    : { status: 'unknown' };
+  writeFileSync(join(attempt.directory, 'control.json'), JSON.stringify(control));
+  return control;
 }
