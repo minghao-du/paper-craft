@@ -404,3 +404,15 @@ Key sections to maintain:
 `.epic-config.json`'s `clone_root` / `clone_names` / `local_worktrees` keep working untouched.
 Use the authoritative `.epic-config.json` for clone/worktree layout; this CLI does not implement the upstream global `layout:` launcher.
 EPIC orchestration still reads `.epic-config.json` for now.
+
+## Managed goal acceptance
+
+Managed `pc workflow conductor issue` automatically lands delivered children and
+collects EPIC judgment against the original goal, acceptance evidence and blockers.
+Child Issue closure alone is insufficient. Conductor presents one EPIC closure
+request. Keep the EPIC open on silence or refusal. After the human explicitly
+confirms the target, record their exact words with
+`pc workflow conductor close-epic <number> --config <file> --repository <owner/name> --human-confirmation <text>`.
+Only the human-facing Conductor may supply that flag from actual human input;
+Worker, EPIC and Landing output never counts as human confirmation. Confirmation
+continues closure and durable archival without further approval.

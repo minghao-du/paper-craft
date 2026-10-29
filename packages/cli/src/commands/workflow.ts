@@ -1,3 +1,4 @@
+import { finishEpic } from '../workflow/epic-completion.js';
 import { landDelivery } from '@paper-craft/core/workflow/postmerge';
 import { registerSubagentCommands } from './workflow-subagents.js';
 /** Portable workflow CLI shared by agents with filesystem and command execution access. */
@@ -11,7 +12,7 @@ import {
 } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
-import { driveEpicIssue } from '@paper-craft/core/workflow/epic-driver';
+import { driveEpicIssue, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
@@ -96,6 +97,37 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     });
   configured(
     conductor
+      .command('close-epic <number>')
+      .description('Record explicit human confirmation, close and archive an accepted EPIC')
+      .requiredOption('--repository <owner/name>', 'Target repository')
+      .requiredOption('--human-confirmation <text>', 'Exact explicit human closure confirmation'),
+  ).action(
+    async (
+      number: string,
+      options: Options & { repository: string; humanConfirmation: string },
+    ) => {
+      try {
+        const config = loadFleetConfig(options.config);
+        const epic = inspectEpicRun(config, options.repository, Number(number));
+        if (!epic) throw new Error('Expected delivered EPIC record');
+        output(
+          await finishEpic(config, new CodexRunner(), epic, {
+            epic: Number(number),
+            confirmed: true,
+            source: 'human',
+            evidence: options.humanConfirmation,
+          }),
+          opts.human(),
+        );
+      } catch (error) {
+        run(() => {
+          throw error;
+        });
+      }
+    },
+  );
+  configured(
+    conductor
       .command('issue <number>')
       .description('Resolve Issue parent and automatically dispatch standalone or EPIC stages'),
   ).action(async (number: string, options: Options) => {
@@ -104,7 +136,10 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       const issue = readIssue(config.project, Number(number));
       const runner = new CodexRunner();
       if (issue.parent) {
-        output(await driveEpicIssue(config, runner, issue), opts.human());
+        output(
+          await finishEpic(config, runner, await driveEpicIssue(config, runner, issue)),
+          opts.human(),
+        );
         return;
       }
       const task = await driveIssue(config, runner, issue);

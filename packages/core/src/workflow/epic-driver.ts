@@ -23,6 +23,8 @@ export interface EpicRun {
   repository: string;
   epic: number;
   goal: string;
+  /** Immutable original issue objective, independent of professional replanning. */
+  originalGoal?: string;
   constraints: string[];
   tasks: EpicTask[];
   turns: IssueTurn[];
@@ -96,6 +98,7 @@ export async function driveEpic(
     repository: epic.repository,
     epic: epic.number,
     goal: epic.body,
+    originalGoal: epic.body,
     constraints: [],
     tasks: [],
     turns: [],

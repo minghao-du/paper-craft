@@ -136,6 +136,11 @@
       "paper-craft-source": "./src/workflow/postmerge.ts",
       "types": "./dist/workflow/postmerge.d.ts",
       "default": "./dist/workflow/postmerge.js"
+    },
+    "./workflow/epic-completion": {
+      "paper-craft-source": "./src/workflow/epic-completion.ts",
+      "types": "./dist/workflow/epic-completion.d.ts",
+      "default": "./dist/workflow/epic-completion.js"
     }
   },
   "files": [

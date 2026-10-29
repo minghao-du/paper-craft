@@ -13,6 +13,8 @@ export interface PrDelivery {
   checkout: string;
   epic?: number;
   confirmation?: { epic: number; head: string; evidence: string };
+  /** Re-evaluate professional approval whenever the live head changes. */
+  confirmHead?: (head: string) => Promise<{ epic: number; head: string; evidence: string }>;
 }
 /** Live provider evidence and compare-and-merge operation. */
 export interface PullRequestProvider {
@@ -80,6 +82,13 @@ export async function drivePullRequest(
       }
       const failed = repair || checks === 'failed' || live.conflict;
       repair = false;
+      if (
+        !failed &&
+        delivery.epic &&
+        delivery.confirmHead &&
+        delivery.confirmation?.head !== live.head
+      )
+        delivery.confirmation = await delivery.confirmHead(live.head);
       if (
         !failed &&
         delivery.epic &&
