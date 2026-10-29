@@ -122,6 +122,11 @@
       "types": "./dist/workflow/subagents.d.ts",
       "default": "./dist/workflow/subagents.js"
     },
+    "./workflow/pr-driver": {
+      "paper-craft-source": "./src/workflow/pr-driver.ts",
+      "types": "./dist/workflow/pr-driver.d.ts",
+      "default": "./dist/workflow/pr-driver.js"
+    },
     "./workflow/epic-driver": {
       "paper-craft-source": "./src/workflow/epic-driver.ts",
       "types": "./dist/workflow/epic-driver.d.ts",
