@@ -9,8 +9,8 @@ Before manuscript session end or reset:
 
 1. Read [the research-state convention](../../docs/guides/research-state.md).
    Submit new scientific judgments, evidence and useful unfinished discussion to
-   the designated coordinator; if this session is the coordinator, integrate them
-   there. Explicitly transfer integration responsibility when handing it over,
+   the designated coordinator; if this session is the coordinator, use
+   [/pc-research-state](../pc-research-state/SKILL.md) to write them there. Explicitly transfer integration responsibility when handing it over,
    reporting any pending transfer or unintegrated findings. Research state stays
    local and ignored by Git; no commit, push or backup is required for it.
 2. Update project environment/operation docs only when their instructions changed.

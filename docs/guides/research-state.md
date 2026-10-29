@@ -54,7 +54,12 @@ question, relevant context and evidence pointers from the coordinator. Workers
 return findings, evidence locations, limitations and suggested next steps, rather
 than maintaining another authoritative state. At handover explicitly name the
 successor, transfer pending findings and unresolved evidence gaps, and relinquish
-integration before the successor takes over. Re-reading before writing helps
+integration before the successor takes over. All writes inside `research-state/`,
+including initialization and migration, use
+[`/pc-research-state`](../../skills/pc-research-state/SKILL.md). This is the writing
+role: the caller retains scientific judgments and coordination responsibility;
+the writer returns evidence conflicts and unresolved decisions to it.
+Re-reading before writing helps
 merge edits but does not replace this responsibility; no lock service is required.
 
 For an important experiment, keep its question, data identifiers, necessary

@@ -9,3 +9,6 @@ __pycache__/
 processed/
 results/
 logs/
+
+# Local research workspace when this repository is the designated research home
+/research-state/

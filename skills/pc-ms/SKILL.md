@@ -61,7 +61,8 @@ When text and evidence conflict, investigate conditions and comparability rather
 than letting the manuscript or a summary prevail automatically.
 
 If writing or review exposes a scientific gap, discuss the question and update
-the research route through its coordinator. Findings and useful unfinished
+the research route through its coordinator, using
+[/pc-research-state](../pc-research-state/SKILL.md) for all research-state writes. Findings and useful unfinished
 scientific discussion go there first, then inform manuscript revisions. Plans do
 not authorize experiments. This session can inspect remote evidence read-only;
 leave remote builds, workflow changes and experiment execution to authorized work.

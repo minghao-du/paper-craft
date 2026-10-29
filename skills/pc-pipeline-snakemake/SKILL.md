@@ -44,21 +44,28 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 │       ├── tables/
 │       └── reports/
 ├── logs/                        # Standard output & error logs partitioned per rule (gitignored)
-├── summary/                     # Stage-level text receipts & interface contracts for human & agent (tracked in Git)
-│   └── quantification.md
+├── research-state/              # Shared research records when this repository is the research home (gitignored)
+│   └── RESEARCH-STATE.local.md   # Fixed entry, written through /pc-research-state
 └── resources/                   # (Optional) Shared reference files, genomic indexes, or databases
 ```
+
+The `research-state/` subtree lives only at the Project's designated research home.
+When that home is outside this repository, keep the absolute discovery pointer in
+`AGENTS.md` and use the existing workspace there. Related clones and worktrees
+share that same entry. `/pc-research-state` maintains the entry and any detailed
+records needed by the research; Snakemake rules produce the evidence they reference.
 
 ### Stage Output Organization
 
 - Group both roots by analytical stage: `processed/<stage>/` and `results/<stage>/`.
-  Use the same stage name in both roots and `summary/<stage>.md` wherever that stage produces artifacts.
+  Use the same stage name in both roots wherever that stage produces artifacts.
+- **Research-to-Code Mapping**: Organize research records around the same semantic analyses as `workflow/scripts/` and `workflow/rules/`. Give `/pc-research-state` the mapping from each analysis to its scripts, rules, inputs, output paths, and specific run evidence. When a detailed record is needed, use the same analysis name (for example, `research-state/quantification.md` links `workflow/rules/quantification.smk`, `workflow/scripts/quantification.py`, and `results/quantification/`). One analysis may use several scripts, and shared scripts may serve several analyses; record those relationships explicitly rather than creating one record per script. Resolve code and output paths relative to the named repository root, since the research home may be elsewhere.
 - Within a stage, group intermediates by domain meaning (e.g., `counts/`, `normalized/`) and deliverables by kind (e.g., `figures/`, `tables/`, `reports/`).
   Create only directories with actual outputs; a few files of one kind may live directly under the stage.
 - Give each artifact one canonical location.
   Distinguish samples, comparisons, and parameter variants in paths; use the same filename stem for different formats of the same artifact (e.g., `treatment_vs_control.volcano.pdf` and `.png`).
   Choose descriptive names rather than `misc/`, `temp/`, or `final_v2/`; adapt filename syntax to the project.
-- **Unnumbered Semantic Stage Architecture**: Name stages, rules (`*.smk`), scripts, receipts (`summary/*.md`), and output subdirectories strictly with semantic domain nouns (e.g., `metadata`, `embedding`, `msa`, `g2p`) rather than sequential numeric prefixes (`01_`, `02_`).
+- **Unnumbered Semantic Stage Architecture**: Name stages, rules (`*.smk`), scripts, and output subdirectories strictly with semantic domain nouns (e.g., `metadata`, `embedding`, `msa`, `g2p`) rather than sequential numeric prefixes (`01_`, `02_`).
   Sequential prefixes introduce brittle order-coupling, requiring cascading filesystem renames whenever intermediate steps are inserted or bifurcated.
   Let the workflow DAG orchestrate execution order, not filesystem naming.
 
@@ -68,8 +75,8 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 - **Log Directive Contract**: Every non-trivial rule must specify a `log:` directive partitioned by rule name and wildcard (e.g., `log: "logs/{rule}/{sample}.log"`). In `shell:`, capture standard streams explicitly: `> {log} 2>&1`.
 - **Intermediate Artifacts (`processed/`)**: Route all intermediate and staged transformations to `processed/`. Retain expensive, reusable intermediates as ordinary outputs; use `temp()` only for disposable artifacts that can be removed after downstream consumers finish.
 - **Deliverables (`results/`)**: Route final analytical summaries, plots, and reports to `results/`. Apply `protected()` on high-cost terminal deliverables to guard against accidental deletion.
-- **Stage Summary Receipts (`summary/`)**: Each analytical stage must produce a brief completion receipt via its aggregation rule. Production receipts live in `summary/{stage}.md`, tracked in Git, decoupling compute-heavy environments from local inspection; smoke receipts follow the **Smoke Execution Contract**. A receipt proves completion and summarizes conclusions — it points to where data lives, never reproduces it. Follow the 3-section skeleton in [summary.md](templates/summary.md): **Summary** (pass/fail + 1–2 sentence key finding + runtime), **Shape** (key counts in one line), **Outputs** (file paths, format, and one sentence describing content or purpose). Raw diagnostic dicts, seed arrays, and full schema dumps belong in data files, not receipts. All paths use project-root-relative form.
-- **Immutability of `data/` and `workflow/`**: Treat `data/` as read-only. Confine all output definitions strictly within `processed/`, `results/`, `logs/`, or `summary/`. Never write outputs to `workflow/`.
+- **Research State**: After validating results, provide findings, specific run identity, evidence paths, limitations, and proposed interpretations to the calling research session. Use [/pc-research-state](../pc-research-state/SKILL.md) for all research-state writes under that session's scientific decisions and the Project's coordination rules. The fixed research home may be outside this checkout. Research state is local-only and agent-written, outside the workflow DAG; aggregation rules produce analytical artifacts in `results/`. Smoke results establish integration behavior, not production scientific findings.
+- **Immutability of `data/` and `workflow/`**: Treat `data/` as read-only. Confine all output definitions strictly within `processed/`, `results/`, or `logs/`. Never write outputs to `workflow/`.
 
 ### 2. Fail-fast Parameter Validation
 - **Schema-Enforced Configuration**: Validate parameters at startup in `workflow/Snakefile` using `snakemake.utils.validate(config, schema="../config/schema.yaml")`.
@@ -117,7 +124,7 @@ When fixing a failed Snakemake run:
 When generating a new Snakemake workflow or expanding an existing one:
 
 1. **Scaffold Directory Tree & uv Project**: Create the Standard Directory Layout as outputs are introduced. Initialize root `pyproject.toml` declaring `snakemake` and `snakefmt`.
-2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `.venv/`, `processed/`, `results/`, and `logs/` are gitignored while `pyproject.toml`, `uv.lock`, `tests/`, and `summary/` are tracked.
+2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `.venv/`, `processed/`, `results/`, and `logs/` are gitignored while `pyproject.toml`, `uv.lock`, and `tests/` are tracked. Resolve the fixed research entry from `AGENTS.md`; use `/pc-research-state` to establish it when needed, keeping its whole workspace ignored at the designated research home.
 3. **Configure & Schema**:
    - Read [schema.yaml](templates/schema.yaml) as a reference to write `config/schema.yaml`.
    - Write `config/config.yaml` with required paths and execution parameters matching the schema.
@@ -125,11 +132,10 @@ When generating a new Snakemake workflow or expanding an existing one:
 4. **Author Modular Rules & Scripts**:
    - Read [rule.smk](templates/rule.smk) as a syntax reference for both `conda:` binary rules and `uv run` Python rules.
    - Read [script.py](templates/script.py) as a syntax reference for isolated Python scripts with PEP 723 inline dependency metadata.
-   - Read [summary.md](templates/summary.md) for the receipt skeleton.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
-   - Author domain logic in `workflow/rules/*.smk` using the **Stage Output Organization** and **Stage Summary Receipts** conventions above.
+   - Author domain logic in `workflow/rules/*.smk` using the **Stage Output Organization** and **Research State** conventions above.
    - For cluster execution, apply **Independent Cluster Jobs** when choosing job boundaries, rule resources, and the execution profile.
-5. **Verification**: Complete the **Smoke Execution Contract** and run `uv run snakemake --lint` through the project's configured execution route.
+5. **Verification**: Complete the **Smoke Execution Contract** and run `uv run snakemake --lint` through the project's configured execution route. Hand validated findings to `/pc-research-state` under **Research State**.
 
 **Completion Criterion**: Directory tree conforms to the standard layout; smoke execution and its artifact checks pass; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate also passes. Report any unexecuted checks as pending.
 
@@ -137,7 +143,7 @@ When generating a new Snakemake workflow or expanding an existing one:
 
 When reviewing or optimizing an existing Snakemake pipeline:
 
-1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and analytical stages produce tracked receipts in `summary/`. Check Stage Output Organization conventions and that receipt output entries explain content or purpose.
+1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and research state follows **Research State** outside the DAG. Check Stage Output Organization conventions. For existing `summary/` records, have `/pc-research-state` integrate useful scientific content before retiring duplicate receipts, their rules, and targets; preserve evidence with independent value.
 2. **Check Parameter Validation & Smoke Testing**: Verify startup schema validation and evaluate the **Smoke Execution Contract**, including actual execution and artifact evidence for the affected chain.
 3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, evaluate the **Independent Cluster Jobs** configuration gate.
    - When fixing a failed stage run, follow **Incremental recovery**. For a read-only audit, explain the failure and any triggered upstream rebuild, and propose the corresponding repair without claiming execution succeeded.

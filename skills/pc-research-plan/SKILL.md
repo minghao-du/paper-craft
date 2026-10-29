@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /pc-research-plan
 
-Read [the research-state convention](../../docs/guides/research-state.md) and create or update the route in the Project’s designated research entry.
+Read [the research-state convention](../../docs/guides/research-state.md) and develop the route for the Project’s designated research entry.
 This skill produces a research overview, independent of code implementation; its scope is the plan and its discovery pointer, not research execution.
 Use the user's language for the plan and discussion.
 
@@ -14,7 +14,7 @@ Use the user's language for the plan and discussion.
 
 Resolve the target project from the user's request or the current project when unambiguous; ask when the target is unclear.
 Resolve its fixed entry from agent/startup guidance and read the entry, relevant linked records and materials supplied by the user.
-If absent, report available sources and information gaps, then establish one designated home and pointer under the convention; label reconstructed or unverified content explicitly.
+If absent, report available sources and information gaps, then use [/pc-research-state](../pc-research-state/SKILL.md) to establish one designated home and pointer under the convention; label reconstructed or unverified content explicitly.
 Use existing discussions and documents rather than restarting settled decisions.
 Papers, a manuscript, and implementation code are not prerequisites.
 
@@ -48,7 +48,7 @@ Use as many stages as the research needs, without imposing a fixed sequence or r
 
 ## 3. Update the shared research state
 
-Write the agreed route into the same entry, with detail linked only when complexity warrants it.
+Give the agreed route and sources to [/pc-research-state](../pc-research-state/SKILL.md) for writing into the same entry, with detail linked only when complexity warrants it.
 Preserve relevant findings, interpretations and useful unfinished discussion; keep each full analysis in one place.
 The coordinating session integrates updates; other sessions submit proposed changes and sources to it.
 Stop maintaining a parallel `RESEARCH-PLAN.md`; existing materials are inputs, not a second authority.

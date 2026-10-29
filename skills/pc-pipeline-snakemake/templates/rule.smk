@@ -44,4 +44,4 @@ rule process_matrix:
 # results/quantification/figures/{sample}.counts.pdf
 # results/quantification/tables/{sample}.counts.tsv
 # results/quantification/reports/overview.html
-# Aggregation receipt: summary/quantification.md
+# Hand validated findings and evidence to /pc-research-state outside the DAG.

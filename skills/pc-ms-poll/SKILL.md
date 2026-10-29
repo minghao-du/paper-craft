@@ -51,7 +51,8 @@ limitations and suggested actions.
 
 Apply the convention's evidence and integration rules to every consequential
 finding. Compare conditions and competing explanations; update detailed analysis,
-entry summaries and the route through the designated coordinator. Other sessions
+entry summaries and the route through the designated coordinator using
+[/pc-research-state](../pc-research-state/SKILL.md) for the writes. Other sessions
 submit their findings to it. Unchecked findings remain explicitly provisional.
 This step does not require a manuscript or a completed research thread.
 

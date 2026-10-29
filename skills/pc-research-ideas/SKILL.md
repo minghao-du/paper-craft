@@ -13,7 +13,7 @@ Keep the discussion grounded in the shared research state; preserve useful scien
 ## 1. Establish the paper corpus
 
 Read [the research-state convention](../../docs/guides/research-state.md), resolve the Project’s designated entry from agent/startup guidance, and read it plus relevant detailed records.
-If missing, report sources and information gaps; establish the unique entry under that convention or propose its setup with `/pc-research-plan`, without claiming complete project knowledge.
+If missing, report sources and information gaps; use [/pc-research-state](../pc-research-state/SKILL.md) to establish the unique entry under that convention, without claiming complete project knowledge.
 
 Use the user's selected files or paper sections as the evidence boundary. Otherwise,
 discover papers in the specified project directory, or the current project when
@@ -80,6 +80,6 @@ rejected and why, and remaining empirical unknowns with their verification plans
 Account for every raised question, grouping related ones where useful. If the
 user ends earlier, summarize the actual progress and mark unfinished questions.
 
-Have the coordinating session integrate the synthesis and valuable unfinished questions into that same research state, updating existing topics and linking full analysis rather than duplicating it.
+Have the coordinating session use [/pc-research-state](../pc-research-state/SKILL.md) to write the synthesis and valuable unfinished questions into that same research state, updating existing topics and linking full analysis rather than duplicating it.
 Other sessions submit findings and evidence to the coordinator.
 Keep hypotheses and proposed experiments prospective; the discussion does not authorize execution.
