@@ -16,7 +16,8 @@
     "test:watch": "pnpm run build && vitest",
     "docs:i18n:list": "tsx scripts/docs-i18n.ts list",
     "docs:i18n:check": "tsx scripts/docs-i18n.ts check",
-    "docs:i18n:record": "tsx scripts/docs-i18n.ts record"
+    "docs:i18n:record": "tsx scripts/docs-i18n.ts record",
+    "docs:check": "tsx scripts/docs-i18n.ts check"
   },
   "keywords": [],
   "author": "",

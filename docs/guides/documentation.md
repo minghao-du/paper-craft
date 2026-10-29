@@ -39,3 +39,20 @@ The record format follows DeepSeek Harness's inspected revision `f3803c96974ad4a
 ## Navigation
 
 Place a reciprocal language link immediately after the main heading. Links into active pairs select the reader's language and corresponding destination, preserving query strings and fragments; excluded or backlog destinations keep their authored paths. Local destinations must exist. When a section is linked, both versions provide the same explicit English anchor, for example `<a id="navigation"></a>`, before their translated headings. This shared-anchor convention is a paper-craft adaptation; upstream preserves fragments but does not map translated headings automatically. Update inbound references when renaming or deleting a pair. Recording rejects invalid navigation before writing confirmations.
+
+## Editing and recovery
+
+Use the [translation terminology](translation-terminology.md) and the [architecture glossary](../../GLOSSARY.md). The editing task owns incremental translation and semantic review; no separate translation scheduler or mandatory translation skill is needed. CI runs deterministic checks without models or record updates.
+
+Edit either language, synchronize only affected content in its counterpart, confirm meaning, then record the named pairs. For example, after a reviewed change to the principles:
+
+```sh
+pnpm docs:i18n:record -- CONSTITUTION.md
+pnpm docs:i18n:check -- CONSTITUTION.md
+pnpm docs:check
+pnpm docs:check --help
+```
+
+A one-sided edit makes its confirmation stale. Fix the counterpart and review both before recording again. For structural or navigation failures, fix the reported file and section first; recording cannot override those errors. Missing triplets require restoring the missing files or completing the whole rename/deletion and inbound-link updates. Keep unrelated records unchanged. The aggregate command checks the full active corpus; use the named check command for scoped work. Every command accepts `--help`.
+
+The second migration batch comprises the [principles](../../CONSTITUTION.md), [architecture](../../DESIGN.md) and glossary. Remaining backlog documents may still be edited without full translation. Migrate each by adding its counterpart, removing its backlog entry, reviewing and recording the pair. Once the backlog is empty, remove the temporary adoption mechanism. English-only agent guidance links here instead of duplicating these rules.

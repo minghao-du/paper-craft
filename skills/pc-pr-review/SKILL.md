@@ -294,4 +294,4 @@ Present a checklist summary:
 - Agent reviews focus on changed files to keep feedback relevant
 - The skill adapts to each project's tooling automatically
 
-For paper-craft documentation changes, run `pnpm docs:i18n:check` over the full active corpus; see [the maintenance contract](../../docs/guides/documentation.md).
+For paper-craft documentation changes, run `pnpm docs:check` over the full active corpus; see [the maintenance contract](../../docs/guides/documentation.md).

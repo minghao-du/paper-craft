@@ -3,6 +3,7 @@ include:
   - docs/**/*.md
   - packages/**/*.md
 exclude:
+  - docs/guides/translation-terminology.md
   - skills/**
   - docs/agents/**
   - "**/AGENTS.md"
@@ -16,9 +17,6 @@ exclude:
   - docs/research/**
 adoption: 7c715089788793c72c0dacf8c06cb5ad5ca871bb
 backlog:
-  CONSTITUTION.md: existing at adoption
-  DESIGN.md: existing at adoption
-  GLOSSARY.md: existing at adoption
   docs/adr/0001-dashboard-observation-boundary.md: existing at adoption
   docs/guides/dashboard-design.md: existing at adoption
   docs/guides/dashboard-spec.md: existing at adoption
