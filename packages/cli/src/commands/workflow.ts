@@ -9,6 +9,7 @@ import {
 } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
 import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
+import { driveEpicIssue } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { readFileSync } from 'node:fs';
 import { output } from '../utils/output.js';
@@ -91,12 +92,16 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     conductor
       .command('issue <number>')
-      .description('Automatically dispatch and collect standalone Issue stages'),
+      .description('Resolve Issue parent and automatically dispatch standalone or EPIC stages'),
   ).action(async (number: string, options: Options) => {
     try {
       const config = loadFleetConfig(options.config);
+      const issue = readIssue(config.project, Number(number));
+      const runner = new CodexRunner();
       output(
-        await driveIssue(config, new CodexRunner(), readIssue(config.project, Number(number))),
+        await (issue.parent
+          ? driveEpicIssue(config, runner, issue)
+          : driveIssue(config, runner, issue)),
         opts.human(),
       );
     } catch (error) {
