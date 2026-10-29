@@ -1,159 +1,72 @@
 ---
 name: pc-ms-poll
-description: Quick poll of tracked EPICs and code repos for new manuscript-relevant results
+description: Poll related research repositories and remote results, integrating findings through the Project's research coordinator.
 ---
 
 # /pc-ms-poll
 
-Lightweight mid-session update for a manuscript session.
-Checks what changed in tracked code repos and EPICs since last check and fetches new artifacts from remote, so you can react to new results **as a scientific discussant**: judge what each result means and orchestrate what happens next (through issues and PRs).
-Per `/pc-ms`, the paper itself is updated when a thread of research *completes*, not on every incremental result surfaced here.
+Use during research or writing; a manuscript is optional. Read the Project's fixed
+entry and relevant details under [the research-state convention](../../docs/guides/research-state.md),
+including its integration and handover rules. Report a missing entry or pointer
+and available sources before reconstructing any context.
 
-For continuous monitoring, prefer the **persistent result monitor** started by `/pc-ms` (Step 5) — it uses SSH polling to detect new result files on remote servers in real time.
-Use `/pc-ms-poll` for:
-- Full GitHub reconciliation (EPIC updates, merged PRs, new issues)
-- Running `fetch_cmds` to pull results locally after the monitor flags them
-- When the result monitor isn't running
+## Locate sources
 
-For periodic auto-polling: `/loop 10m /pc-ms-poll`
+Use project environment/operation documentation for repository `org/repo`, local
+checkout paths, relevant EPIC/issue numbers, selective result-fetch commands and
+remote host/result paths. Existing `.ms-config.json` `tracked_repos` entries
+(`repo`, `local_path`, `epics`, `fetch_cmds`, `remote_watch`) remain usable as
+operational configuration; no manuscript fields are required to poll.
+Resolve discoverable information locally; ask only for missing source locations.
+Keep operational instructions in project docs and scientific understanding in
+the shared research state, without a second poll summary authority.
 
-**Never modify remote server state.**
-Do not run `snakemake` (even dry-run), `zig build`, `git pull`, `snakemake --unlock`, or any write command via SSH on remote servers (ermine, quokka, orca, etc.).
-Other agents are actively running experiments there.
-SSH is fine for read-only inspection (`ls`, `cat`, `head`, `grep`, checking file dates/sizes), but never run anything that modifies files, locks, or builds.
-Local `git pull` and `make remote-fetch` (which uses `rsync` to copy FROM remote) are fine — they only modify the local clone.
+## Collect changes
 
-## What to check
+Scan each repository separately; parallel workers may collect evidence while the
+coordinator alone integrates scientific state. Give remote workers the relevant
+research context and question. Each worker returns findings, evidence locations,
+limitations and suggested actions.
 
-Fan out one `general-purpose` subagent per entry in `tracked_repos` — single message, multiple `Agent` calls in parallel.
-Follow the dispatch pattern in `SUBAGENT-SCAN.md` (paper-craft repo root).
-Per-repo granularity avoids racing on `git pull` when one repo has multiple EPICs.
+- Read tracked issues with `gh issue view <N> --repo <org/repo> --json body,updatedAt,state`.
+  Compare with a known previous poll, or explicitly report the interval used when
+  no baseline exists. Read full bodies/comments supporting scientific claims.
+- Read recent merged PRs with `gh pr list --repo <org/repo> --search "is:merged sort:updated-desc" --limit 10 --json number,title,body,mergedAt`;
+  inspect producing experiments and actual evidence before adopting findings.
+  Issue/PR status and active assignments stay in GitHub.
+- For local code freshness, `git -C <local_path> fetch origin`, then
+  `git -C <local_path> rev-list --left-right --count main...origin/main`.
+  Both counts nonzero means divergence; `0 / N` means behind. Do not pull into
+  an arbitrary feature checkout. Report unavailable refs or failed fetches.
+- Run the project's selective fetch commands from their documented local paths
+  to copy results FROM remote. Inspect the command/target if its effects are
+  unclear. Preserve host, remote path and specific run identity alongside any
+  local copy; a changed file timestamp or overwritten latest path is only a lead.
+- Inspect configured result paths for figures, tables, notebooks and logs relevant
+  to the question. Use read-only SSH inspection for remote evidence. Never build,
+  launch experiments, unlock workflows or modify remote state during a poll.
+  Report failed access or retrieval and the resulting coverage gap.
 
-Brief for each subagent:
+## Integrate and respond
 
-> Lightweight delta poll for repo `<org/repo>` since the previous manuscript poll.
-> Local path: `<local_path>`.
-> EPIC numbers: `<epics>`.
-> Fetch commands: `<fetch_cmds>`.
-> Last-seen EPIC `updatedAt`: `<timestamps>` (from the primary's previous poll; if unknown, compare against the last 24h).
->
-> Tasks:
-> 1. For each EPIC, `gh issue view <N> --repo <org/repo> --json body,updatedAt`.
->    If `updatedAt` is unchanged from baseline, skip body parsing.
->    Otherwise extract newly checked items, new key findings, and changes to active clone assignments.
-> 2. `gh pr list --repo <org/repo> --search "is:merged sort:updated-desc" --limit 5 --json number,title,body,mergedAt`.
->    Report only PRs newer than the last poll.
-> 3. `git -C <local_path> fetch origin` (read-only — never `git pull`), then report `main` vs `origin/main` from `git -C <local_path> rev-list --left-right --count main...origin/main` (local-ahead / remote-ahead).
->    Clones are often checked out on a feature branch, so do NOT `pull --ff-only origin main`: that fast-forwards the *current* branch and fails whenever it isn't main — a failure that is NOT main diverging.
->    Call main "diverged" only when both counts are nonzero; "0 / N" is a clean fast-forward.
->    Then run each fetch_cmd from `<local_path>` (idempotent; safe to re-run).
-> 4. `find <local_path> \( -name "*.svg" -o -name "*.html" \) -mmin -60`.
->    For each new file, identify the producing EPIC or PR.
-> 5. `gh pr list --repo <org/repo> --json number,title,headRefName,state`.
->    Note any PRs approaching merge that will produce results soon.
->
-> Return under 300 words, structured per `SUBAGENT-SCAN.md`:
-> - `changes_since_baseline`: EPIC deltas, new merges, new findings
-> - `active_items`: PRs approaching merge with brief status
-> - `new_artifacts`: paths to new SVGs/notebooks with source EPIC/PR
-> - `action_candidates`: import figure X, open notebook Y, draft text for finding Z
-> - `surprises`: anything else, including `RECOMMEND DEEPER LOOK` flags
->
-> Use Read (not grep excerpts) for PR bodies or finding text you cite.
-> Do not paste full bodies.
+Apply the convention's evidence and integration rules to every consequential
+finding. Compare conditions and competing explanations; update detailed analysis,
+entry summaries and the route through the designated coordinator. Other sessions
+submit their findings to it. Unchecked findings remain explicitly provisional.
+This step does not require a manuscript or a completed research thread.
 
-If every subagent reports zero `changes_since_baseline` and zero `surprises`, the poll output is one line: "All quiet across tracked repos."
-Otherwise compose the "React to new artifacts" sections below from the structured reports.
+Report new results with evidence pointers, their scientific implications,
+unresolved differences or access gaps, and useful next actions. Check live issue
+and PR state before mentioning their status. When nothing changed and coverage
+is complete, one line is enough; incomplete coverage cannot establish “all quiet.”
 
-## React to new artifacts
+During writing, use `/pc-ms` for manuscript organization and figure import after
+scientific state is updated. Propose missing experiments as research route changes;
+plans and poll findings do not authorize execution. File issues only when requested,
+using `/pc-issue-next` and the target repository's issue quality gate.
 
-### New SVG figures
-
-When new SVGs are found after a fetch:
-
-1. Show the user what's new:
-   ```
-   **New SVG**: peak-origins/experiments/benchmark/results/fig3.svg (fetched just now)
-   ```
-
-2. Ask if it should be imported to `prep-figures/`:
-   ```bash
-   PREP_DIR=$(jq -r .prep_figures_dir .ms-config.json)
-   cp "<source>" "$PREP_DIR/"
-   make pdf-figures
-   ```
-
-3. If imported, check if the manuscript already references it.
-   If not, suggest placement and draft the `\includegraphics` block.
-
-### New HTML notebooks
-
-When new `.html` notebooks are found after fetch:
-
-```bash
-open -a "Google Chrome" "<path-to-notebook.html>"
-```
-
-Tell the user what notebook was opened and which EPIC/issue produced it.
-After they review, ask which plots or findings to incorporate.
-
-### New key findings in EPICs
-
-When an EPIC body has new findings (numbered items in the Key Findings section that weren't there before), react as a discussant first, not as a transcriber:
-
-1. Quote the finding.
-2. Read the relevant PR or experiment that produced it (full body, not a truncated read).
-3. Present the key points as a **bullet-point summary**, with your read on whether the result holds up, what it means, and how it sits against what the manuscript already claims.
-4. Decide with the user what happens next.
-   Usually this is orchestration — request a follow-up analysis on the PR, draft an issue for a gap (via the Issue quality gate), or log an open question — because the paper is updated when a thread of research *completes*, not per finding.
-5. **Only when a thread is complete**, draft it into the manuscript: propose placement, write the LaTeX, follow the `pc-tex-editor` skill on the new text, and present the edited draft for final approval.
-
-### Issue creation
-
-If during polling you notice gaps — an experiment that should be run, a comparison that's missing, a figure variant that would strengthen the paper — propose raising an issue on the tracked repo:
-
-1. Describe what's needed and why (from the manuscript perspective)
-2. After user confirmation, run `/pc-issue-next` targeting the tracked repo
-3. The remote EPIC conductor will pick it up on its next poll
-
-## After polling
-
-### Output structure
-
-1. **New results** (lead with this): Figures, notebooks, or findings that arrived since last poll.
-   One line each with source and age.
-
-2. **Active work**: Which EPICs have active clones, brief status.
-   Only mention if something changed.
-
-3. **Approaching completion**: PRs close to merge that will produce results soon.
-
-4. **Proposed actions**: Concrete list — import figure X, open notebook Y, draft text for finding Z, raise issue for gap W.
-
-### Verify state before reporting
-
-When mentioning any PR or issue in the poll output, always verify its current state programmatically (`gh pr view --json state`, `gh issue view --json state`) rather than relying on earlier poll results or conversation memory.
-Stale state leads to confusing reports (e.g., reporting a merged PR as "open").
-
-When a claim rests on a PR/issue *body* or comments — especially an absence claim ("reports no result", "no mention of Y") — read the full text.
-Do not pipe `gh ... --json body` through `head`/`tail`: Results and conclusions usually sit at the bottom, which is exactly what a truncated read drops.
-To narrow, `grep -n -i -A30` for the section rather than chopping at a line count; never assert absence from output you truncated yourself.
-
-### Keep it brief
-
-This is a poll, not a cold start.
-Only report what changed.
-If nothing changed, say so in one line:
-
-> All quiet across tracked repos.
-> No new results since last check.
-
-## Housekeeping (silent)
-
-- Track `updatedAt` timestamps for EPICs to detect changes efficiently
-- Track last-seen merged PR numbers to avoid re-processing
-- After fetching, note which files are new vs already seen
-
-## Conventions
-
-Same as `/pc-ms`: `iN`/`pN` prefixes, full URLs on first mention.
+Continuous monitoring is optional and requires the user's scheduling request.
+Use the runtime's supported monitor or automation facility to inspect configured
+remote paths read-only; keep change baselines locally. On a meaningful change,
+retrieve the selected evidence and apply this workflow. Report access failures;
+do not turn silent SSH failure into “no new results.”
