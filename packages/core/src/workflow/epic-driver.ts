@@ -26,6 +26,8 @@ export interface EpicRun {
   goal: string;
   /** Immutable original issue objective, independent of professional replanning. */
   originalGoal?: string;
+  /** Original child intake survives a recovery invoked by EPIC identity alone. */
+  intake?: IssueInput;
   constraints: string[];
   tasks: EpicTask[];
   turns: IssueTurn[];
@@ -99,6 +101,7 @@ export async function driveEpic(
     epic: epic.number,
     goal: epic.body,
     originalGoal: epic.body,
+    intake,
     constraints: [],
     tasks: [],
     turns: [],
@@ -223,7 +226,8 @@ export async function driveEpic(
     plan(
       await turn(
         'epic',
-        `Plan ${epic.repository} EPIC #${epic.number}: ${epic.title}\n${epic.body}\nIntake: ${JSON.stringify(intake)}\n${schema}`,
+        run.turns[0]?.brief ??
+          `Plan ${epic.repository} EPIC #${epic.number}: ${epic.title}\n${epic.body}\nIntake: ${JSON.stringify(run.intake)}\n${schema}`,
       ),
     );
     for (let cycle = 0; cycle < 20; cycle++) {
