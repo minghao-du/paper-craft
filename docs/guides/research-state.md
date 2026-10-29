@@ -90,3 +90,25 @@ The coordinator integrates returned evidence as follows:
 For cross-repository updates or remote result retrieval, use
 [`/pc-ms-poll`](../../skills/pc-ms-poll/SKILL.md). Despite its legacy name, it
 works before a manuscript exists and submits evidence to this same coordinator.
+
+## Adopting the convention in an existing project
+
+Choose the single research home and update discovery pointers in related repository
+and startup guidance. Apply the whole-workspace ignore and tracked-file handling
+above before moving state: `git rm --cached` removes tracked copies from the index
+while retaining local files. Do not create one workspace per clone.
+
+Read old research summaries, `RESEARCH-PLAN.md`, onboarding and continuation notes
+for content worth keeping. Integrate scientific judgments, necessary route and
+useful unfinished discussion into the entry or its linked analysis; preserve a
+brief reason for consequential changes of direction. Leave setup and operating
+instructions in project docs, live progress in its task system, and manuscript
+editing tasks beside the relevant text. Retire parallel scientific entry requirements
+and remove only duplicates with no independent value after their useful content
+has been integrated. A provenance marker can retain an evidence pointer without
+becoming the authority for the underlying scientific judgment.
+
+Writing consumes this same state. When writing or review requires further research,
+update scientific understanding through the coordinator before revising the paper.
+Migration is adopted on demand; it requires no backup, synchronization, historical
+archive or complete reconstruction of lost judgments.

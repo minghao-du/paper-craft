@@ -33,7 +33,7 @@ ends with the continuation path or a concrete persistence blocker, without gener
 
 For a session that is none of the roles above — an ad-hoc or adjudicator session — there is no specialised tuckin, so do the minimum that makes a reset safe:
 
-1. Commit and push anything this session owns; branch first if on `main`, and leave the pooled-slot branches a conductor manages alone. Report what is unpushed rather than forcing it.
+1. For research findings, integrate through the designated coordinator under [the research-state convention](../../docs/guides/research-state.md); keep the ignored workspace out of Git. Commit and push other work this session owns; branch first if on `main`, and leave the pooled-slot branches a conductor manages alone. Report what is unpushed rather than forcing it.
 2. Write `_ignore/CONTINUE-generic.md` per the guide.
 3. Report what was committed and that the prompt is written; then it is safe to reset.
 
