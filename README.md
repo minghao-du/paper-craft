@@ -52,8 +52,8 @@ paper-craft reimplements all bipartite skills in TypeScript, renaming the `bip-`
 
 | Skill (origin) | Purpose |
 |---------------|---------|
-| `pc-ms` (`bip-ms`) | Manuscript sessions: track cross-repo EPIC issues, react to new results |
-| `pc-ms-poll` (`bip-ms-poll`) | Poll manuscript session state |
+| `pc-ms` (`bip-ms`) | Write manuscripts from shared Project research state |
+| `pc-ms-poll` (`bip-ms-poll`) | Poll research repositories and remote results |
 | `pc-lit` (`bip-lit`) | Literature retrieval and discussion |
 | `pc-research-ideas` | Manual research discussion grounded in selected project papers |
 | `pc-research-plan` | Manually creates or updates a project-root research overview and phased plan |

@@ -1,7 +1,11 @@
 # Session continuation
 
 Read when persisting or resuming a session through a tuckin, cycle or continue skill.
-The continuation is a navigation aid; issues, PRs and recorded work remain authoritative.
+The continuation is a navigation aid. Issues and PRs carry live task state; Project
+scientific understanding lives at the fixed research entry under
+[the research-state convention](../../docs/guides/research-state.md).
+For research or manuscript work, include that entry and the designated coordinator,
+with any pending integration handover; keep full scientific analysis in that state.
 
 ## Role and location
 
