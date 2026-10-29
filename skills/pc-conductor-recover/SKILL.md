@@ -15,6 +15,21 @@ landing agent waits for the conductor's verified next assignment/transfer before
 The lifecycle contract determines the next operation, including when merge already
 succeeded. Conversation restoration alone grants no authorization or checkout ownership.
 
+For a managed Fleet, first reconcile original execution receipts and results:
+
+```sh
+pc workflow conductor recover --config /absolute/path/.epic-config.json
+pc workflow conductor issue <number> --config /absolute/path/.epic-config.json
+```
+
+Recovery collects the original attempt; it does not launch replacement work or release
+ownership. A lost driver lock is reclaimable only with a recorded PID proven absent;
+legacy unknown locks remain blocked for inspection. Re-entering the original Issue
+continues its recorded stages, including merged PRs and verified postmerge cleanup.
+Persisted explicit human EPIC-close confirmation survives recovery; silence remains
+unconfirmed. Missing startup receipts, unknown execution and missing archive evidence
+retain the checkout and require the specific missing evidence, never generic approval.
+
 Run on the machine that owns the tmux workspace. Recovery spans all sessions on the **selected tmux server**, without a project or `.epic-config.json`. Each server needs its own configuration and snapshot directory; read [plugin setup](references/tmux.md) when installing or handling multiple servers.
 
 Set `HELPER` to this skill directory plus `/epic-recover`. It runs standalone TypeScript with Node ≥22.18 and tmux; no project build is required.

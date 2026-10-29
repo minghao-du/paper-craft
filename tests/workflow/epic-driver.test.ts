@@ -30,7 +30,8 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
     base: 'HEAD',
   };
   let active = 0,
-    peak = 0;
+    peak = 0,
+    interrupted = false;
   const delivered: number[] = [];
   let epicConversation: string | undefined;
   const tasks = [
@@ -71,6 +72,10 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
         peak = Math.max(peak, active);
         await new Promise((r) => setTimeout(r, 10));
         active--;
+        if (n === 7 && !interrupted) {
+          interrupted = true;
+          throw Error('lost collection');
+        }
         delivered.push(n);
         return `result ${n}`;
       }
@@ -79,6 +84,14 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
   };
   try {
     await startConductor(config, runner, 'coordinate');
+    await expect(
+      driveEpic(
+        config,
+        runner,
+        { repository: 'owner/repo', number: 35, title: 'goal', body: 'deliver all' },
+        2,
+      ),
+    ).rejects.toThrow('Worker stage failed');
     const run = await driveEpic(
       config,
       runner,
@@ -167,7 +180,9 @@ test('blocked EPIC work retains scope without dispatch and separates repository 
     expect(
       inspectEpicRun({ ...config, file: join(project, 'other-config.json') }, 'owner/one', 35),
     ).toBeUndefined();
-    await expect(driveEpic(config, runner, epic)).rejects.toThrow('reconcile original attempts');
+    await expect(driveEpic(config, runner, epic)).rejects.toThrow(
+      'unresolved semantic dependencies',
+    );
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

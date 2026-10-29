@@ -1,3 +1,4 @@
+import { claimDriver } from './driver-lock.js';
 /** Durable automatic standalone Issue round trips. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
@@ -103,7 +104,7 @@ export async function driveIssue(
   const file = join(home, 'task.json');
   const lock = join(stateDirectory(config, '.runtime'), `driver-${conductor.fleet}.lock`);
   try {
-    mkdirSync(lock);
+    claimDriver(lock);
   } catch (error) {
     throw new Error('Task driver occupied; inspect persisted task', { cause: error });
   }
@@ -150,6 +151,7 @@ export async function driveIssue(
           const decision = JSON.parse(completed.result!);
           if (decision.action === 'done') {
             task.status = 'done';
+            delete task.error;
             save(file, task);
             return task;
           }

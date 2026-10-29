@@ -1,3 +1,4 @@
+import { claimDriver } from './driver-lock.js';
 /** Repository-scoped EPIC planning and dependency-aware Worker dispatch. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
@@ -30,6 +31,7 @@ export interface EpicRun {
   turns: IssueTurn[];
   status: 'running' | 'delivered' | 'blocked';
   error?: string;
+  ownedCheckouts?: Record<number, string>;
 }
 function save(file: string, value: unknown) {
   const temp = file + '.' + randomUUID();
@@ -90,11 +92,9 @@ export async function driveEpic(
   const file = join(home, 'epic.json');
   const previous = inspectEpicRun(config, epic.repository, epic.number);
   if (previous?.status === 'delivered') return previous;
-  if (previous)
-    throw new Error('EPIC execution retained; reconcile original attempts before retry');
   const lock = join(stateDirectory(config, '.runtime'), `driver-${conductor.fleet}.lock`);
-  mkdirSync(lock);
-  const run: EpicRun = {
+  claimDriver(lock);
+  const run: EpicRun = previous ?? {
     repository: epic.repository,
     epic: epic.number,
     goal: epic.body,
@@ -104,9 +104,30 @@ export async function driveEpic(
     turns: [],
     status: 'running',
   };
+  run.ownedCheckouts ??= Object.fromEntries(
+    run.tasks.filter((t) => t.checkout).map((t) => [t.number, t.checkout!]),
+  );
+  const owned = new Map(
+    Object.entries(run.ownedCheckouts).map(([number, checkout]) => [Number(number), checkout]),
+  );
+  run.tasks = [];
   save(file, run);
   let epicConversation: string | undefined;
+  let replay = 0;
   async function turn(role: IssueTurn['role'], brief: string, checkout = config.project) {
+    const retained = run.turns[replay++];
+    if (retained) {
+      if (retained.role !== role || retained.brief !== brief)
+        throw new Error('Recovery route differs; preserve original attempts');
+      if (retained.result === undefined) {
+        if (!retained.conversation || retained.status !== 'running')
+          throw new Error('Missing original receipt; retain unknown occupancy');
+        retained.result = await runner.collect(retained);
+        save(file, run);
+      }
+      if (role === 'epic') epicConversation = retained.conversation;
+      return retained.result;
+    }
     const id = randomUUID();
     const directory = stateDirectory(
       config,
@@ -191,7 +212,7 @@ export async function driveEpic(
     run.tasks = p.tasks.map((t: EpicTask) => ({
       ...t,
       result: delivered.get(t.number)?.result,
-      checkout: delivered.get(t.number)?.checkout,
+      checkout: owned.get(t.number),
     }));
     save(file, run);
   }
@@ -209,6 +230,7 @@ export async function driveEpic(
       const pending = run.tasks.filter((t) => !t.result);
       if (!pending.length) {
         run.status = 'delivered';
+        delete run.error;
         save(file, run);
         return run;
       }
@@ -223,6 +245,10 @@ export async function driveEpic(
       if (!config.worktrees) throw new Error('Automatic EPIC allocation requires local_worktrees');
       // Allocate serially: each checkout has one owner before concurrent execution begins.
       for (const task of ready) {
+        if (task.checkout) {
+          workflowSource(config, task.checkout);
+          continue;
+        }
         const checkout = join(config.root, `issue-${task.number}`);
         if (existsSync(checkout))
           throw new Error('Checkout occupied or unknown; preserve existing owner');
@@ -236,6 +262,8 @@ export async function driveEpic(
         );
         workflowSource(config, checkout);
         task.checkout = checkout;
+        run.ownedCheckouts![task.number] = checkout;
+        owned.set(task.number, checkout);
         save(file, run);
       }
       const results = await Promise.allSettled(

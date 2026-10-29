@@ -1,4 +1,5 @@
 /** Durable temporary delegation. Parents retain checkout ownership throughout execution. */
+import { claimDriver } from './driver-lock.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
@@ -53,9 +54,11 @@ export interface ShortRunner {
   name: string;
   cancellation?: boolean;
   cancel?(task: ShortTask): Promise<{ evidence: string }>;
-  observe?(
-    task: ShortTask,
-  ): Promise<{ status: 'running' | 'unknown' | 'failed'; evidence?: string }>;
+  observe?(task: ShortTask): Promise<{
+    status: 'running' | 'unknown' | 'failed' | 'succeeded';
+    evidence?: string;
+    result?: string;
+  }>;
   run(
     task: ShortTask,
   ): Promise<{ status: 'succeeded' | 'failed'; result: string; evidence: string }>;
@@ -145,9 +148,9 @@ export class Subagents {
   async dispatch(runner: ShortRunner): Promise<void> {
     const lock = join(this.home, 'dispatch.lock');
     try {
-      mkdirSync(lock);
+      claimDriver(lock);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
+      if (existsSync(lock)) return;
       throw error;
     }
     try {
@@ -242,7 +245,7 @@ export class Subagents {
     if (!['running', 'unknown'].includes(task.status)) return task;
     try {
       const observed = runner.observe ? await runner.observe(task) : { status: 'unknown' as const };
-      if (observed.status === 'failed' && !observed.evidence)
+      if (['failed', 'succeeded'].includes(observed.status) && !observed.evidence)
         throw new Error('Expected termination evidence');
       task = this.get(id);
       if (!['running', 'unknown'].includes(task.status)) return task;
@@ -282,6 +285,22 @@ export class Subagents {
 export class CodexShortRunner implements ShortRunner {
   readonly name = 'codex-short';
   readonly cancellation = false;
+  /** Reconcile only an attributed durable exit/result receipt. */
+  async observe(
+    task: ShortTask,
+  ): Promise<{ status: 'unknown' | 'succeeded' | 'failed'; evidence?: string; result?: string }> {
+    const file = join(task.directory, 'outcome.json');
+    if (!existsSync(file)) return { status: 'unknown' };
+    const outcome = JSON.parse(readFileSync(file, 'utf8'));
+    if (
+      outcome.attempt !== task.attempt ||
+      !['succeeded', 'failed'].includes(outcome.status) ||
+      !outcome.evidence ||
+      typeof outcome.result !== 'string'
+    )
+      throw new Error('Expected attributed terminal short-task receipt');
+    return { status: outcome.status, evidence: outcome.evidence, result: outcome.result };
+  }
   /** Completion requires process exit, completed-turn event and attributed result. */
   async run(
     task: ShortTask,
@@ -322,11 +341,13 @@ export class CodexShortRunner implements ShortRunner {
           reject(new Error('Expected completed-turn receipt'));
           return;
         }
-        resolve({
+        const outcome = {
           status: code === 0 ? 'succeeded' : 'failed',
           result: existsSync(output) ? readFileSync(output, 'utf8') : errors,
           evidence: JSON.stringify({ attempt: task.attempt, exit: code, completed }),
-        });
+        } as const;
+        save(join(task.directory, 'outcome.json'), { ...outcome, attempt: task.attempt });
+        resolve(outcome);
       });
       child.stdin.end(brief);
     });

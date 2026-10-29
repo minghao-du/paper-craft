@@ -1,6 +1,7 @@
+import { claimDriver } from './driver-lock.js';
 /** Durable post-merge assessment, preservation and resource release. */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { stateDirectory, preserveState } from './handoff.js';
@@ -24,6 +25,7 @@ export interface CompletionRun {
   closed?: boolean;
   archive?: string;
   released?: boolean;
+  releasePrepared?: boolean;
   error?: string;
 }
 /** Continue merged delivery without repeating completed record/close stages. */
@@ -46,7 +48,7 @@ export async function finishDelivery(
     renameSync(tmp, file);
   };
   const lock = join(home, 'driver.lock');
-  mkdirSync(lock);
+  claimDriver(lock);
   const run: CompletionRun = existsSync(file)
     ? JSON.parse(readFileSync(file, 'utf8'))
     : { status: 'running', turns: [] };
@@ -87,7 +89,21 @@ export async function finishDelivery(
     if (run.status === 'done') return run;
     if (!(await github.merged(pr)))
       throw new Error('Expected verified merged PR before final records');
-    workflowSource(config, delivery.checkout);
+    if (!existsSync(delivery.checkout) && run.releasePrepared && run.archive) {
+      execFileSync('git', ['bundle', 'verify', join(run.archive, 'repository.bundle')], {
+        cwd: config.project,
+        stdio: 'pipe',
+      });
+      const registered = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+        cwd: config.project,
+        encoding: 'utf8',
+      });
+      if (registered.split('\n').includes(`worktree ${delivery.checkout}`))
+        throw new Error('Checkout missing but still registered; inspect preservation');
+      run.released = true;
+      save();
+    }
+    if (!run.released) workflowSource(config, delivery.checkout);
     if (delivery.checkout === config.project || !config.worktrees)
       throw new Error('Automatic cleanup requires an owned local worktree');
     if (!run.recorded) {
@@ -148,6 +164,8 @@ export async function finishDelivery(
       if (!existsSync(bundle))
         execFileSync('git', ['bundle', 'create', bundle, '--all'], { cwd: delivery.checkout });
       execFileSync('git', ['bundle', 'verify', bundle], { cwd: delivery.checkout, stdio: 'pipe' });
+      run.releasePrepared = true;
+      save();
       execFileSync('git', ['worktree', 'remove', '--force', delivery.checkout], {
         cwd: config.project,
       });
@@ -159,6 +177,7 @@ export async function finishDelivery(
       `Completion ${delivery.repository} Issue #${delivery.issue}, PR #${pr}: Worker records complete, Issue closed, archive ${run.archive}, checkout released. Report final result.`,
     );
     run.status = 'done';
+    delete run.error;
     save();
     return run;
   } catch (error) {
@@ -179,7 +198,20 @@ export async function landDelivery(
   delivery: PrDelivery,
   prior: IssueTurn[] = [],
 ) {
-  const merged = await drivePullRequest(config, runner, github, delivery);
+  const key = createHash('sha256')
+    .update(`${config.file}:${delivery.repository}:${delivery.issue}`)
+    .digest('hex');
+  const completed = join(stateDirectory(config, '.runtime', 'completion', key), 'completion.json');
+  if (existsSync(completed)) {
+    const record: CompletionRun = JSON.parse(readFileSync(completed, 'utf8'));
+    if (record.status === 'done') return record;
+  }
+  const prFile = join(stateDirectory(config, '.runtime', 'pull-requests', key), 'pr.json');
+  const retained = existsSync(prFile) ? JSON.parse(readFileSync(prFile, 'utf8')) : undefined;
+  const merged =
+    retained?.status === 'merged'
+      ? retained
+      : await drivePullRequest(config, runner, github, delivery);
   return finishDelivery(config, runner, github, delivery, merged.pr, [
     ...prior,
     ...(inspectIssueRun(config, delivery.repository, delivery.issue)?.turns ?? []),

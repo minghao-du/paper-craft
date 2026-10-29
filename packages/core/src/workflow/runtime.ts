@@ -136,6 +136,10 @@ export class CodexRunner implements RunnerAdapter {
     }
   }
   /** Collect a completed turn from durable Runner output, never from pane disappearance. */
+  /** Recovery never blocks on an execution whose exit is not yet observed. */
+  collectable(attempt: ManagedAttempt): boolean {
+    return existsSync(join(attempt.directory, 'exit-code'));
+  }
   async collect(attempt: ManagedAttempt): Promise<string> {
     const exit = join(attempt.directory, 'exit-code');
     while (!existsSync(exit)) await new Promise((resolve) => setTimeout(resolve, 100));
@@ -164,7 +168,7 @@ export class CodexRunner implements RunnerAdapter {
     const script = join(attempt.directory, 'launch.sh');
     writeFileSync(
       script,
-      `#!/bin/sh\ncodex exec ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''}--full-auto --json --output-last-message ${shell(result)} - < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
+      `#!/bin/sh\ncodex exec ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''}-c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(result)} - < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
       { mode: 0o700 },
     );
     execFileSync(
