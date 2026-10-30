@@ -23,7 +23,7 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
     name: 'test',
     async preflight() {},
     async start(a: { id: string }) {
-      return { conversation: a.id, address: 'tmux:test', evidence: 'receipt' };
+      return { conversation: a.id, address: 'tmux:fleet:window', evidence: 'receipt' };
     },
     async collect(a: { role: string; brief: string }) {
       if (a.brief.includes('Confirm applicability')) {
@@ -34,6 +34,21 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
           research: { run: false, reason: 'No scientific impact' },
         });
       }
+      if (a.role === 'pipeline-audit')
+        return JSON.stringify({
+          head,
+          status: 'completed',
+          evidence: ['inspected project'],
+          blockers: [],
+          scope: [],
+          checks: ['applicability'],
+          artifacts: [],
+          limitations: [],
+          disposition: 'not_applicable',
+          inspectedVersions: { repository: head },
+          findings: [],
+          maintenance: [],
+        });
       return a.role === 'epic'
         ? JSON.stringify({
             satisfied,
@@ -196,6 +211,10 @@ test('post-closure specialist failures preserve attempts and block reporting unt
           head,
           status: 'completed',
           evidence: ['verified output'],
+          disposition: 'completed_no_changes',
+          inspectedVersions: { repository: head },
+          findings: [],
+          maintenance: [],
           blockers: [],
           scope: ['affected rule'],
           checks: ['production smoke'],

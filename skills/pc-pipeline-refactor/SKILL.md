@@ -9,6 +9,13 @@ disable-model-invocation: true
 Refactor existing scientific computing workflows from ad-hoc, flat, or sequentially numbered directory layouts into clean, modular, tiered architectures adhering to [pc-pipeline-snakemake](../pc-pipeline-snakemake/SKILL.md).
 Synchronize all code, rules, configurations, and data assets across local workstations and remote HPC environments without interrupting reproducible execution or losing data.
 
+## Post-closure audit invocation
+
+When dispatched by an EPIC Orchestrator after verified closure, perform applicability
+and bounded structural audit only, following [the shared finalization contract](../pc-conductor/finalization.md).
+Return the inspected versions and classified findings required there; completion uses
+that shared accepted-disposition contract.
+
 ## Core Leading Words
 
 - **`ledger`**: The explicit source-to-target path mapping that gates every filesystem operation.

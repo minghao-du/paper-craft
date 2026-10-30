@@ -20,6 +20,7 @@ import {
   type ManagedAttempt,
   type RunnerAdapter,
 } from './runtime.js';
+import type { PipelineDisposition } from './epic-finalization.js';
 import type { IssueInput } from './issue-driver.js';
 
 /** Verified tracker subject, with explicit scope rather than title heuristics. */
@@ -34,6 +35,7 @@ export interface WorkflowRun {
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
   phase?: 'post_closure_finalization';
+  pipeline?: PipelineDisposition;
   epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string };
   orchestratorId: string;
   launchStarted?: boolean;

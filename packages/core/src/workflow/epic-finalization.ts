@@ -26,6 +26,74 @@ const receiptSchema = z.object({
   artifacts: z.array(text),
   limitations: z.array(text),
 });
+const pipelineSchema = receiptSchema.extend({
+  disposition: z.enum([
+    'not_applicable',
+    'completed_no_changes',
+    'completed',
+    'changes_needed',
+    'acceptance_invalidated',
+  ]),
+  inspectedVersions: z.record(text, text).refine((v) => Object.keys(v).length > 0),
+  findings: z.array(
+    z.object({
+      id: text,
+      classification: z.enum([
+        'required_maintenance',
+        'unrelated_defect',
+        'invalidates_acceptance',
+      ]),
+      description: text,
+      evidence: z.array(text).min(1),
+      issue: z.number().int().positive().optional(),
+    }),
+  ),
+  maintenance: z.array(
+    z.object({
+      finding: text,
+      issue: z.number().int().positive(),
+      delivered: z.boolean(),
+      verifiedVersions: z.record(text, text),
+      evidence: z.array(text),
+    }),
+  ),
+});
+/** Version-bound Pipeline audit contract shared with maintenance delivery and reporting. */
+export type PipelineDisposition = z.infer<typeof pipelineSchema>;
+/** Only explicit, evidence-backed dispositions unlock the report writer. */
+export function pipelineAccepted(result: PipelineDisposition | undefined): boolean {
+  if (
+    !result ||
+    !pipelineSchema.safeParse(result).success ||
+    result.status !== 'completed' ||
+    result.blockers.length ||
+    !result.evidence.length ||
+    !Object.keys(result.inspectedVersions).length ||
+    result.findings.some((f) => f.classification === 'invalidates_acceptance')
+  )
+    return false;
+  if (result.findings.some((f) => f.classification === 'unrelated_defect' && !f.issue))
+    return false;
+  const required = result.findings.filter((f) => f.classification === 'required_maintenance');
+  if (result.disposition === 'not_applicable' || result.disposition === 'completed_no_changes')
+    return (
+      required.length === 0 &&
+      (result.disposition !== 'completed_no_changes' || result.checks.length > 0)
+    );
+  return (
+    result.disposition === 'completed' &&
+    required.every((f) =>
+      result.maintenance.some(
+        (m) =>
+          m.finding === f.id &&
+          m.issue === f.issue &&
+          m.delivered &&
+          m.evidence.length > 0 &&
+          Object.keys(m.verifiedVersions).length > 0,
+      ),
+    )
+  );
+}
 /** Verified integrated code and actual per-PR changes; never inferred from a single range. */
 export interface FinalizationContext {
   head: string;
@@ -41,7 +109,7 @@ export interface EpicFinalization {
   /** Distinguishes explicit retries at the same integrated SHA. */
   round?: string;
   plan?: z.infer<typeof planSchema>;
-  pipeline?: z.infer<typeof receiptSchema> | { status: 'skipped'; reason: string };
+  pipeline?: PipelineDisposition;
   research?: z.infer<typeof receiptSchema> | { status: 'skipped'; reason: string };
 }
 /** Sequentially obtain professional applicability and verified specialist results. */
@@ -70,6 +138,26 @@ export async function finalizeEpic(
     'Reply only JSON {"head":"evaluated integration SHA","status":"completed|blocked","evidence":["inspected evidence locations"],"blockers":[],"scope":[],"checks":[],"artifacts":[],"limitations":[]}. Account for every required check and requested update. Missing required evidence is blocking; retain unresolved research questions explicitly without promoting them to conclusions.';
   for (const kind of ['pipeline', 'research'] as const) {
     const decision = state.plan[kind];
+    if (kind === 'pipeline') {
+      // Applicability is itself an audit: a planning skip can never bypass the specialist.
+      if (!state.pipeline) {
+        state.pipeline = pipelineSchema.parse(
+          JSON.parse(
+            await turn(
+              'pipeline-audit',
+              `Read project AGENTS.md; invoke /pc-pipeline-refactor for a bounded post-closure applicability/audit only. Never implement through your own subagents. Objective ${objective}. Verified context ${context}. Inspect affected structural scope and record actual versions and evidence. Return unrelated defects as linked follow-up Issues and report limitations; acceptance-invalidating findings require human disposition. Required maintenance is delivered by Worker/PR-Land, with approved Migration Ledger before covered mutations. Reply JSON with head, status (completed|blocked), evidence, blockers, scope, checks, artifacts, limitations, disposition (not_applicable|completed_no_changes|completed|changes_needed|acceptance_invalidated), inspectedVersions (repository-to-version map), findings [{id,classification:required_maintenance|unrelated_defect|invalidates_acceptance,description,evidence,issue}], maintenance [{finding,issue,delivered,verifiedVersions,evidence}]. not_applicable requires inspected evidence, completed_no_changes requires an actual audit. Changes-needed stays pending until all required fixes are delivered and specialist-verified.`,
+              state.context,
+            ),
+          ),
+        );
+        save();
+      }
+      if (state.pipeline.head !== state.context.head || !pipelineAccepted(state.pipeline))
+        throw new Error(
+          'Pipeline disposition pending: required maintenance, verification or human disposition blocks reporting',
+        );
+      continue;
+    }
     if (!state[kind]) {
       if (decision.reuse) {
         const prior = previous?.[kind];
@@ -87,17 +175,11 @@ export async function finalizeEpic(
         };
       } else if (!decision.run) state[kind] = { status: 'skipped', reason: decision.reason };
       else {
-        const skill = kind === 'pipeline' ? 'pc-pipeline-snakemake' : 'pc-research-state';
+        const skill = 'pc-research-state';
         const raw = await turn(
-          kind === 'pipeline' ? 'pipeline-audit' : 'research-state',
-          `Read project AGENTS.md and load finalization.md from the installed /pc-conductor skill directory; invoke /${skill} for EPIC post-merge finalization. Objective ${objective}. Context ${context}. Applicability ${decision.reason}. ${
-            kind === 'pipeline'
-              ? 'Read finalization.md from the installed /pc-pipeline-snakemake skill directory. Audit only affected dependency scope; preserve source/config/existing scientific outputs, isolate smoke artifacts. Findings return to existing EPIC/Worker repair flow.'
-              : `Coordinator-approved writing brief ${JSON.stringify(state.plan.coordinator)}. Pipeline result ${JSON.stringify(state.pipeline)}. Coordinate serial writing with that designated Project coordinator, including other Fleets; do not write until prior writer has returned. Read finalization.md from the installed /pc-research-state skill directory.`
-          } ${schema}`,
-          kind === 'research'
-            ? { ...state.context, writableDirectories: [dirname(state.plan.coordinator!.entry)] }
-            : state.context,
+          'research-state',
+          `Read project AGENTS.md and load finalization.md from the installed /pc-conductor skill directory; invoke /${skill} for EPIC post-merge finalization. Objective ${objective}. Context ${context}. Applicability ${decision.reason}. ${`Coordinator-approved writing brief ${JSON.stringify(state.plan.coordinator)}. Pipeline result ${JSON.stringify(state.pipeline)}. Coordinate serial writing with that designated Project coordinator, including other Fleets; do not write until prior writer has returned. Read finalization.md from the installed /pc-research-state skill directory.`} ${schema}`,
+          { ...state.context, writableDirectories: [dirname(state.plan.coordinator!.entry)] },
         );
         state[kind] = receiptSchema.parse(JSON.parse(raw));
         save();

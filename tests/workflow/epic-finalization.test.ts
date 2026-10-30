@@ -19,6 +19,10 @@ const receipt = {
   checks: ['production smoke'],
   artifacts: ['/smoke/result'],
   limitations: [],
+  disposition: 'completed_no_changes' as const,
+  inspectedVersions: { repository: context.head },
+  findings: [],
+  maintenance: [],
 };
 
 test.each(['blocked', 'wrong SHA', 'missing evidence'])(
@@ -58,7 +62,7 @@ test.each(['blocked', 'wrong SHA', 'missing evidence'])(
   },
 );
 
-test('professional unaffected-scope evidence reuses prior audit after unrelated integration changes', async () => {
+test('changed integration requires a fresh applicability audit despite reuse suggestion', async () => {
   const prior: EpicFinalization = {
     context,
     pipeline: receipt,
@@ -71,6 +75,8 @@ test('professional unaffected-scope evidence reuses prior audit after unrelated 
     'original goal',
     async (role) => {
       roles.push(role);
+      if (role === 'pipeline-audit')
+        return JSON.stringify({ ...receipt, head: state.context.head });
       return JSON.stringify({
         pipeline: {
           run: true,
@@ -83,13 +89,85 @@ test('professional unaffected-scope evidence reuses prior audit after unrelated 
     () => {},
     prior,
   );
-  expect(roles).toEqual(['epic']);
+  expect(roles).toEqual(['epic', 'pipeline-audit']);
   expect(state.pipeline).toMatchObject({
     status: 'completed',
     head: state.context.head,
     checks: ['production smoke'],
   });
-  expect(
-    state.pipeline && 'limitations' in state.pipeline && state.pipeline.limitations.join(' '),
-  ).toContain(context.head);
+});
+
+test('every EPIC audits applicability and required maintenance blocks reporting', async () => {
+  const roles: string[] = [];
+  const state: EpicFinalization = { context };
+  await expect(
+    finalizeEpic(
+      state,
+      'goal',
+      async (role) => {
+        roles.push(role);
+        if (role === 'epic')
+          return JSON.stringify({
+            pipeline: { run: false, reason: 'No workflow changes' },
+            research: { run: false, reason: 'No impact' },
+          });
+        return JSON.stringify({
+          ...receipt,
+          disposition: 'changes_needed',
+          inspectedVersions: { repository: context.head },
+          findings: [
+            {
+              id: 'layout',
+              classification: 'required_maintenance',
+              description: 'Move affected rule',
+              evidence: ['rule graph'],
+              issue: 123,
+            },
+          ],
+          maintenance: [],
+        });
+      },
+      () => {},
+    ),
+  ).rejects.toThrow(/Pipeline/);
+  expect(roles).toEqual(['epic', 'pipeline-audit']);
+  expect(state.pipeline).toMatchObject({ disposition: 'changes_needed' });
+});
+
+test.each([
+  'not_applicable',
+  'completed_no_changes',
+  'completed',
+  'acceptance_invalidated',
+] as const)('Pipeline %s gates finalization with inspected versions', async (disposition) => {
+  const state: EpicFinalization = { context };
+  const work = finalizeEpic(
+    state,
+    'goal',
+    async (role) =>
+      role === 'epic'
+        ? JSON.stringify({
+            pipeline: { run: false, reason: 'planning opinion' },
+            research: { run: false, reason: 'no impact' },
+          })
+        : JSON.stringify({
+            ...receipt,
+            disposition,
+            findings:
+              disposition === 'acceptance_invalidated'
+                ? [
+                    {
+                      id: 'invalid',
+                      classification: 'invalidates_acceptance',
+                      description: 'Outcome unsupported',
+                      evidence: ['failed reproduction'],
+                    },
+                  ]
+                : [],
+          }),
+    () => {},
+  );
+  if (disposition === 'acceptance_invalidated') await expect(work).rejects.toThrow(/Pipeline/);
+  else await work;
+  expect(state.pipeline?.disposition).toBe(disposition);
 });

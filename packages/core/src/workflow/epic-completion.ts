@@ -70,6 +70,16 @@ export async function completeEpic(
       const temp = file + randomUUID();
       writeFileSync(temp, JSON.stringify(run, null, 2));
       renameSync(temp, file);
+      if (run.finalization?.pipeline)
+        updateRunRegistry(config, (registry) => {
+          const owner = registry.runs.find(
+            (r) =>
+              r.subject.repository === epic.repository &&
+              r.subject.number === epic.epic &&
+              r.subject.kind === 'epic',
+          );
+          if (owner) owner.pipeline = run.finalization!.pipeline;
+        });
     };
     try {
       const owner = inspectRuns(config).runs.find(

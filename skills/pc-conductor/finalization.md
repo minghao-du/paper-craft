@@ -14,7 +14,7 @@ uncertainty remains blocked. Infrastructure delivery alone is not research progr
 The designated Project coordinator supplies scientific judgments and the writing brief;
 invoking a writer transfers neither scientific authority nor coordination.
 
-**Done:** Both applicability decisions have reasons; research work has the unique
+**Done:** The planning opinions have reasons; research work has the unique
 absolute research entry, named coordinator, confirmed judgments and evidence pointers.
 
 ## 2. Dispatch specialists sequentially
@@ -23,12 +23,13 @@ Include the reminder and resolved instruction paths required by [Project instruc
 
 Use existing managed turns and attempts, attributed to the original EPIC, rather than
 Worker intake (`pc-issue-work`). Each applicable specialist gets a fresh window in the
-verified existing fleet tmux session and its own file brief. No window is needed for a
-confirmed skip. The configured Runner owns input delivery and acknowledgement.
+verified existing fleet tmux session and its own file brief. Research-only confirmed skips need no window; Pipeline applicability always gets a specialist window. The configured Runner owns input delivery and acknowledgement.
 
-First invoke `/pc-pipeline-snakemake` using its finalization branch. Technical blocking
-findings return to the existing EPIC/Worker/PR repair flow. After verified completion or
-skip, pass its full result to `/pc-research-state`. The Project coordinator serializes
+Every closed EPIC invokes `/pc-pipeline-refactor` for applicability and bounded structural
+audit, even when the EPIC planning opinion says no Pipeline is affected. It audits only;
+it does not implement through specialist subagents. Required changes become bounded
+maintenance Issues delivered by Worker and PR-Land, with Migration Ledger approval
+before covered mutation. Pass only an accepted Pipeline disposition to `/pc-research-state`. The Project coordinator serializes
 writers across repositories and Fleets: wait for the previous writer's return before
 starting another. Ambiguous coordination or handover blocks writing.
 
@@ -41,7 +42,7 @@ Managed completion retains context, applicability, results and turns in its exis
 `completion.json`; Runner directories retain briefs, logs and result files. Structured
 specialist receipts contain `head`, `status` (`completed` or `blocked`), `evidence`,
 `blockers`, `scope`, `checks`, `artifacts`, and `limitations`. Explain checks not run.
-Conductor records confirmed skips with their reasons. Preserve old rounds and attempts.
+Conductor records research-only confirmed skips with their reasons. Preserve old rounds and attempts.
 Use `pc workflow conductor recover` with the authoritative config to reconcile original receipts
 and collect results; inspect that command's help for continuation options.
 
@@ -62,8 +63,14 @@ EPIC Agent may confirm reuse with concrete unaffected-scope evidence; relevant r
 require updated scope and checks. A new round retains the old results. Never apply a
 human closure decision from a superseded baseline.
 
-**Done:** Both tasks are verified completed or confirmed skipped, with no unresolved
-blocking findings or required-delivery evidence gaps.
+**Done:** Pipeline records `not_applicable` with inspection evidence,
+`completed_no_changes` with actual audit checks, or `completed` with every required
+finding linked to delivered maintenance and specialist-verified versions. `changes_needed`
+stays pending; `acceptance_invalidated` requires human disposition. Unrelated defects
+become linked follow-up Issues and report limitations. Generic skipped is never an
+accepted Pipeline result. The canonical typed contract is `PipelineDisposition` and
+`pipelineAccepted` in the public finalization module; retain inspected versions, finding
+evidence and maintenance attribution in the Run registry. No unsupported scientific claims.
 
 ## 4. Retain finalization status
 

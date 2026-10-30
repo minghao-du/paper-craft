@@ -71,6 +71,11 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
           ...(run.subject.blockedBy ?? []).map((n) => `Dependency #${n} remains open`),
           ...(run.orchestrator?.error ? [run.orchestrator.error] : []),
           ...(run.reconciliation?.blockers ?? []),
+          ...(run.pipeline?.blockers ?? []),
+          ...(run.pipeline &&
+          ['changes_needed', 'acceptance_invalidated'].includes(run.pipeline.disposition)
+            ? [`Pipeline ${run.pipeline.disposition}`]
+            : []),
         ],
         runId: run.id,
         orchestratorId: run.orchestratorId,
