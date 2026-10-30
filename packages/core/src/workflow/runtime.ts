@@ -53,8 +53,8 @@ function save(path: string, attempt: ManagedAttempt): void {
   renameSync(temporary, path);
 }
 /** Read durable occupancy, without treating missing runtime evidence as release. */
-export function inspectConductor(config: FleetConfig): ManagedAttempt | undefined {
-  const path = join(home(config), 'conductor.json');
+export function inspectConductor(config: FleetConfig, run?: string): ManagedAttempt | undefined {
+  const path = join(home(config), run ? `orchestrator-${run}.json` : 'conductor.json');
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt) : undefined;
 }
 /** Exclusively claim the Fleet conductor, preserving failed/unknown launches for recovery. */
@@ -68,7 +68,7 @@ export async function startConductor(
   await runner.preflight();
   mkdirSync(home(config), { recursive: true });
   try {
-    mkdirSync(join(home(config), 'conductor.lock'));
+    mkdirSync(join(home(config), run ? `orchestrator-${run}.lock` : 'conductor.lock'));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST')
       throw new Error('Conductor occupied; inspect persisted attempt before recovery', {
@@ -91,7 +91,7 @@ export async function startConductor(
     directory,
     checkout: config.project,
   };
-  const path = join(home(config), 'conductor.json');
+  const path = join(home(config), run ? `orchestrator-${run}.json` : 'conductor.json');
   save(path, attempt);
   writeFileSync(join(directory, 'brief.md'), brief, { mode: 0o600 });
   try {

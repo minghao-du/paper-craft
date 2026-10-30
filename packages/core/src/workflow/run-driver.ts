@@ -8,11 +8,12 @@ import {
   rmSync,
   writeFileSync,
   readdirSync,
+  realpathSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { claimDriver } from './driver-lock.js';
 import { stateDirectory } from './handoff.js';
-import type { FleetConfig } from './fleet-config.js';
+import { workflowSource, type FleetConfig } from './fleet-config.js';
 import {
   inspectConductor,
   startConductor,
@@ -45,6 +46,8 @@ export interface RunRegistry {
   runs: WorkflowRun[];
   dispatches?: StageDispatch[];
   receipts?: StageReceipt[];
+  resources?: { path: string; runId: string; registry: string }[];
+  subjects?: { subject: string; ownerRunId: string; consumingRunIds: string[] }[];
   stageEvents?: { receiptId: string; kind: 'reported' }[];
   acknowledgements?: {
     id: string;
@@ -121,7 +124,7 @@ export async function startRun(
         throw new Error('Existing Run provider or scope conflict');
       return existing;
     }
-    if (registry.runs.some((r) => r.lifecycle !== 'completed') || inspectConductor(config))
+    if (inspectConductor(config))
       throw new Error('Fleet occupied; inspect existing Run or legacy Conductor before intake');
     const id = randomUUID();
     const directory = join(home(config), 'runs', id);
@@ -140,6 +143,7 @@ export async function startRun(
       brief: { path, hash: createHash('sha256').update(brief).digest('hex') },
     };
     registry.runs.push(run);
+    reserveSubject(registry, run.id, `${subject.repository}#${subject.number}`);
     save(config, registry);
     // The durable reservation survives a crash or failed launch and blocks replacement.
     try {
@@ -169,6 +173,7 @@ export interface StageRequest {
   inputRevision: string;
   brief: string;
   prerequisites: string[];
+  checkout?: string;
 }
 /** A generation groups retries of unchanged immutable inputs. */
 export interface StageDispatch extends StageRequest {
@@ -271,6 +276,9 @@ export async function dispatchStage(
         throw new Error('Prior generation occupancy unresolved');
       latest.lifecycle = 'superseded';
     }
+    reserveSubject(registry, run.id, request.subject);
+    const checkout = workflowSource(config, request.checkout ?? config.project);
+    reserveCheckout(config, registry, run.id, checkout);
     const id = randomUUID();
     const directory = join(home(config), 'dispatches', id);
     mkdirSync(directory, { recursive: true });
@@ -286,7 +294,7 @@ export async function dispatchStage(
       status: 'starting',
       created: new Date().toISOString(),
       directory,
-      checkout: config.project,
+      checkout,
     };
     const next: StageDispatch = {
       ...request,
@@ -541,7 +549,7 @@ export async function recoverRun(
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
   if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
-  if (run.launchStarted === false && !run.orchestrator && !inspectConductor(config)) {
+  if (run.launchStarted === false && !run.orchestrator && !inspectConductor(config, runId)) {
     updateRunRegistry(config, (registry) => {
       if (registry.revision !== snapshot.revision)
         throw new Error('Recovery inputs changed; retry');
@@ -566,7 +574,7 @@ export async function recoverRun(
     string,
     Awaited<ReturnType<NonNullable<RunnerAdapter['recoverReceipt']>>>
   >();
-  const orchestrator = run.orchestrator ?? inspectConductor(config);
+  const orchestrator = run.orchestrator ?? inspectConductor(config, runId);
   const attempts =
     snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts.slice(-1)) ??
     [];
@@ -678,4 +686,114 @@ export async function recoverRun(
     });
   }
   return { blockers, pendingDispatches };
+}
+
+/** Reference an existing subject execution; never manufacture a second owner. */
+export function reserveSubject(registry: RunRegistry, runId: string, subject: string): string {
+  registry.subjects ??= [];
+  const existing = registry.subjects.find((s) => s.subject === subject);
+  if (existing) {
+    if (existing.ownerRunId !== runId && !existing.consumingRunIds.includes(runId))
+      existing.consumingRunIds.push(runId);
+    if (existing.ownerRunId !== runId)
+      throw new Error(`Subject owned by Run ${existing.ownerRunId}`);
+    return existing.ownerRunId;
+  }
+  registry.subjects.push({ subject, ownerRunId: runId, consumingRunIds: [] });
+  return runId;
+}
+function reserveCheckout(
+  config: FleetConfig,
+  registry: RunRegistry,
+  runId: string,
+  checkout: string,
+): void {
+  const path = join(realpathSync(checkout), '.pc-execution-owner');
+  const owner = { path: checkout, runId, registry: join(home(config), 'registry.json') };
+  try {
+    writeFileSync(path, JSON.stringify(owner), { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    let prior;
+    try {
+      prior = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+      throw new Error('Unknown checkout occupancy', { cause: error });
+    }
+    if (prior.runId !== runId || prior.registry !== owner.registry)
+      throw new Error(`Checkout occupied: ${checkout}`, { cause: error });
+  }
+  registry.resources ??= [];
+  if (!registry.resources.some((r) => r.path === checkout)) registry.resources.push(owner);
+}
+/** Release requires independent termination evidence for every execution using the checkout. */
+export async function releaseRunCheckout(
+  config: FleetConfig,
+  runId: string,
+  checkout: string,
+  stopped: (attempt: ManagedAttempt) => Promise<boolean>,
+): Promise<void> {
+  const physical = workflowSource(config, checkout);
+  const snapshot = inspectRuns(config);
+  const attempts =
+    snapshot.dispatches
+      ?.filter((d) => d.runId === runId)
+      .flatMap((d) => d.attempts)
+      .filter((a) => a.checkout === physical) ?? [];
+  if (!attempts.length || !(await Promise.all(attempts.map(stopped))).every(Boolean))
+    throw new Error('Unknown checkout occupancy; termination evidence required');
+  updateRunRegistry(config, (registry) => {
+    if (registry.revision !== snapshot.revision) throw new Error('Ownership changed; retry');
+    const path = join(physical, '.pc-execution-owner');
+    const owner = JSON.parse(readFileSync(path, 'utf8'));
+    if (owner.runId !== runId || owner.registry !== join(home(config), 'registry.json'))
+      throw new Error('Checkout owner conflict');
+    rmSync(path);
+    registry.resources = registry.resources?.filter((r) => r.path !== physical);
+  });
+}
+
+/** Select the dedicated acknowledged Orchestrator for existing public business drivers. */
+export function subjectOrchestrator(
+  config: FleetConfig,
+  repository: string,
+  number: number,
+): ManagedAttempt | undefined {
+  const registry = inspectRuns(config);
+  const owner = registry.subjects?.find((s) => s.subject === `${repository}#${number}`)?.ownerRunId;
+  const run = registry.runs.find(
+    (r) =>
+      r.id === owner ||
+      (!owner &&
+        r.subject.repository === repository &&
+        r.subject.number === number &&
+        r.lifecycle !== 'completed'),
+  );
+  return run ? run.orchestrator : inspectConductor(config);
+}
+/** Record a consuming Run reference without granting another execution owner. */
+export function referenceRunSubject(config: FleetConfig, runId: string, subject: string): string {
+  return updateRunRegistry(config, (registry) => {
+    if (!registry.runs.some((r) => r.id === runId)) throw new Error('Unknown Run');
+    registry.subjects ??= [];
+    const owner = registry.subjects.find((s) => s.subject === subject);
+    if (!owner) return reserveSubject(registry, runId, subject);
+    if (owner.ownerRunId !== runId && !owner.consumingRunIds.includes(runId))
+      owner.consumingRunIds.push(runId);
+    return owner.ownerRunId;
+  });
+}
+
+/** Apply the same reservation guard to existing Issue/EPIC worker-driver launches. */
+export function reserveRunCheckout(
+  config: FleetConfig,
+  runId: string,
+  authority: string,
+  checkout: string,
+): void {
+  const physical = workflowSource(config, checkout);
+  updateRunRegistry(config, (registry) => {
+    authorize(registry, runId, authority);
+    reserveCheckout(config, registry, runId, physical);
+  });
 }

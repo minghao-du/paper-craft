@@ -1,3 +1,4 @@
+import { subjectOrchestrator, reserveRunCheckout } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Durable automatic standalone Issue round trips. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -6,7 +7,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { stateDirectory } from './handoff.js';
 import { workflowSource, type FleetConfig } from './fleet-config.js';
-import { inspectConductor, type RunnerAdapter, type ManagedAttempt } from './runtime.js';
+import { type RunnerAdapter, type ManagedAttempt } from './runtime.js';
 /** Verified repository-scoped issue input from an issue tracker. */
 export interface IssueInput {
   repository: string;
@@ -93,7 +94,7 @@ export async function driveIssue(
     throw new Error('Expected repository owner/name and positive issue number');
   if (issue.parent) throw new Error(`Issue belongs to EPIC #${issue.parent}; use EPIC planning`);
   await runner.preflight();
-  const conductor = inspectConductor(config);
+  const conductor = subjectOrchestrator(config, issue.repository, issue.number);
   if (!conductor?.conversation || conductor.status !== 'running')
     throw new Error('Expected acknowledged managed Conductor');
   // Finish its initial turn before resuming the same conversation.
@@ -104,7 +105,10 @@ export async function driveIssue(
   const home = stateDirectory(config, '.runtime', 'tasks', key);
   mkdirSync(home, { recursive: true });
   const file = join(home, 'task.json');
-  const lock = join(stateDirectory(config, '.runtime'), `driver-${conductor.fleet}.lock`);
+  const lock = join(
+    stateDirectory(config, '.runtime'),
+    `driver-${conductor.run ?? conductor.fleet}.lock`,
+  );
   try {
     claimDriver(lock);
   } catch (error) {
@@ -185,6 +189,8 @@ export async function driveIssue(
         writeFileSync(join(dir, 'brief.md'), brief);
         task.turns.push(turn);
         save(file, task);
+        if (role === 'worker' && conductor.run)
+          reserveRunCheckout(config, conductor.run, conductor.id, task.checkout);
         const receipt = await runner.start(turn);
         if (!receipt.conversation || !receipt.address || !receipt.evidence)
           throw new Error('Expected actual Runner receipt');

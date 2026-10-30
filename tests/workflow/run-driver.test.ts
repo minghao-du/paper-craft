@@ -47,15 +47,14 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     const first = await startRun(config, runner, subject, 'codex');
     expect(first.orchestrator?.status).toBe('running');
     expect((await startRun(config, runner, subject, 'codex')).id).toBe(first.id);
-    await expect(startRun(config, runner, { ...subject, number: 8 }, 'codex')).rejects.toThrow(
-      /occupied/,
-    );
-    expect(launches).toBe(1);
+    const other = await startRun(config, runner, { ...subject, number: 8 }, 'codex');
+    expect(other.orchestratorId).not.toBe(first.orchestratorId);
+    expect(launches).toBe(2);
     const snapshot = await readDashboardFleet({ id: 'fleet', config: config.file });
     expect(snapshot.tasks.find((task) => task.runId === first.id)?.orchestratorId).toBe(
       first.orchestratorId,
     );
-    expect(inspectRuns(config).runs).toHaveLength(1);
+    expect(inspectRuns(config).runs).toHaveLength(2);
     const request = {
       runId: first.id,
       authority: first.orchestratorId,
@@ -123,7 +122,7 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     expect(inspectRuns(config).receipts).toHaveLength(2);
     await recoverRun(config, runner, first.id);
     expect(inspectRuns(config).stageEvents).toHaveLength(2);
-    expect(launches).toBe(4);
+    expect(launches).toBe(5);
     const mergeStage = inspectRuns(config).dispatches!.find((d) => d.stage === 'merge')!;
     setRemediationLimit(config, first.id, first.orchestratorId, mergeStage.id, 1);
     const failed = publishStageReceipt(config, {

@@ -1,3 +1,4 @@
+import { subjectOrchestrator, reserveRunCheckout } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Repository-scoped EPIC planning and dependency-aware Worker dispatch. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -6,7 +7,6 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { stateDirectory } from './handoff.js';
 import { workflowSource, type FleetConfig } from './fleet-config.js';
-import { inspectConductor } from './runtime.js';
 import { readIssue, type IssueInput, type IssueTurn, type RoundRunner } from './issue-driver.js';
 /** EPIC professional judgment, separate from mechanical resource allocation. */
 export interface EpicTask {
@@ -86,7 +86,7 @@ export async function driveEpic(
   )
     throw new Error('Expected repository, positive EPIC number and Worker limit');
   await runner.preflight();
-  const conductor = inspectConductor(config);
+  const conductor = subjectOrchestrator(config, epic.repository, epic.number);
   if (!conductor?.conversation || conductor.status !== 'running')
     throw new Error('Expected acknowledged managed Conductor');
   const home = location(config, epic.repository, epic.number);
@@ -94,7 +94,10 @@ export async function driveEpic(
   const file = join(home, 'epic.json');
   const previous = inspectEpicRun(config, epic.repository, epic.number);
   if (previous?.status === 'delivered') return previous;
-  const lock = join(stateDirectory(config, '.runtime'), `driver-${conductor.fleet}.lock`);
+  const lock = join(
+    stateDirectory(config, '.runtime'),
+    `driver-${conductor.run ?? conductor.fleet}.lock`,
+  );
   claimDriver(lock);
   const run: EpicRun = previous ?? {
     repository: epic.repository,
@@ -161,6 +164,8 @@ export async function driveEpic(
     writeFileSync(join(directory, 'brief.md'), brief);
     save(file, run);
     try {
+      if (role === 'worker' && conductor!.run)
+        reserveRunCheckout(config, conductor!.run, conductor!.id, checkout);
       const receipt = await runner.start(t);
       if (!receipt.conversation || !receipt.address || !receipt.evidence)
         throw new Error('Expected actual Runner receipt');
