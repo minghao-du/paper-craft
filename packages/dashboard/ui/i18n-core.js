@@ -1,10 +1,11 @@
 import main from './locales/main.js';
 import history from './locales/history.js';
 import logs from './locales/logs.js';
+import evidence from './locales/evidence.js';
 
 export const dictionaries = {
-  en: { ...main.en, ...history.en, ...logs.en },
-  'zh-CN': { ...main['zh-CN'], ...history['zh-CN'], ...logs['zh-CN'] },
+  en: { ...main.en, ...history.en, ...logs.en, ...evidence.en },
+  'zh-CN': { ...main['zh-CN'], ...history['zh-CN'], ...logs['zh-CN'], ...evidence['zh-CN'] },
 };
 /** Select a supported language without persisting automatic detection. */
 export function detectLanguage(storage, languages, language) {
