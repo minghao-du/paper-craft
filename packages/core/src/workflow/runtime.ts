@@ -114,7 +114,13 @@ function shell(value: string): string {
  * The workflow driver polls the durable log to wake and dispatch the next turn.
  */
 export class CodexRunner implements RunnerAdapter {
-  readonly name = 'codex';
+  readonly name: string = 'codex';
+  protected command(attempt: ManagedAttempt): string {
+    return `codex exec ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''} -c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(join(attempt.directory, 'result.md'))} -`;
+  }
+  protected normalize(event: Record<string, unknown>): Record<string, unknown> {
+    return event;
+  }
   readonly cancellation = false;
   /** Verified process exit releases execution capacity, never checkout ownership. */
   async termination(attempt: ManagedAttempt): Promise<boolean> {
@@ -168,7 +174,7 @@ export class CodexRunner implements RunnerAdapter {
       .split('\n')
       .flatMap((line) => {
         try {
-          return [JSON.parse(line)];
+          return [this.normalize(JSON.parse(line))];
         } catch {
           return [];
         }
@@ -198,7 +204,7 @@ export class CodexRunner implements RunnerAdapter {
     if (
       !events.split('\n').some((line) => {
         try {
-          return JSON.parse(line).type === 'turn.completed';
+          return this.normalize(JSON.parse(line)).type === 'turn.completed';
         } catch {
           return false;
         }
@@ -222,11 +228,10 @@ export class CodexRunner implements RunnerAdapter {
       JSON.stringify({ address: attempt.address }),
     );
     const events = join(attempt.directory, 'events.jsonl');
-    const result = join(attempt.directory, 'result.md');
     const script = join(attempt.directory, 'launch.sh');
     writeFileSync(
       script,
-      `#!/bin/sh\n${attempt.role === 'conductor' ? `tmux set-option -w -t ${shell(session + ':0')} remain-on-exit on\n` : ''}codex exec ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `resume ${shell(attempt.conversation)} ` : ''} -c sandbox_mode='"workspace-write"' -c approval_policy='"never"' --json --output-last-message ${shell(result)} - < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
+      `#!/bin/sh\n${attempt.role === 'conductor' ? `tmux set-option -w -t ${shell(session + ':0')} remain-on-exit on\n` : ''}${this.command(attempt)} < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
       { mode: 0o700 },
     );
     if (specialist) execFileSync('tmux', ['has-session', '-t', attempt.terminalSession!]);
@@ -248,14 +253,26 @@ export class CodexRunner implements RunnerAdapter {
             'sh',
             script,
           ]
-        : ['new-session', '-d', '-s', session, '-c', attempt.checkout, 'sh', script],
+        : [
+            'new-session',
+            '-P',
+            '-F',
+            '#{window_id} #{pane_id}',
+            '-d',
+            '-s',
+            session,
+            '-c',
+            attempt.checkout,
+            'sh',
+            script,
+          ],
       { timeout: 5000, encoding: 'utf8' },
     );
-    if (specialist) {
+    {
       const [windowId, paneId] = terminal.trim().split(/\s+/);
       if (!/^@\d+$/.test(windowId ?? '') || !/^%\d+$/.test(paneId ?? ''))
         throw new Error('Expected actual tmux window and pane identities');
-      address = `${attempt.terminalSession}:${windowId}`;
+      address = `${specialist ? attempt.terminalSession : session}:${windowId}`;
       Object.assign(attempt, { windowId, paneId, address: `tmux:${address}` });
       writeFileSync(
         join(attempt.directory, 'terminal.json'),
@@ -269,7 +286,7 @@ export class CodexRunner implements RunnerAdapter {
       if (existsSync(events)) {
         for (const line of readFileSync(events, 'utf8').split('\n')) {
           try {
-            const event = JSON.parse(line) as { type: string; thread_id?: string };
+            const event = this.normalize(JSON.parse(line)) as { type: string; thread_id?: string };
             if (event.type === 'thread.started' && event.thread_id) {
               conversation = event.thread_id;
               receipt = line;
@@ -288,6 +305,75 @@ export class CodexRunner implements RunnerAdapter {
     throw new Error(
       `No Runner acknowledgement within 15s; preserve occupancy and inspect ${attempt.directory}`,
     );
+  }
+}
+
+/** Stream-JSON providers share terminal identity/exit verification with Codex. */
+abstract class StreamRunner extends CodexRunner {
+  protected abstract resumeFlag: string;
+  async preflight(): Promise<void> {
+    execFileSync('tmux', ['-V'], { timeout: 5000 });
+    const help = execFileSync(this.name, ['--help'], { encoding: 'utf8', timeout: 5000 });
+    for (const flag of ['--print', '--output-format', '--add-dir', this.resumeFlag]) {
+      if (!help.includes(flag)) throw new Error(`${this.name} lacks managed capability ${flag}`);
+    }
+  }
+  protected command(attempt: ManagedAttempt): string {
+    return `${this.name} --print --output-format stream-json ${this.name === 'claude' ? '--verbose' : ''} ${[attempt.directory, ...(attempt.writableDirectories ?? [])].map((path) => `--add-dir ${shell(path)}`).join(' ')} ${attempt.conversation ? `${this.resumeFlag} ${shell(attempt.conversation)}` : ''}`;
+  }
+  protected normalize(event: Record<string, unknown>): Record<string, unknown> {
+    if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string')
+      return { type: 'thread.started', thread_id: event.session_id };
+    if (event.type === 'assistant') return { type: 'turn.started' };
+    if (
+      event.type === 'result' &&
+      !event.is_error &&
+      (event.subtype === 'success' || event.subtype === undefined)
+    )
+      return { type: 'turn.completed' };
+    return event;
+  }
+  async collect(attempt: ManagedAttempt): Promise<string> {
+    const exit = join(attempt.directory, 'exit-code');
+    while (!existsSync(exit)) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (readFileSync(exit, 'utf8').trim() !== '0')
+      throw new Error(`${this.name} failed; inspect ${attempt.directory}`);
+    const results = readFileSync(join(attempt.directory, 'events.jsonl'), 'utf8')
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      });
+    const result = results.findLast((event) => this.normalize(event).type === 'turn.completed');
+    if (!result || typeof result.result !== 'string')
+      throw new Error(`${this.name} lacks completed result evidence`);
+    return result.result;
+  }
+}
+/** Explicit Claude Code stream protocol adapter. */
+export class ClaudeRunner extends StreamRunner {
+  readonly name = 'claude';
+  protected resumeFlag = '--resume';
+}
+/** Explicit agy stream protocol adapter; unsupported CLI capabilities fail closed. */
+export class AgyRunner extends StreamRunner {
+  readonly name = 'agy';
+  protected resumeFlag = '--conversation';
+}
+/** Resolve a supported provider without fallback. */
+export function managedRunner(provider: string): CodexRunner {
+  switch (provider) {
+    case 'codex':
+      return new CodexRunner();
+    case 'agy':
+      return new AgyRunner();
+    case 'claude':
+      return new ClaudeRunner();
+    default:
+      throw new Error(`Unsupported managed provider ${provider}`);
   }
 }
 

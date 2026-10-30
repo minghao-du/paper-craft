@@ -86,8 +86,10 @@ export async function startRun(
     throw new Error(
       'Resolve an accessible repository owner/name and positive Issue number before launch',
     );
-  if (provider !== 'codex' || runner.name !== provider)
-    throw new Error('Initial Run intake requires the codex managed provider');
+  if (!['codex', 'agy', 'claude'].includes(provider) || runner.name !== provider)
+    throw new Error(
+      'Managed provider must be codex, agy, or claude and match the selected adapter',
+    );
   await runner.preflight();
   const reconnect = inspectRuns(config).runs.find(
     (r) =>

@@ -15,7 +15,12 @@ import {
   writeIntent,
 } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
-import { CodexRunner, inspectConductor, startConductor } from '@paper-craft/core/workflow/runtime';
+import {
+  CodexRunner,
+  managedRunner,
+  inspectConductor,
+  startConductor,
+} from '@paper-craft/core/workflow/runtime';
 import { driveEpic, driveEpicIssue, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
@@ -77,7 +82,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     orchestrator
       .command('start <issue>')
       .description('Create or reconnect a Run from configured repository context')
-      .requiredOption('--provider <provider>', 'Managed provider (initially codex)'),
+      .requiredOption('--provider <provider>', 'Managed provider: codex, agy, or claude'),
   ).action(async (number: string, options: Options & { provider: string }) => {
     try {
       const config = loadFleetConfig(options.config);
@@ -93,7 +98,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       output(
         await startRun(
           config,
-          new CodexRunner(),
+          managedRunner(options.provider),
           { ...subject, kind: children.length ? 'epic' : 'issue' },
           options.provider,
         ),
@@ -112,9 +117,12 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       .option('--replace', 'Replace Orchestrator only after verified termination'),
   ).action(async (id: string, options: Options & { replace?: boolean }) => {
     try {
-      const runner = new CodexRunner();
+      const config = loadFleetConfig(options.config);
+      const run = inspectRuns(config).runs.find((run) => run.id === id);
+      if (!run) throw new Error('Unknown Run');
+      const runner = managedRunner(run.provider);
       output(
-        await recoverRun(loadFleetConfig(options.config), runner, id, {
+        await recoverRun(config, runner, id, {
           replaceOrchestrator: options.replace,
           stopped: (attempt) => runner.stopped(attempt),
         }),
