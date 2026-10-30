@@ -20,7 +20,9 @@ optimization and review uses retain their own workflow.
 3. Return a structured receipt using the contract in
    [Conductor finalization](../pc-conductor/finalization.md). Include evaluated PR/SHA
    identities, scope reasons, commands, artifacts, blocking defects, nonblocking advice
-   and unperformed checks in the appropriate fields. Technical defects return to the
+   and unperformed checks in the appropriate fields. Include the named code roots,
+   affected directory/script mapping, callers and dependent stages in that scope
+   evidence for the research-state writer. Technical defects return to the
    existing EPIC/Worker/PR repair flow; this task audits without editing workflow code.
    **Done:** Status is `blocked` for required evidence gaps or blocking defects;
    `completed` accounts for all required checks, with limitations and advice explicit.

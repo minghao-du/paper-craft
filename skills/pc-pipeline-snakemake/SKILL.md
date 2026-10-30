@@ -62,7 +62,14 @@ records needed by the research; Snakemake rules produce the evidence they refere
 
 - Group both roots by analytical stage: `processed/<stage>/` and `results/<stage>/`.
   Use the same stage name in both roots wherever that stage produces artifacts.
-- **Research-to-Code Mapping**: Organize research records around the same semantic analyses as `workflow/scripts/` and `workflow/rules/`. Give `/pc-research-state` the mapping from each analysis to its scripts, rules, inputs, output paths, and specific run evidence. When a detailed record is needed, use the same analysis name (for example, `research-state/quantification.md` links `workflow/rules/quantification.smk`, `workflow/scripts/quantification.py`, and `results/quantification/`). One analysis may use several scripts, and shared scripts may serve several analyses; record those relationships explicitly rather than creating one record per script. Resolve code and output paths relative to the named repository root, since the research home may be elsewhere.
+- **Research-to-Code Mapping**: Follow the directory-report rules in the
+  [research-state convention](../../docs/guides/research-state.md). Give
+  `/pc-research-state` the named repository/code root, affected directory tree and
+  scripts, actual rule/caller relationships, inputs, outputs and specific run
+  evidence. Identify shared helpers and affected consumers across stages or
+  repositories. For initialization or migration provide the full recursive mapping;
+  local changes provide their impact scope and unresolved mapping gaps. All report
+  writes go through `/pc-research-state` under the calling session's judgments.
 - Within a stage, group intermediates by domain meaning (e.g., `counts/`, `normalized/`) and deliverables by kind (e.g., `figures/`, `tables/`, `reports/`).
   Create only directories with actual outputs; a few files of one kind may live directly under the stage.
 - Give each artifact one canonical location.

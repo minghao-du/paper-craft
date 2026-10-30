@@ -1,22 +1,52 @@
+# Research-state report examples
+
+Optional starting points for the [research-state convention](research-state.md).
+Choose headings for the actual work; use only what helps report progress.
+
+## Project entry
+
+```markdown
 # Research state — <Project>
 
-<!-- Optional: merge/remove sections. Copy only into the designated local workspace. -->
+<Project goal, current progress and important findings.>
 
-## Goal and current understanding
+- [Simulation](simulation/README.md): summary complete; power evaluation pending rerun.
 
-Research question, scope, important progress, findings and explanations.
-Label hypotheses, observations, interpretations and conclusions with their limits;
-link supporting evidence and the single authoritative location for detailed analysis.
+<Open questions and next steps.>
+```
 
-## Unresolved questions
+## Directory report
 
-Useful unfinished discussion, competing explanations and missing evidence.
+```markdown
+# Statistics
 
-## Route and next steps
+Repository: <repository-name> — <absolute-repository-root>
+Scripts root: workflow/scripts/
+Directory: simulation/statistics/
 
-Questions, proposed methods, expected outputs, dependencies and conditions for
-advancing or changing direction. Plans do not authorize execution.
+Summary complete; power evaluation awaits missing replicates.
 
-## Relevant records
+## Summary calculation
 
-Links to detailed experiments or cross-experiment threads, only as needed.
+Aggregated 100 simulations; three replicates have missing outputs.
+Script: workflow/scripts/simulation/statistics/calculate_summary.py
+Rule: workflow/rules/simulation.smk — calculate_summary
+Inputs/configuration: <data identifiers and result-relevant settings>
+Result: results/simulation/summary.tsv
+Run: <run ID, code version, command and evidence location>
+
+## Power evaluation
+
+First pass complete. Results require verification after the three missing
+replicates are rerun. Next: complete the replicates and repeat the calculation.
+Evidence: <specific run and output locations>
+
+[Generation report](../generation/README.md)
+```
+
+## Separate report when needed
+
+A long step or independently preserved experiment may move to a descriptively
+named report linked from its directory README. Keep its work, results, current
+status and evidence together; replace the README's detailed content with a short
+summary and link. Use the same flexible format as a directory report.

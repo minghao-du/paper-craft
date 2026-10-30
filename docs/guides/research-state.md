@@ -42,9 +42,56 @@ replacing the placeholder with the same absolute path:
 > read `<absolute-research-home>/research-state/RESEARCH-STATE.local.md` and the
 > relevant linked records; submit findings to the designated coordinator for integration.
 
-An [optional entry template](research-state-template.md) is a starting point;
+The [optional report examples](research-state-template.md) provide starting points;
 merge or remove sections freely. Existing projects adopt this convention on demand;
 this guide does not move their materials or retire untransferred workflow capabilities.
+
+## Directory reports and navigation
+
+Mirror the meaningful directory hierarchy of `workflow/scripts/` in the research
+workspace, including nested stages. A directory represents a research or computing
+stage when its steps produce results worth reporting; omit utility, cache and
+generated directories. Create reports as work is undertaken, rather than empty
+files for every code directory. Without a scripts tree, organize by the actual
+research stages and name their implementation sources.
+
+The root entry summarizes project progress and links to module reports. Each
+mirrored directory has a `README.md` reporting what its steps did, their results,
+current state and next steps, with links to child reports and supporting evidence.
+These are progress reports with headings chosen for their content, not mandatory
+paper-style sections. Split out a report only when the material grows long or an
+experiment warrants independent preservation. Folder correspondence does not
+require one Markdown file per script or matching script filenames. Keep each
+result in one authoritative report and link to it from other stages or summaries.
+
+Name the repository and code root corresponding to each mirrored subtree. Keep
+single-repository paths simple; add a repository level where needed to distinguish
+colliding paths across repositories. Resolve code and evidence paths relative to
+the named repository root; resolve report navigation relative to the linking file.
+Map reported steps to actual scripts, rules, inputs, outputs and specific runs
+where applicable. Several scripts may implement one step, and shared scripts may
+serve several reports without duplicating their results.
+
+Initialization, migration and explicitly requested full audits inspect the complete
+recursive scripts tree and actual rule/caller relationships. Routine updates trace
+changed code, configuration, inputs or results through their real dependencies,
+including consumers in other directories or repositories. Expand inspection when
+relationships are unclear and report remaining uncertainty; unrelated reports need
+no recheck. Mark affected results pending verification or rerun when reassessment
+is incomplete. A code-only refactor needs report changes only if mappings or
+result-relevant information changed.
+
+After changing a report, check its direct parent's summary and navigation. Continue
+upward when that summary or stage status changes; the root changes only for
+project-level progress or findings. On moves, renames or deletion, repair affected
+links and mappings while retaining results with independent value; identify
+historical paths and unavailable evidence explicitly.
+
+Within the selected scope, verification accounts for each affected step's report,
+checks navigation and code/evidence mappings, and confirms summaries agree with
+their source reports. Unverified results and inaccessible references remain
+explicit. During adoption, map existing records before moving them and retire
+superseded copies only after their useful content and inbound links are integrated.
 
 ## Integrating findings and handing over
 
@@ -62,9 +109,10 @@ the writer returns evidence conflicts and unresolved decisions to it.
 Re-reading before writing helps
 merge edits but does not replace this responsibility; no lock service is required.
 
-For an important experiment, keep its question, data identifiers, necessary
-parameters and commands, key numbers and figure pointers, interpretation, scope
-and unresolved questions together in its authoritative analysis. For findings
+Report each step's work and results with the data identifiers, parameters, commands,
+key numbers and figure pointers needed to understand or verify them. Preserve
+useful explanations, limitations and unresolved questions in the same report;
+these do not require separate template sections. For findings
 that affect direction or manuscript claims, distinguish the specific run: record
 code version and result-relevant uncommitted changes, data version, configuration
 and output locations as needed. A replaceable `latest` path alone is insufficient;

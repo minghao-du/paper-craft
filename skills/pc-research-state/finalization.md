@@ -16,7 +16,8 @@ Verify whole-workspace ignore and tracked-file handling under the existing conve
 Keep raw evidence at source and live task progress in the task system.
 
 Return the structured receipt in
-[Conductor finalization](../pc-conductor/finalization.md), including changed record paths,
+[Conductor finalization](../pc-conductor/finalization.md), including changed report paths,
+affected folder mappings and dependent reports pending verification or rerun,
 integrated results, evidence status, pending disagreements and deferred updates. Every
 requested update must be recorded or have a coordinator-accepted deferral that does not
 violate EPIC acceptance. Required-delivery evidence gaps block closure. Unresolved

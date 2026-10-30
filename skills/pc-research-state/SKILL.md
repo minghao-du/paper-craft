@@ -51,18 +51,16 @@ scientific decisions are either resolved by the caller or explicitly pending.
 
 ## 3. Edit the shared state
 
-Re-read affected records before editing. Update topics in place, maintaining one
-authoritative detailed analysis and short linked entry summaries. Split records
-only when the material warrants it; use the
-[optional entry template](../../docs/guides/research-state-template.md) only when
-an initial structure helps. Keep raw evidence at its source.
+Re-read affected records before editing. Apply the convention's directory reports
+and navigation rules: establish the recursive folder mapping during initialization
+or migration; for routine updates trace only the affected steps and consumers.
+Update their reports in place and check parent summaries as changes propagate.
+Use the [optional report examples](../../docs/guides/research-state-template.md)
+when a starting structure helps. Keep raw evidence at its source.
 
-For pipeline analyses, preserve the caller's mapping to scripts, workflow rules,
-inputs, outputs and specific runs in the authoritative analysis. Use the same
-semantic analysis names as the code and output stages when naming detailed records.
-Identify the repository root for relative code and evidence paths; the research
-home may be elsewhere. Shared scripts and analyses using several scripts keep
-explicit links rather than requiring one record per script.
+Verify the caller's mapping to repositories, scripts, workflow rules, inputs,
+outputs and specific runs in the affected reports. Preserve useful existing
+records and repair inbound links when reorganizing them.
 
 Preserve distinctions among plans, hypotheses, observations, interpretations and
 conclusions. Incorporate the caller's judgments, useful negative findings, limits,
@@ -76,11 +74,14 @@ content has been integrated. Preserve unrelated operating instructions and local
 files when removing tracked copies from Git.
 
 **Done:** Each requested update is recorded or explicitly deferred with its reason;
-entry summaries, affected analyses and the agreed route agree without duplication.
+affected steps have report locations, folder mappings and links are current, and
+parent summaries and dependent reports agree or explicitly await verification.
 
 ## 4. Verify and return
 
-Read the changed records, follow local links and check the discovery pointer.
+Read the changed records, verify affected folder/code/evidence mappings, follow
+local links and check the discovery pointer. Check dependent reports and parent
+summaries within the impact scope for stale results.
 Confirm that the entire workspace is ignored and no research-state files remain
 tracked. Check that unsupported conclusions were not promoted and that unresolved
 questions remain visible. Report inaccessible remote references as unchecked.
