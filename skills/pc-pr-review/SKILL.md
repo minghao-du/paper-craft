@@ -16,6 +16,8 @@ Automatically detects project type and runs appropriate checks.
 
 ## Workflow
 
+For delegated review or repair, include the reminder and resolved paths required by [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) in each agent's brief.
+
 ### Step 0: Check for Project-Specific Checklist
 
 First, check for a project-specific checklist:

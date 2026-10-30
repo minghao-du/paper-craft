@@ -18,6 +18,8 @@ absolute research entry, named coordinator, confirmed judgments and evidence poi
 
 ## 2. Dispatch specialists sequentially
 
+Include the reminder and resolved instruction paths required by [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) in each specialist brief.
+
 Use existing managed turns and attempts, attributed to the original EPIC, rather than
 Worker intake (`pc-issue-work`). Each applicable specialist gets a fresh window in the
 verified existing fleet tmux session and its own file brief. No window is needed for a

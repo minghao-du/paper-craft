@@ -262,6 +262,8 @@ This directory lives outside every clone's git and is the handoff point to `/pc-
 Without verified startup, report prepared and keep intent queued.
 
 **What a brief contains:**
+
+- The reminder and resolved instruction paths required by [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch). Apply the same contract to delegated scans and specialist tasks.
 - **Scheduling constraints:** internal order, dependencies, readiness/holds and resource needs; the conductor combines these with user priorities under the shared scheduling contract.
 - **Only what the issue does not say.** Point at the issue's scope sections rather than restating them — open the issue before writing a brief, every time.
 - **Its own issue's footprint, and no parallel-safety verdict**: "this issue touches A, B, C; ask the conductor whether that intersects live work."

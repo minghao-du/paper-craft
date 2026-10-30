@@ -234,11 +234,15 @@ git diff origin/main...HEAD -- <the owned files>
 
 When you change a gating rule, sweep the slots already running under the old one; a prompt is frozen at launch.
 
-Supply the selected runner’s concrete pause instruction in every brief. For a Claude Code worker using Ralph, read [the loop adapter](claude-code/ralph.md) and insert its concrete start/pause instructions into the prompt below. Resolve any referenced files to absolute paths before handing off the brief.
+Supply the selected runner’s concrete pause instruction in every brief. Resolve any referenced files to absolute paths before handing off the brief.
+
+Apply [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) when resolving the instruction path in the prompt below.
 
 **Prompt file** (written by conductor to /tmp/spawn-N.txt):
 ````
 You are working on GitHub issue #N TITLE.
+
+Before beginning work, read the project-root instructions at <absolute path to the assigned checkout's AGENTS.md> and follow them throughout the task. Read any additional directory-specific AGENTS.md files that apply to files you inspect or modify.
 
 Follow the iteration and stopping-point protocol below using your runner's supported continuation mechanism.
 [Insert the selected runner’s pause instruction here; for Claude Code with Ralph, also insert the start command from the loop adapter. Remove this placeholder.]
@@ -643,6 +647,7 @@ The check compares code between the two commits (`src build.zig build.zig.zon`, 
 
 Before any launch, resolve the authoritative config and exact slot directory; recheck all directory owners, holds and pane paths including subdirectories. Unknown occupancy blocks reuse.
 Write the composed prompt to a file and use the selected runner's documented input method, treating prompt content as data. Record the returned pane/session identity and verify the intended directory, brief delivery and actual runner startup.
+Accept startup only when the complete brief has arrived as one message and the worker has created both a parseable `.epic-status.json` in the slot (`issue` matches the assignment, `phase` follows the protocol above, `summary` is nonempty, and `updated_at` is a valid timestamp at or after this launch) and a startup entry in `.epic-worklog.md`. The worker writes its actual state; the launcher reads and verifies it. Keep startup pending until this evidence exists; a process, branch or tool call cannot substitute for acceptance. Record the specific initialization or delivery failure rather than automatically redispatching the task.
 The current CLI does not implement `pc spawn`; if launch is unavailable or verification fails, report `prepared` or `launch-failed` and keep intent queued.
 
 For tmux workers, read and follow [the terminal placement procedure](tmux/launch.md).
@@ -681,7 +686,7 @@ Deliver a delta to a live slot by appending it to that slot's `.epic-worklog.md`
 
 A prompt-template change does not reach running workers; the prompt is frozen at launch and `RECOVERING CONTEXT` re-reads the same frozen text. Either message live workers to record the correction in their worklog, or accept that it starts at the next spawn — decide which.
 
-**Verify the worker actually started before reporting it live.** `context used N%` proves the prompt was read, not that work began; a session blocked on the folder-trust dialog shows the same. Check for a created branch or a tool call in the pane.
+**Report the worker ready and consume its intent only after Step 5 acceptance.** If tool calls have begun but initialization records are missing, report "execution activity observed; initialization not yet accepted", retain the pane identity and intent, and keep the slot unavailable for reuse.
 
 Report to the user:
 - Which clone was spawned

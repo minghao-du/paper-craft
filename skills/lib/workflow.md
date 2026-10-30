@@ -61,6 +61,14 @@ Check exit codes directly, without piping the command into another program.
   Before scheduling, use `--fetch`; a failed refresh makes the check unknown, not clear.
   Different origins, missing slots, detached heads, unreadable Git state and mismatching cached bases are reported as unknown.
 
+## Project instructions in every dispatch
+
+Every dispatch brief must explicitly tell the recipient to read and follow the assigned project's root `AGENTS.md` before beginning work, plus applicable directory-specific instructions. This applies to all roles and task sizes, including Conductor, EPIC, Worker, PR review/repair/landing, issue-lead, specialists, helpers and read-only subagents; it also applies to resumed sessions and nested delegation. Inherited context or automatic instruction loading does not replace the reminder.
+
+The sender resolves the actual assigned checkout or worktree root and includes the absolute `AGENTS.md` path in the brief. For a scratch working directory, identify the project checkout separately; for multiple projects, supply each root's instructions. If a root file is absent, record that fact rather than inventing instructions. The recipient reads the named files before task operations and reports unreadable required instructions as a blocker. Apply this contract when composing generated Runner briefs as well as manual prompts.
+
+Use this wording with resolved paths in each brief: "Before beginning work, read and follow <absolute project-root AGENTS.md path> and any applicable directory-specific AGENTS.md instructions."
+
 ## Runtime capabilities
 
 Tmux is a supported shared dependency for fleet terminal orchestration across agent runners.

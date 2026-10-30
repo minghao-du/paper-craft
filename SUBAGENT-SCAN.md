@@ -29,6 +29,8 @@ Launch all independent scanners in a single message with multiple Agent tool cal
 
 Each subagent prompt must contain:
 
+- The reminder and resolved project instruction paths required by [Project instructions in every dispatch](skills/lib/workflow.md#project-instructions-in-every-dispatch), including for read-only scans across multiple repositories.
+
 1. **What it's scanning** — exact target (repo, EPIC number, clone path, section name).
 2. **What to return** — a fixed list of structured fields the primary can compose into a dashboard. Required field set:
    - `changes_since_baseline` — bulleted list of what's new/changed (with timestamps or PR numbers when relevant)

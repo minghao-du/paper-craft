@@ -18,6 +18,7 @@ hosts. Topic decomposition, readiness and confirmation belong to `/pc-epic`.
 
 Launch the Fleet Conductor with `pc workflow conductor start --config <authoritative-config> --prompt-file <brief>`.
 The brief supplies the Conductor instructions; the launcher uses installed Codex and tmux.
+Apply [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) to this startup brief and every subsequent role or task dispatch, including EPIC and PR stages.
 `pc workflow conductor status --config <authoritative-config>` reads its persisted identity.
 Only Runner conversation and turn acknowledgements yield startup success (exit 0).
 Exit 2 reports failure or unknown; retain the brief, attempt and occupancy under the configured

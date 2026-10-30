@@ -33,6 +33,8 @@ The home, ownership, result, record and cleanup rules below apply to both modes.
 
 ## Rules
 
+- Apply [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) to helper startup and resume briefs, using the project checkout separately from the helper's home directory.
+
 - **Every helper owns a home directory, `$HELPERS/<name>/`.**
   Its `result.md`, every extra checkout it makes, and every file it cites as evidence live there, so `stop` and `sweep` see all of it.
 - **The helper works in a directory of its own.**

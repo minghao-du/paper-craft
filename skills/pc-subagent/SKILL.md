@@ -5,6 +5,8 @@ description: Delegate temporary read-only or writable tasks from Conductor, EPIC
 
 # Temporary delegation
 
+Apply [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) to every request's `brief`, including read-only tasks.
+
 Use `pc workflow subagent --help` for the shared queue interface. Every core role uses the same contract. The parent retains checkout ownership and coordinates file allocation, conflicts and integration. Read-only tasks use a read-only sandbox; writable tasks use workspace-write and an explicit file allocation in their brief.
 
 1. Write a JSON request with `parent: {id, role, task}`, `checkout`, `mode` (`read` or `write`), `brief`, and `files` (relative allocated paths; required for writes). Use the managed parent's execution ID and logical task identity. Read applicable project and directory guidance before deciding the allocation.
