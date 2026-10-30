@@ -42,6 +42,18 @@ export interface WorkflowRun {
 }
 /** Atomic Fleet relationship snapshot. */
 export interface RunRegistry {
+  deliveries?: {
+    runId: string;
+    repository: string;
+    issue: number;
+    pr: number;
+    status: string;
+    recorded?: boolean;
+    archive?: string;
+    released?: boolean;
+    evidence: string;
+    dispatches: string[];
+  }[];
   pullRequests?: {
     runId: string;
     repository: string;
@@ -760,6 +772,7 @@ export async function releaseRunCheckout(
   runId: string,
   checkout: string,
   stopped: (attempt: ManagedAttempt) => Promise<boolean>,
+  cleanup?: () => void,
 ): Promise<void> {
   const physical = workflowSource(config, checkout);
   const snapshot = inspectRuns(config);
@@ -776,7 +789,8 @@ export async function releaseRunCheckout(
     const owner = JSON.parse(readFileSync(path, 'utf8'));
     if (owner.runId !== runId || owner.registry !== join(home(config), 'registry.json'))
       throw new Error('Checkout owner conflict');
-    rmSync(path);
+    cleanup?.();
+    rmSync(path, { force: true });
     registry.resources = registry.resources?.filter((r) => r.path !== physical);
   });
 }

@@ -119,3 +119,5 @@ before retrying a missing receipt. EPIC closure remains a separate user decision
 ## Managed completion
 
 For Run-owned work, use [the shared managed lifecycle](../pc-conductor/managed-lifecycle.md) for correlated results and acceptance. Receipt publication is not delivery acceptance and does not authorize another top-level dispatch or checkout reuse.
+
+Post-merge completion follows the [shared lifecycle](../pc-conductor/managed-lifecycle.md#post-merge-delivery): accept Worker final records and independently verified termination before preservation/cleanup. A merged PR remains pending delivery until the archive and actual resource release are verified.

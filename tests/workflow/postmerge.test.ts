@@ -1,3 +1,4 @@
+import { startRun, inspectRuns } from '../../packages/core/src/workflow/run-driver.js';
 import type { IssueTurn } from '../../packages/core/src/workflow/issue-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
@@ -31,7 +32,7 @@ test('merged delivery records and archives before releasing a real worktree; unk
     interrupted = false;
   const roles: string[] = [];
   const runner = {
-    name: 'controlled',
+    name: 'codex',
     async preflight() {},
     async start(a: IssueTurn) {
       roles.push(a.role);
@@ -47,6 +48,8 @@ test('merged delivery records and archives before releasing a real worktree; unk
             complete: true,
             assessment: 'delivered',
             worklog: 'Verified merged delivery',
+            followups: [],
+            releaseEvidence: 'Controlled runner termination independently verified by driver',
           })
         : 'Conductor received completion';
     },
@@ -63,11 +66,19 @@ test('merged delivery records and archives before releasing a real worktree; unk
     },
   };
   try {
+    const managed = await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 7, title: 'delivery', body: 'bounded', kind: 'issue' },
+      'codex',
+    );
+    roles.length = 0;
     await expect(
       finishDelivery(config, runner, provider, { repository: 'o/r', issue: 7, checkout }, 4, []),
     ).rejects.toThrow(/occupancy/);
     expect(existsSync(checkout)).toBe(true);
-    expect(closed).toBe(1);
+    expect(closed).toBe(0);
+    expect(inspectRuns(config).runs[0].lifecycle).toBe('running');
     stopped = true;
     await expect(
       finishDelivery(config, runner, provider, { repository: 'o/r', issue: 7, checkout }, 4, []),
@@ -86,6 +97,18 @@ test('merged delivery records and archives before releasing a real worktree; unk
     expect(existsSync(join(done.archive!, '.epic-worklog.md'))).toBe(true);
     expect(closed).toBe(1);
     expect(roles).toEqual(['worker', 'landing', 'conductor']);
+    const graph = inspectRuns(config);
+    expect(graph.deliveries?.[0]).toMatchObject({
+      runId: managed.id,
+      recorded: true,
+      released: true,
+      status: 'done',
+    });
+    expect(graph.dispatches?.map((d) => [d.stage, d.lifecycle])).toEqual([
+      ['final-records', 'accepted'],
+      ['preservation-cleanup', 'accepted'],
+    ]);
+    expect(graph.runs[0].lifecycle).toBe('completed');
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
