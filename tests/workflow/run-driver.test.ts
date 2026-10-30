@@ -156,3 +156,105 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     rmSync(project, { recursive: true, force: true });
   }
 });
+
+test.each(['agy', 'claude'])(
+  'Run retains %s provider across dispatch and rejects conflicting adapter',
+  async (provider) => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-provider-')));
+    mkdirSync(join(project, 'pool'));
+    const config = {
+      file: join(project, '.epic-config.json'),
+      project,
+      root: join(project, 'pool'),
+      slots: [],
+      worktrees: true,
+      base: 'main',
+    };
+    const runner = {
+      name: provider,
+      async preflight() {},
+      async start() {
+        return { conversation: 'ack', address: 'tmux:actual', evidence: 'provider ack' };
+      },
+    };
+    try {
+      const run = await startRun(
+        config,
+        runner,
+        { repository: 'owner/repo', number: 1, kind: 'issue', title: 'task', body: 'task' },
+        provider,
+      );
+      const stage = await dispatchStage(config, runner, {
+        runId: run.id,
+        authority: run.orchestratorId,
+        subject: 'owner/repo#1',
+        role: 'worker',
+        stage: 'implementation',
+        inputRevision: 'v1',
+        brief: 'task',
+        prerequisites: [],
+      });
+      expect(stage.attempts[0].runner).toBe(provider);
+      await expect(
+        startRun(config, { ...runner, name: 'codex' }, run.subject, 'codex'),
+      ).rejects.toThrow(/conflict/);
+      await expect(
+        dispatchStage(
+          config,
+          { ...runner, name: 'codex' },
+          { ...stage, runId: run.id, authority: run.orchestratorId },
+        ),
+      ).rejects.toThrow(/provider/);
+      expect(inspectRuns(config).runs[0].provider).toBe(provider);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(['agy', 'claude'])(
+  'managed %s adapter requires durable provider startup and success evidence',
+  async (provider) => {
+    const { managedRunner } = await import('../../packages/core/src/workflow/runtime.js');
+    const directory = mkdtempSync(join(tmpdir(), 'pc-stream-'));
+    const runner = managedRunner(provider);
+    const attempt = {
+      id: 'a',
+      fleet: 'fleet',
+      runner: provider,
+      role: 'worker' as const,
+      brief: 'task',
+      status: 'starting' as const,
+      created: 'now',
+      directory,
+      checkout: directory,
+      address: 'tmux:actual',
+    };
+    try {
+      writeFileSync(
+        join(directory, 'events.jsonl'),
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'session-id' }) + '\n',
+      );
+      expect(await runner.recoverReceipt(attempt)).toBeUndefined();
+      writeFileSync(
+        join(directory, 'events.jsonl'),
+        JSON.stringify({ type: 'system', subtype: 'init', session_id: 'session-id' }) +
+          '\n' +
+          JSON.stringify({ type: 'assistant', message: { content: [] } }) +
+          '\n' +
+          JSON.stringify({ type: 'result', subtype: 'success', result: 'delivered' }) +
+          '\n',
+      );
+      expect((await runner.recoverReceipt(attempt))?.conversation).toBe('session-id');
+      writeFileSync(join(directory, 'exit-code'), '0');
+      expect(await runner.collect(attempt)).toBe('delivered');
+      writeFileSync(
+        join(directory, 'events.jsonl'),
+        JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'failed' }),
+      );
+      await expect(runner.collect(attempt)).rejects.toThrow(/completed result/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
