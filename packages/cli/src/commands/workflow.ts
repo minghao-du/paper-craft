@@ -1,4 +1,4 @@
-import { startRun, inspectRuns } from '@paper-craft/core/workflow/run-driver';
+import { startRun, inspectRuns, recoverRun } from '@paper-craft/core/workflow/run-driver';
 import { execFileSync } from 'node:child_process';
 import { CodexShortRunner } from '@paper-craft/core/workflow/subagents';
 import { recoverFleet } from '@paper-craft/core/workflow/recovery';
@@ -97,6 +97,27 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
           { ...subject, kind: children.length ? 'epic' : 'issue' },
           options.provider,
         ),
+        opts.human(),
+      );
+    } catch (error) {
+      run(() => {
+        throw error;
+      });
+    }
+  });
+  configured(
+    orchestrator
+      .command('recover <run>')
+      .description('Reconcile durable results and startup identity; preserve unknown occupancy')
+      .option('--replace', 'Replace Orchestrator only after verified termination'),
+  ).action(async (id: string, options: Options & { replace?: boolean }) => {
+    try {
+      const runner = new CodexRunner();
+      output(
+        await recoverRun(loadFleetConfig(options.config), runner, id, {
+          replaceOrchestrator: options.replace,
+          stopped: (attempt) => runner.stopped(attempt),
+        }),
         opts.human(),
       );
     } catch (error) {

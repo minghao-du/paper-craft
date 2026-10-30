@@ -10,6 +10,9 @@ import {
   publishStageReceipt,
   acceptStageReceipt,
   retryStage,
+  recoverRun,
+  setRemediationLimit,
+  updateRunRegistry,
 } from '../../packages/core/src/workflow/run-driver.js';
 
 test('intake reconnects an acknowledged Run and rejects conflicting ownership without launching', async () => {
@@ -110,6 +113,46 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     }));
     expect((await dispatchStage(config, runner, dependent)).stage).toBe('merge');
     expect(inspectRuns(config).receipts).toHaveLength(2);
+    // Crash after publication but before the registry/event update: recover immutable files.
+    updateRunRegistry(config, (state) => {
+      state.receipts = [];
+      state.stageEvents = [];
+    });
+    const recovered = await recoverRun(config, runner, first.id);
+    expect(recovered.pendingDispatches).toContain(stage.id);
+    expect(inspectRuns(config).receipts).toHaveLength(2);
+    await recoverRun(config, runner, first.id);
+    expect(inspectRuns(config).stageEvents).toHaveLength(2);
+    expect(launches).toBe(4);
+    const mergeStage = inspectRuns(config).dispatches!.find((d) => d.stage === 'merge')!;
+    setRemediationLimit(config, first.id, first.orchestratorId, mergeStage.id, 1);
+    const failed = publishStageReceipt(config, {
+      ...receipt,
+      dispatchId: mergeStage.id,
+      attemptId: mergeStage.attempts[0].id,
+      role: 'landing',
+      stage: 'merge',
+      outcome: 'changes_needed',
+    });
+    await expect(
+      acceptStageReceipt(config, first.orchestratorId, failed.id, async () => ({
+        currentRevision: 'head-a',
+        ownership: true,
+        evidence: 'Checks still failing',
+      })),
+    ).rejects.toThrow(/Rejected/);
+    await recoverRun(config, runner, first.id);
+    await expect(
+      retryStage(config, runner, mergeStage.id, first.orchestratorId, async () => true),
+    ).rejects.toThrow(/exhausted/);
+    const oldAuthority = first.orchestratorId;
+    await recoverRun(config, runner, first.id, {
+      stopped: async () => true,
+      replaceOrchestrator: true,
+    });
+    await expect(
+      dispatchStage(config, runner, { ...request, authority: oldAuthority, stage: 'stale' }),
+    ).rejects.toThrow(/authority/);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

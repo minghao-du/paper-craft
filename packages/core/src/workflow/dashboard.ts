@@ -67,7 +67,10 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         phase: run.lifecycle,
         summary: `${run.subject.repository}#${run.subject.number} (${run.provider})`,
         issue: run.subject.number,
-        blockers: run.orchestrator?.error ? [run.orchestrator.error] : [],
+        blockers: [
+          ...(run.orchestrator?.error ? [run.orchestrator.error] : []),
+          ...(run.reconciliation?.blockers ?? []),
+        ],
         runId: run.id,
         orchestratorId: run.orchestratorId,
         runtime: 'unknown',

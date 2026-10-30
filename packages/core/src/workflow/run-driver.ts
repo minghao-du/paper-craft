@@ -1,7 +1,16 @@
 /** Run intake and authoritative Fleet relationships; legacy Conductor records remain readable. */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  readdirSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import { claimDriver } from './driver-lock.js';
 import { stateDirectory } from './handoff.js';
 import type { FleetConfig } from './fleet-config.js';
 import {
@@ -24,8 +33,11 @@ export interface WorkflowRun {
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
   orchestratorId: string;
+  launchStarted?: boolean;
   orchestrator?: ManagedAttempt;
   brief: { path: string; hash: string };
+  reconciliation?: { at: string; blockers: string[]; pendingDispatches: string[] };
+  priorOrchestrators?: ManagedAttempt[];
 }
 /** Atomic Fleet relationship snapshot. */
 export interface RunRegistry {
@@ -77,10 +89,22 @@ export async function startRun(
   if (provider !== 'codex' || runner.name !== provider)
     throw new Error('Initial Run intake requires the codex managed provider');
   await runner.preflight();
+  const reconnect = inspectRuns(config).runs.find(
+    (r) =>
+      r.subject.repository === subject.repository &&
+      r.subject.number === subject.number &&
+      r.lifecycle !== 'completed',
+  );
+  if (reconnect) {
+    if (reconnect.provider !== provider || reconnect.subject.kind !== subject.kind)
+      throw new Error('Existing Run provider or scope conflict');
+    await recoverRun(config, runner, reconnect.id);
+    return inspectRuns(config).runs.find((r) => r.id === reconnect.id)!;
+  }
   mkdirSync(home(config), { recursive: true });
   const lock = join(home(config), 'registry.lock');
   try {
-    mkdirSync(lock);
+    claimDriver(lock);
   } catch {
     throw new Error('Registry occupied; inspect before retry');
   }
@@ -112,12 +136,15 @@ export async function startRun(
       policy: { name: 'managed-run', revision: 1 },
       lifecycle: 'reserved',
       orchestratorId: id,
+      launchStarted: false,
       brief: { path, hash: createHash('sha256').update(brief).digest('hex') },
     };
     registry.runs.push(run);
     save(config, registry);
     // The durable reservation survives a crash or failed launch and blocks replacement.
     try {
+      run.launchStarted = true;
+      save(config, registry);
       run.orchestrator = await startConductor(config, runner, brief, id);
       run.lifecycle = run.orchestrator.status === 'running' ? 'running' : 'blocked';
     } catch (error) {
@@ -152,6 +179,7 @@ export interface StageDispatch extends StageRequest {
   attempts: ManagedAttempt[];
   lifecycle: 'reserved' | 'running' | 'reported' | 'accepted' | 'rejected' | 'superseded';
   acceptedReceipt?: string;
+  remediation?: { consecutive: number; limit: number; feedback: string; exhausted: boolean };
 }
 /** A claim is immutable; acceptance is a separate durable acknowledgement. */
 export interface StageReceipt {
@@ -179,7 +207,7 @@ export function updateRunRegistry<T>(config: FleetConfig, change: (registry: Run
   mkdirSync(home(config), { recursive: true });
   const lock = join(home(config), 'registry.lock');
   try {
-    mkdirSync(lock);
+    claimDriver(lock);
   } catch {
     throw new Error('Registry occupied; inspect before retry');
   }
@@ -379,6 +407,20 @@ export async function acceptStageReceipt(
       facts.currentRevision !== current.inputRevision
     )
       rejection = 'Rejected stale, unsupported or unauthorized Receipt';
+    const alreadyRejected = registry.acknowledgements?.some(
+      (a) => a.receiptId === receiptId && !a.accepted,
+    );
+    if (rejection && !alreadyRejected) {
+      const prior = current.remediation;
+      const consecutive = (prior?.consecutive ?? 0) + 1;
+      const limit = prior?.limit ?? 3;
+      current.remediation = {
+        consecutive,
+        limit,
+        feedback: rejection + '; supply current version, valid ownership and evidence before retry',
+        exhausted: consecutive >= limit,
+      };
+    }
     (registry.acknowledgements ??= []).push({
       id: randomUUID(),
       receiptId,
@@ -389,6 +431,10 @@ export async function acceptStageReceipt(
     if (!rejection) {
       current.acceptedReceipt = receiptId;
       current.lifecycle = 'accepted';
+      if (current.remediation) {
+        current.remediation.consecutive = 0;
+        current.remediation.exhausted = false;
+      }
     } else if (current.lifecycle !== 'accepted' && current.lifecycle !== 'superseded')
       current.lifecycle = 'rejected';
   });
@@ -408,6 +454,8 @@ export async function retryStage(
   const run = authorize(snapshot, dispatch.runId, authority);
   if (runner.name !== run.provider) throw new Error('Run provider mismatch');
   await runner.preflight();
+  if (dispatch.remediation?.exhausted)
+    throw new Error('Remediation exhausted: ' + dispatch.remediation.feedback);
   const prior = dispatch.attempts.at(-1)!;
   if (!(await stopped(prior))) throw new Error('Prior Attempt occupancy unresolved');
   const attempt = updateRunRegistry(config, (registry) => {
@@ -452,4 +500,182 @@ export async function retryStage(
     current.lifecycle = attempt.status === 'running' ? 'running' : 'reserved';
     return current;
   });
+}
+
+/** Set a bounded repair policy without erasing previously unsuccessful attempts. */
+export function setRemediationLimit(
+  config: FleetConfig,
+  runId: string,
+  authority: string,
+  dispatchId: string,
+  limit: number,
+): void {
+  if (!Number.isSafeInteger(limit) || limit < 1)
+    throw new Error('Expected positive remediation limit');
+  updateRunRegistry(config, (registry) => {
+    authorize(registry, runId, authority);
+    const dispatch = findDispatch(registry, dispatchId);
+    if (dispatch.runId !== runId) throw new Error('Wrong Run');
+    const consecutive = dispatch.remediation?.consecutive ?? 0;
+    dispatch.remediation = {
+      consecutive,
+      limit,
+      exhausted: consecutive >= limit,
+      feedback: dispatch.remediation?.feedback ?? '',
+    };
+  });
+}
+
+/** Re-entry recovers durable claims and startup evidence; missing notifications never rerun work.
+ * Replacement is opt-in and requires independently verified termination, never a timeout.
+ */
+export async function recoverRun(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  runId: string,
+  options: {
+    stopped?: (attempt: ManagedAttempt) => Promise<boolean>;
+    replaceOrchestrator?: boolean;
+  } = {},
+): Promise<{ blockers: string[]; pendingDispatches: string[] }> {
+  const snapshot = inspectRuns(config);
+  const run = snapshot.runs.find((r) => r.id === runId);
+  if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
+  if (run.launchStarted === false && !run.orchestrator && !inspectConductor(config)) {
+    updateRunRegistry(config, (registry) => {
+      if (registry.revision !== snapshot.revision)
+        throw new Error('Recovery inputs changed; retry');
+      registry.runs.find((r) => r.id === runId)!.launchStarted = true;
+    });
+    const attempt = await startConductor(
+      config,
+      runner,
+      readFileSync(run.brief.path, 'utf8'),
+      runId,
+    );
+    updateRunRegistry(config, (registry) => {
+      const current = registry.runs.find((r) => r.id === runId)!;
+      current.orchestrator = attempt;
+      current.lifecycle = attempt.status === 'running' ? 'running' : 'blocked';
+    });
+    return recoverRun(config, runner, runId);
+  }
+  const blockers: string[] = [];
+  const pendingDispatches: string[] = [];
+  const recovered = new Map<
+    string,
+    Awaited<ReturnType<NonNullable<RunnerAdapter['recoverReceipt']>>>
+  >();
+  const orchestrator = run.orchestrator ?? inspectConductor(config);
+  const attempts =
+    snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts.slice(-1)) ??
+    [];
+  for (const attempt of [...(orchestrator?.run === runId ? [orchestrator] : []), ...attempts]) {
+    if (attempt.status !== 'running' && runner.recoverReceipt) {
+      const ack = await runner.recoverReceipt(attempt);
+      if (ack?.conversation && ack.address && ack.evidence) recovered.set(attempt.id, ack);
+    }
+  }
+  let replacement: ManagedAttempt | undefined;
+  if (options.replaceOrchestrator) {
+    if (
+      !orchestrator ||
+      orchestrator.run !== runId ||
+      !options.stopped ||
+      !(await options.stopped(orchestrator))
+    ) {
+      blockers.push('Orchestrator occupancy unresolved; verify termination before replacement');
+    } else {
+      const id = randomUUID();
+      const directory = join(home(config), 'runs', runId, id);
+      mkdirSync(directory);
+      replacement = {
+        ...orchestrator,
+        id,
+        directory,
+        status: 'starting',
+        created: new Date().toISOString(),
+        conversation: undefined,
+        address: undefined,
+        evidence: undefined,
+      };
+    }
+  }
+  updateRunRegistry(config, (registry) => {
+    if (registry.revision !== snapshot.revision) throw new Error('Recovery inputs changed; retry');
+    const current = registry.runs.find((r) => r.id === runId)!;
+    if (orchestrator?.run === runId) {
+      current.orchestrator = orchestrator;
+      const ack = recovered.get(orchestrator.id);
+      if (ack) Object.assign(current.orchestrator, ack, { status: 'running' });
+    }
+    if (replacement) {
+      (current.priorOrchestrators ??= []).push(orchestrator!);
+      current.orchestrator = replacement;
+      current.orchestratorId = replacement.id; // revoke old mutation authority before launch
+      current.lifecycle = 'blocked';
+    } else if (current.orchestrator?.status === 'running') current.lifecycle = 'running';
+    else blockers.push('Orchestrator startup pending; unknown occupancy remains reserved');
+    for (const dispatch of registry.dispatches?.filter((d) => d.runId === runId) ?? []) {
+      // Immutable files precede registry/event publication, so scan them on normal re-entry.
+      const directory = join(home(config), 'dispatches', dispatch.id);
+      for (const file of readdirSync(directory).filter((f) => f.endsWith('.json'))) {
+        const claim = JSON.parse(readFileSync(join(directory, file), 'utf8')) as StageReceipt;
+        if (
+          claim.dispatchId !== dispatch.id ||
+          file !== claim.id + '.json' ||
+          !dispatch.attempts.some((a) => a.id === claim.attemptId)
+        )
+          continue;
+        if (!registry.receipts?.some((r) => r.id === claim.id))
+          (registry.receipts ??= []).push(claim);
+      }
+      for (const receipt of registry.receipts?.filter((r) => r.dispatchId === dispatch.id) ?? []) {
+        if (!registry.stageEvents?.some((e) => e.receiptId === receipt.id))
+          (registry.stageEvents ??= []).push({ receiptId: receipt.id, kind: 'reported' });
+      }
+      if (
+        dispatch.lifecycle === 'reserved' &&
+        registry.receipts?.some((r) => r.dispatchId === dispatch.id)
+      )
+        dispatch.lifecycle = 'reported';
+      const accepted = registry.acknowledgements?.find(
+        (a) =>
+          a.accepted &&
+          registry.receipts?.some((r) => r.id === a.receiptId && r.dispatchId === dispatch.id),
+      );
+      if (accepted && dispatch.lifecycle !== 'superseded') {
+        dispatch.acceptedReceipt = accepted.receiptId;
+        dispatch.lifecycle = 'accepted';
+      }
+      const attempt = dispatch.attempts.at(-1)!;
+      const ack = recovered.get(attempt.id);
+      if (ack) Object.assign(attempt, ack, { status: 'running' });
+      if (dispatch.lifecycle === 'accepted') pendingDispatches.push(dispatch.id);
+      else if (dispatch.remediation?.exhausted)
+        blockers.push(`${dispatch.id}: remediation exhausted: ${dispatch.remediation.feedback}`);
+      else if (attempt.status !== 'running')
+        blockers.push(`${dispatch.id}: startup pending; verify occupancy before retry`);
+    }
+    current.reconciliation = { at: new Date().toISOString(), blockers, pendingDispatches };
+  });
+  if (replacement) {
+    await runner.preflight();
+    try {
+      const ack = await runner.start(replacement);
+      if (!ack.conversation || !ack.address || !ack.evidence)
+        throw new Error('Missing startup acknowledgement');
+      Object.assign(replacement, ack, { status: 'running' });
+    } catch (error) {
+      replacement.status = 'unknown';
+      replacement.error = String(error);
+    }
+    updateRunRegistry(config, (registry) => {
+      const current = registry.runs.find((r) => r.id === runId)!;
+      if (current.orchestratorId !== replacement!.id) throw new Error('Recovery authority changed');
+      current.orchestrator = replacement;
+      current.lifecycle = replacement!.status === 'running' ? 'running' : 'blocked';
+    });
+  }
+  return { blockers, pendingDispatches };
 }
