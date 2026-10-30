@@ -115,3 +115,7 @@ verified state archive and Git bundle, checkout release, then Conductor reportin
 Unknown execution occupancy or unaccounted checkout files retain the checkout.
 A blocked completion resumes its persisted stages; inspect the original execution
 before retrying a missing receipt. EPIC closure remains a separate user decision.
+
+## Managed completion
+
+For Run-owned work, use [the shared managed lifecycle](../pc-conductor/managed-lifecycle.md) for correlated results and acceptance. Receipt publication is not delivery acceptance and does not authorize another top-level dispatch or checkout reuse.

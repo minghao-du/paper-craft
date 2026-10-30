@@ -1,4 +1,4 @@
-import { inspectRuns, type WorkflowRun } from './run-driver.js';
+import { inspectRuns, type WorkflowRun, type RunRegistry } from './run-driver.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -43,6 +43,8 @@ export interface DashboardFleet {
   tasks: DashboardTask[];
   /** Run ownership is projected without mutating runtime state. */
   runs?: WorkflowRun[];
+  /** Distinct reported, acknowledged and accepted milestones; no control authority. */
+  execution?: Omit<RunRegistry, 'runs'>;
   error?: string;
   stale: boolean;
 }
@@ -52,7 +54,9 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
   const fleet: DashboardFleet = { ...registration, observedAt, tasks: [], stale: false };
   try {
     const config = loadFleetConfig(registration.config);
-    fleet.runs = inspectRuns(config).runs;
+    const { runs, ...execution } = inspectRuns(config);
+    fleet.runs = runs;
+    fleet.execution = execution;
     for (const run of fleet.runs) {
       fleet.tasks.push({
         id: `${registration.id}:run:${run.id}`,

@@ -234,3 +234,7 @@ ownership to return before remediation or final records. After verified merge, i
 Record the final assessment, follow-up outcomes and terminal comment path in the worklog;
 notify the conductor and release again for preservation/cleanup. Missing or failed
 records remain pending and keep the checkout intact.
+
+## Managed completion
+
+When dispatched inside a Run, publish correlated results through [the shared managed lifecycle](../pc-conductor/managed-lifecycle.md). Include immutable evidence and input revision; wait for acceptance or explicit correction feedback. Do not dispatch the next top-level role yourself.

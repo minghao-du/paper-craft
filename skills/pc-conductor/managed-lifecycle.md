@@ -1,0 +1,11 @@
+# Managed Run lifecycle
+
+Use the core Run-driver operations as transition authority. Only the owning Orchestrator requests top-level stages with `dispatchStage`; the runtime verifies Run authority, fixed provider, immutable input revision and accepted prerequisites before reserving and launching through the managed adapter. Domain acceptance remains the EPIC or specialist's judgment, represented by the workflow's current-fact verifier. A role's recommendation is not a dispatch.
+
+A Dispatch records Run, subject, role, stage, provider, input revision, immutable Brief reference and generation. Repeating identical inputs returns the same Dispatch. Changed inputs create a new generation only after prior occupancy is resolved. Retry with `retryStage` only after independently verified termination; each retry retains prior Attempts and creates a fresh Attempt identity. Unknown occupancy remains reserved.
+
+Publish a result with `publishStageReceipt`: include all correlation fields, outcome and hashed evidence references. Publication writes an immutable Receipt before the durable reported event; a wakeup may follow publication but never substitutes for it. Correct a rejected claim with a new Receipt pointing to `corrects`; never edit prior evidence. Notifications may be lost, so inspect the registry for reported results.
+
+Use `acceptStageReceipt` with current external facts and ownership evidence. Runtime checks identity, latest Attempt, provider, current input revision, evidence hashes and supersession, then records an independent acknowledgement. Reported, rejected and accepted are distinct. A completed claim alone cannot advance dependent work. The next dispatch requires accepted prerequisites; unrelated stages need not wait. Fact verification runs outside the registry lock and revision checking rejects a concurrent update before acceptance.
+
+Inspect `pc workflow orchestrator status --config <authoritative-config>` for the registry, including Dispatch lifecycle, process state, immutable claims and acceptance evidence. Dashboard projects the same records read-only. A process exit or timeout never proves business acceptance or checkout release. Legacy records without correlation remain unknown.

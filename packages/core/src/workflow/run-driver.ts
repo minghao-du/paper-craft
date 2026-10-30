@@ -31,6 +31,16 @@ export interface WorkflowRun {
 export interface RunRegistry {
   revision: number;
   runs: WorkflowRun[];
+  dispatches?: StageDispatch[];
+  receipts?: StageReceipt[];
+  stageEvents?: { receiptId: string; kind: 'reported' }[];
+  acknowledgements?: {
+    id: string;
+    receiptId: string;
+    accepted: boolean;
+    evidence: string;
+    reason?: string;
+  }[];
 }
 function home(config: FleetConfig): string {
   return stateDirectory(config, '.runtime', createHash('sha256').update(config.file).digest('hex'));
@@ -120,4 +130,326 @@ export async function startRun(
   } finally {
     rmSync(lock, { recursive: true });
   }
+}
+
+/** Immutable stage request; only the owning Orchestrator requests top-level work. */
+export interface StageRequest {
+  runId: string;
+  authority: string;
+  subject: string;
+  role: ManagedAttempt['role'];
+  stage: string;
+  inputRevision: string;
+  brief: string;
+  prerequisites: string[];
+}
+/** A generation groups retries of unchanged immutable inputs. */
+export interface StageDispatch extends StageRequest {
+  id: string;
+  generation: number;
+  provider: string;
+  briefReference: { path: string; hash: string };
+  attempts: ManagedAttempt[];
+  lifecycle: 'reserved' | 'running' | 'reported' | 'accepted' | 'rejected' | 'superseded';
+  acceptedReceipt?: string;
+}
+/** A claim is immutable; acceptance is a separate durable acknowledgement. */
+export interface StageReceipt {
+  id: string;
+  dispatchId: string;
+  attemptId: string;
+  runId: string;
+  subject: string;
+  role: ManagedAttempt['role'];
+  stage: string;
+  provider: string;
+  inputRevision: string;
+  outcome: 'completed' | 'changes_needed' | 'blocked';
+  evidence: { path: string; hash: string }[];
+  corrects?: string;
+}
+/** Mechanical verification supplied by the workflow's current-fact adapter. */
+export interface StageFacts {
+  currentRevision: string;
+  ownership: boolean;
+  evidence: string;
+}
+/** Atomically mutate relationship state; unknown locks remain occupied. */
+export function updateRunRegistry<T>(config: FleetConfig, change: (registry: RunRegistry) => T): T {
+  mkdirSync(home(config), { recursive: true });
+  const lock = join(home(config), 'registry.lock');
+  try {
+    mkdirSync(lock);
+  } catch {
+    throw new Error('Registry occupied; inspect before retry');
+  }
+  try {
+    const registry = inspectRuns(config);
+    const result = change(registry);
+    save(config, registry);
+    return result;
+  } finally {
+    rmSync(lock, { recursive: true });
+  }
+}
+function findDispatch(registry: RunRegistry, id: string): StageDispatch {
+  const dispatch = registry.dispatches?.find((d) => d.id === id);
+  if (!dispatch) throw new Error('Unknown Dispatch');
+  return dispatch;
+}
+function authorize(registry: RunRegistry, runId: string, authority: string): WorkflowRun {
+  const run = registry.runs.find((r) => r.id === runId);
+  if (!run || run.orchestratorId !== authority || run.lifecycle !== 'running')
+    throw new Error('Inactive or wrong Orchestrator authority');
+  return run;
+}
+/** Reserve before launch; replay returns the same generation and never launches twice. */
+export async function dispatchStage(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  request: StageRequest,
+): Promise<StageDispatch> {
+  await runner.preflight();
+  let launch = false;
+  const dispatch = updateRunRegistry(config, (registry) => {
+    const run = authorize(registry, request.runId, request.authority);
+    if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+    if (!request.brief.trim() || !request.inputRevision || !request.stage || !request.subject)
+      throw new Error('Incomplete stage inputs');
+    registry.dispatches ??= [];
+    const previous = registry.dispatches.filter(
+      (d) =>
+        d.runId === run.id &&
+        d.subject === request.subject &&
+        d.role === request.role &&
+        d.stage === request.stage,
+    );
+    const latest = previous.at(-1);
+    if (
+      latest &&
+      latest.inputRevision === request.inputRevision &&
+      latest.brief === request.brief &&
+      JSON.stringify(latest.prerequisites) === JSON.stringify(request.prerequisites)
+    )
+      return latest;
+    for (const prerequisite of request.prerequisites) {
+      const d = findDispatch(registry, prerequisite);
+      if (d.runId !== run.id || d.lifecycle !== 'accepted')
+        throw new Error('Unaccepted prerequisite');
+    }
+    if (latest) {
+      // Changed inputs never authorize replacing a possibly live process.
+      if (latest.lifecycle !== 'accepted' && latest.lifecycle !== 'rejected')
+        throw new Error('Prior generation occupancy unresolved');
+      latest.lifecycle = 'superseded';
+    }
+    const id = randomUUID();
+    const directory = join(home(config), 'dispatches', id);
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, 'brief.md');
+    writeFileSync(path, request.brief, { flag: 'wx', mode: 0o400 });
+    const attempt: ManagedAttempt = {
+      id: randomUUID(),
+      fleet: createHash('sha256').update(config.file).digest('hex'),
+      run: run.id,
+      role: request.role,
+      runner: run.provider,
+      brief: request.brief,
+      status: 'starting',
+      created: new Date().toISOString(),
+      directory,
+      checkout: config.project,
+    };
+    const next: StageDispatch = {
+      ...request,
+      id,
+      generation: previous.length + 1,
+      provider: run.provider,
+      briefReference: { path, hash: createHash('sha256').update(request.brief).digest('hex') },
+      attempts: [attempt],
+      lifecycle: 'reserved',
+    };
+    registry.dispatches.push(next);
+    launch = true;
+    return next;
+  });
+  if (!launch) return dispatch;
+  const attempt = dispatch.attempts[0];
+  try {
+    const ack = await runner.start(attempt);
+    if (!ack.conversation || !ack.address || !ack.evidence)
+      throw new Error('Missing startup acknowledgement');
+    Object.assign(attempt, ack, { status: 'running' });
+  } catch (error) {
+    attempt.status = 'unknown';
+    attempt.error = String(error);
+  }
+  return updateRunRegistry(config, (registry) => {
+    const current = findDispatch(registry, dispatch.id);
+    current.attempts[0] = attempt;
+    current.lifecycle = attempt.status === 'running' ? 'running' : 'reserved';
+    return current;
+  });
+}
+/** Publish the immutable claim before the durable completion event. */
+export function publishStageReceipt(
+  config: FleetConfig,
+  claim: Omit<StageReceipt, 'id'>,
+): StageReceipt {
+  return updateRunRegistry(config, (registry) => {
+    const dispatch = findDispatch(registry, claim.dispatchId);
+    if (!dispatch.attempts.some((a) => a.id === claim.attemptId))
+      throw new Error('Unknown Attempt');
+    if (
+      !['completed', 'changes_needed', 'blocked'].includes(claim.outcome) ||
+      !Array.isArray(claim.evidence)
+    )
+      throw new Error('Invalid receipt schema');
+    if (
+      claim.corrects &&
+      !registry.receipts?.some((r) => r.id === claim.corrects && r.dispatchId === dispatch.id)
+    )
+      throw new Error('Invalid correction lineage');
+    const receipt = { ...claim, id: randomUUID() };
+    const path = join(home(config), 'dispatches', dispatch.id, receipt.id + '.json');
+    const temporary = path + '.tmp';
+    writeFileSync(temporary, JSON.stringify(receipt), { flag: 'wx', mode: 0o400 });
+    renameSync(temporary, path);
+    (registry.receipts ??= []).push(receipt);
+    (registry.stageEvents ??= []).push({ receiptId: receipt.id, kind: 'reported' });
+    if (dispatch.lifecycle !== 'accepted' && dispatch.lifecycle !== 'superseded')
+      dispatch.lifecycle = 'reported';
+    return receipt;
+  });
+}
+/** Accept only after current facts, identities, inputs and evidence have been checked. */
+export async function acceptStageReceipt(
+  config: FleetConfig,
+  authority: string,
+  receiptId: string,
+  verify: (dispatch: StageDispatch, receipt: StageReceipt) => Promise<StageFacts>,
+): Promise<void> {
+  const snapshot = inspectRuns(config);
+  const receipt = snapshot.receipts?.find((r) => r.id === receiptId);
+  if (!receipt) throw new Error('Unknown Receipt');
+  const dispatch = findDispatch(snapshot, receipt.dispatchId);
+  authorize(snapshot, dispatch.runId, authority);
+  if (dispatch.acceptedReceipt === receiptId) return;
+  const facts = await verify(dispatch, receipt);
+  let rejection: string | undefined;
+  updateRunRegistry(config, (registry) => {
+    const current = findDispatch(registry, dispatch.id);
+    authorize(registry, current.runId, authority);
+    if (current.acceptedReceipt === receiptId) return;
+    if (registry.revision !== snapshot.revision)
+      throw new Error('Registry changed during fact verification; retry');
+    const identity =
+      receipt.runId === current.runId &&
+      receipt.subject === current.subject &&
+      receipt.role === current.role &&
+      receipt.stage === current.stage &&
+      receipt.provider === current.provider &&
+      receipt.attemptId === current.attempts.at(-1)?.id;
+    const evidence =
+      receipt.evidence.length > 0 &&
+      receipt.evidence.every((e) => {
+        try {
+          return createHash('sha256').update(readFileSync(e.path)).digest('hex') === e.hash;
+        } catch {
+          return false;
+        }
+      });
+    const briefValid =
+      createHash('sha256').update(readFileSync(current.briefReference.path)).digest('hex') ===
+      current.briefReference.hash;
+    const prerequisitesValid = current.prerequisites.every(
+      (id) => findDispatch(registry, id).lifecycle === 'accepted',
+    );
+    if (
+      !briefValid ||
+      !prerequisitesValid ||
+      !identity ||
+      !evidence ||
+      !facts.ownership ||
+      !facts.evidence ||
+      receipt.outcome !== 'completed' ||
+      current.lifecycle === 'superseded' ||
+      !!current.acceptedReceipt ||
+      receipt.inputRevision !== current.inputRevision ||
+      facts.currentRevision !== current.inputRevision
+    )
+      rejection = 'Rejected stale, unsupported or unauthorized Receipt';
+    (registry.acknowledgements ??= []).push({
+      id: randomUUID(),
+      receiptId,
+      accepted: !rejection,
+      evidence: facts.evidence,
+      reason: rejection,
+    });
+    if (!rejection) {
+      current.acceptedReceipt = receiptId;
+      current.lifecycle = 'accepted';
+    } else if (current.lifecycle !== 'accepted' && current.lifecycle !== 'superseded')
+      current.lifecycle = 'rejected';
+  });
+  if (rejection) throw new Error(rejection);
+}
+
+/** Retry unchanged inputs only after independently verified termination; retain every Attempt. */
+export async function retryStage(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  dispatchId: string,
+  authority: string,
+  stopped: (attempt: ManagedAttempt) => Promise<boolean>,
+): Promise<StageDispatch> {
+  const snapshot = inspectRuns(config);
+  const dispatch = findDispatch(snapshot, dispatchId);
+  const run = authorize(snapshot, dispatch.runId, authority);
+  if (runner.name !== run.provider) throw new Error('Run provider mismatch');
+  await runner.preflight();
+  const prior = dispatch.attempts.at(-1)!;
+  if (!(await stopped(prior))) throw new Error('Prior Attempt occupancy unresolved');
+  const attempt = updateRunRegistry(config, (registry) => {
+    const current = findDispatch(registry, dispatchId);
+    authorize(registry, dispatch.runId, authority);
+    if (
+      registry.revision !== snapshot.revision ||
+      current.acceptedReceipt ||
+      current.lifecycle === 'superseded'
+    )
+      throw new Error('Retry inputs changed or already accepted');
+    const id = randomUUID();
+    const directory = join(home(config), 'dispatches', dispatchId, id);
+    mkdirSync(directory);
+    const next: ManagedAttempt = {
+      ...prior,
+      id,
+      directory,
+      status: 'starting',
+      created: new Date().toISOString(),
+      conversation: undefined,
+      address: undefined,
+      evidence: undefined,
+      error: undefined,
+    };
+    current.attempts.push(next);
+    current.lifecycle = 'reserved';
+    return next;
+  });
+  try {
+    const ack = await runner.start(attempt);
+    if (!ack.conversation || !ack.address || !ack.evidence)
+      throw new Error('Missing startup acknowledgement');
+    Object.assign(attempt, ack, { status: 'running' });
+  } catch (error) {
+    attempt.status = 'unknown';
+    attempt.error = String(error);
+  }
+  return updateRunRegistry(config, (registry) => {
+    const current = findDispatch(registry, dispatchId);
+    current.attempts[current.attempts.length - 1] = attempt;
+    current.lifecycle = attempt.status === 'running' ? 'running' : 'reserved';
+    return current;
+  });
 }
