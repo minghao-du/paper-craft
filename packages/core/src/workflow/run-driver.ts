@@ -42,6 +42,18 @@ export interface WorkflowRun {
 }
 /** Atomic Fleet relationship snapshot. */
 export interface RunRegistry {
+  pullRequests?: {
+    runId: string;
+    repository: string;
+    issue: number;
+    pr: number;
+    evidence: string;
+    status: string;
+    checkedHead?: string;
+    mergeCommit?: string;
+    dispatches: string[];
+    error?: string;
+  }[];
   revision: number;
   runs: WorkflowRun[];
   dispatches?: StageDispatch[];

@@ -1,3 +1,4 @@
+import { startRun, inspectRuns } from '../../packages/core/src/workflow/run-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -128,6 +129,80 @@ test('moved heads repeat Landing gates and EPIC confirmation is required before 
     expect(result.checkedHead).toBe('second');
     expect(landings).toBe(2);
     expect(merged).toBe(true);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('uncertain merge is reconciled once and retains merged version', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-pr-uncertain-')));
+  mkdirSync(join(project, 'pool'));
+  let merged = false,
+    calls = 0;
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: join(project, 'pool'),
+    slots: [],
+    worktrees: true,
+    base: 'HEAD',
+  };
+  const github = {
+    async ensure() {
+      return 2;
+    },
+    async read() {
+      return {
+        head: 'evaluated',
+        state: merged ? 'MERGED' : 'OPEN',
+        conflict: false,
+        mergeCommit: merged ? 'merged-sha' : undefined,
+        repository: 'o/r',
+        issues: [3],
+      };
+    },
+    async checks() {
+      return 'passed' as const;
+    },
+    async merge() {
+      calls++;
+      merged = true;
+      throw new Error('connection lost');
+    },
+  };
+  const runner = {
+    name: 'codex',
+    async preflight() {},
+    async start() {
+      return { conversation: 'c', address: 'tmux:test', evidence: 'ack' };
+    },
+    async collect() {
+      return JSON.stringify({ passed: true, head: 'evaluated', evidence: 'verified checks' });
+    },
+  };
+  try {
+    const managed = await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 3, title: 'deliver', body: 'bounded task', kind: 'issue' },
+      'codex',
+    );
+    const result = await drivePullRequest(config, runner, github, {
+      repository: 'o/r',
+      issue: 3,
+      checkout: project,
+    });
+    expect(result.mergeCommit).toBe('merged-sha');
+    expect(result.checkedHead).toBe('evaluated');
+    expect(calls).toBe(1);
+    const graph = inspectRuns(config);
+    expect(graph.pullRequests?.[0]).toMatchObject({
+      runId: managed.id,
+      status: 'merged',
+      mergeCommit: 'merged-sha',
+    });
+    expect(graph.dispatches?.[0].lifecycle).toBe('accepted');
+    expect(graph.runs[0].lifecycle).toBe('running');
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

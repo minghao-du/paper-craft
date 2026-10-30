@@ -1,3 +1,11 @@
+import {
+  subjectOrchestrator,
+  dispatchStage,
+  publishStageReceipt,
+  acceptStageReceipt,
+  updateRunRegistry,
+  inspectRuns,
+} from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Current-head PR quality, repair and automatic landing workflow. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -20,7 +28,14 @@ export interface PrDelivery {
 /** Live provider evidence and compare-and-merge operation. */
 export interface PullRequestProvider {
   ensure(delivery: PrDelivery): Promise<number>;
-  read(pr: number): Promise<{ head: string; state: string; conflict: boolean }>;
+  read(pr: number): Promise<{
+    head: string;
+    state: string;
+    conflict: boolean;
+    mergeCommit?: string;
+    repository?: string;
+    issues?: number[];
+  }>;
   checks(pr: number): Promise<'passed' | 'failed' | 'pending'>;
   merge(pr: number, head: string): Promise<void>;
 }
@@ -30,6 +45,9 @@ export interface PrRun {
   status: 'running' | 'merged' | 'blocked';
   turns: IssueTurn[];
   checkedHead?: string;
+  mergeCommit?: string;
+  runId?: string;
+  dispatches?: string[];
   error?: string;
 }
 function save(file: string, value: PrRun) {
@@ -66,14 +84,46 @@ export async function drivePullRequest(
       ? JSON.parse(readFileSync(file, 'utf8'))
       : { pr: await github.ensure(delivery), status: 'running', turns: [] };
     const state = run!;
+    const orchestrator = subjectOrchestrator(config, delivery.repository, delivery.issue);
+    if (orchestrator?.run) state.runId = orchestrator.run;
+    const record = () => {
+      save(file, state);
+      if (state.runId)
+        updateRunRegistry(config, (registry) => {
+          registry.pullRequests ??= [];
+          const entry = {
+            runId: state.runId!,
+            repository: delivery.repository,
+            issue: delivery.issue,
+            pr: state.pr,
+            evidence: file,
+            status: state.status,
+            checkedHead: state.checkedHead,
+            mergeCommit: state.mergeCommit,
+            dispatches: state.dispatches ?? [],
+            error: state.error,
+          };
+          const old = registry.pullRequests.findIndex(
+            (p) => p.runId === state.runId && p.pr === state.pr,
+          );
+          if (old < 0) registry.pullRequests.push(entry);
+          else registry.pullRequests[old] = entry;
+        });
+    };
     save(file, state);
     let repair = false;
     let repairEvidence = '';
     for (let round = 0; round < 12; round++) {
       const live = await github.read(state.pr);
+      if (
+        (live.repository && live.repository !== delivery.repository) ||
+        (live.issues && !live.issues.includes(delivery.issue))
+      )
+        throw new Error('PR repository or Issue attribution mismatch');
       if (live.state === 'MERGED') {
+        state.mergeCommit = live.mergeCommit;
         state.status = 'merged';
-        save(file, state);
+        record();
         return state;
       }
       if (live.state !== 'OPEN') throw new Error('Expected open PR');
@@ -131,14 +181,40 @@ export async function drivePullRequest(
       writeFileSync(join(directory, 'brief.md'), turn.brief);
       if (!retained) state.turns.push(turn);
       save(file, state);
-      const receipt = retained ?? (await runner.start(turn));
+      let dispatch: Awaited<ReturnType<typeof dispatchStage>> | undefined;
+      if (orchestrator?.run) {
+        dispatch = await dispatchStage(config, runner, {
+          runId: orchestrator.run,
+          authority: orchestrator.id,
+          subject: `${delivery.repository}#${delivery.issue}`,
+          role,
+          stage: failed ? 'pr-repair' : 'pr-quality',
+          inputRevision: live.head,
+          brief: turn.brief,
+          prerequisites: [],
+          checkout: delivery.checkout,
+        });
+        state.dispatches ??= [];
+        if (!state.dispatches.includes(dispatch.id)) state.dispatches.push(dispatch.id);
+        Object.assign(turn, dispatch.attempts.at(-1));
+        record();
+      }
+      const receipt = dispatch
+        ? dispatch.attempts.at(-1)!
+        : (retained ?? (await runner.start(turn)));
       if (!receipt.conversation || !receipt.address || !receipt.evidence)
         throw new Error('Missing execution receipt');
       Object.assign(turn, receipt, { status: 'running' });
       save(file, state);
       turn.result = turn.result ?? (await runner.collect(turn));
       save(file, state);
-      if (failed) continue;
+      if (failed) {
+        if (dispatch)
+          updateRunRegistry(config, (registry) => {
+            registry.dispatches!.find((d) => d.id === dispatch!.id)!.lifecycle = 'rejected';
+          });
+        continue;
+      }
       const gate = JSON.parse(turn.result);
       if (
         gate.passed !== true ||
@@ -146,12 +222,53 @@ export async function drivePullRequest(
         typeof gate.evidence !== 'string' ||
         !gate.evidence.trim()
       ) {
+        if (dispatch)
+          updateRunRegistry(config, (registry) => {
+            registry.dispatches!.find((d) => d.id === dispatch!.id)!.lifecycle = 'rejected';
+          });
         repair = true;
         continue;
       }
       const fresh = await github.read(state.pr);
-      if (fresh.head !== live.head || fresh.conflict) continue;
+      if (fresh.head !== live.head || fresh.conflict) {
+        if (dispatch)
+          updateRunRegistry(config, (registry) => {
+            registry.dispatches!.find((d) => d.id === dispatch!.id)!.lifecycle = 'rejected';
+          });
+        continue;
+      }
       if ((await github.checks(state.pr)) !== 'passed') continue;
+      if (dispatch) {
+        const evidencePath = join(
+          dispatch.attempts[0].directory,
+          'quality-result-' + randomUUID() + '.json',
+        );
+        writeFileSync(evidencePath, turn.result, { flag: 'wx', mode: 0o400 });
+        const claim = publishStageReceipt(config, {
+          dispatchId: dispatch.id,
+          attemptId: turn.id,
+          runId: dispatch.runId,
+          subject: dispatch.subject,
+          role: dispatch.role,
+          stage: dispatch.stage,
+          provider: dispatch.provider,
+          inputRevision: live.head,
+          outcome: 'completed',
+          evidence: [
+            { path: evidencePath, hash: createHash('sha256').update(turn.result).digest('hex') },
+          ],
+        });
+        await acceptStageReceipt(config, dispatch.authority, claim.id, async () => ({
+          currentRevision: (await github.read(state.pr)).head,
+          ownership:
+            inspectRuns(config).resources?.some(
+              (resource) =>
+                resource.runId === dispatch!.runId &&
+                resource.path === dispatch!.attempts[0].checkout,
+            ) === true,
+          evidence: 'Live PR head and exclusive reserved checkout',
+        }));
+      }
       state.checkedHead = live.head;
       save(file, state);
       try {
@@ -167,7 +284,8 @@ export async function drivePullRequest(
       const merged = await github.read(state.pr);
       if (merged.state !== 'MERGED') throw new Error('Merge not verified');
       state.status = 'merged';
-      save(file, state);
+      state.mergeCommit = merged.mergeCommit;
+      record();
       return state;
     }
     throw new Error('Repair loop limit reached; preserve checkout and evidence');
@@ -176,6 +294,14 @@ export async function drivePullRequest(
       run.status = 'blocked';
       run.error = error instanceof Error ? error.message : String(error);
       save(file, run);
+      if (run.runId)
+        updateRunRegistry(config, (registry) => {
+          const pr = registry.pullRequests?.find((p) => p.runId === run!.runId && p.pr === run!.pr);
+          if (pr) {
+            pr.status = 'blocked';
+            pr.error = run!.error;
+          }
+        });
     }
     throw error;
   } finally {
@@ -223,10 +349,17 @@ export class GitHubPullRequests implements PullRequestProvider {
         '--repo',
         this.repository,
         '--json',
-        'headRefOid,state,mergeable',
+        'headRefOid,state,mergeable,mergeCommit,closingIssuesReferences',
       ]),
     );
-    return { head: p.headRefOid, state: p.state, conflict: p.mergeable !== 'MERGEABLE' };
+    return {
+      head: p.headRefOid,
+      state: p.state,
+      conflict: p.mergeable !== 'MERGEABLE',
+      mergeCommit: p.mergeCommit?.oid,
+      repository: this.repository,
+      issues: p.closingIssuesReferences.map((i: { number: number }) => i.number),
+    };
   }
   /** Verify merge state before post-merge side effects. */
   async merged(pr: number): Promise<boolean> {
