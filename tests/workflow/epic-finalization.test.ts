@@ -171,3 +171,86 @@ test.each([
   else await work;
   expect(state.pipeline?.disposition).toBe(disposition);
 });
+
+test('managed reporting serializes aliases, preserves prior report on failure and publishes verified provenance', async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = mkdtempSync(join(tmpdir(), 'pc-report-'));
+  const entry = join(home, 'README.md');
+  const alias = home + '-alias';
+  symlinkSync(home, alias);
+  writeFileSync(entry, 'previous accepted report');
+  const state: EpicFinalization = {
+    context: {
+      ...context,
+      requireReport: true,
+      closureEvidence: 'closed-confirmed',
+      acceptedVersions: { repository: 'accepted-sha' },
+      observedVersions: { repository: 'concurrent-sha' },
+    },
+    plan: {
+      pipeline: { run: true, reason: 'audit' },
+      research: { run: true, reason: 'report' },
+      coordinator: { identity: 'project', entry, brief: 'confirmed' },
+    },
+    pipeline: receipt,
+  };
+  try {
+    await expect(
+      finalizeEpic(
+        state,
+        'goal',
+        async () => {
+          throw new Error('writer failed');
+        },
+        () => {},
+      ),
+    ).rejects.toThrow('writer failed');
+    expect(readFileSync(entry, 'utf8')).toBe('previous accepted report');
+    await finalizeEpic(
+      state,
+      'goal',
+      async (_role, brief) => {
+        const other = structuredClone(state);
+        other.plan!.coordinator!.entry = join(alias, 'README.md');
+        await expect(
+          finalizeEpic(
+            other,
+            'goal',
+            async () => {
+              throw new Error('must not launch');
+            },
+            () => {},
+          ),
+        ).rejects.toThrow(/occupied/);
+        const candidate = brief.match(/candidate report ([^;]+);/)![1];
+        writeFileSync(
+          candidate,
+          [
+            'Objective',
+            'Accepted delivery versions',
+            'Observed repository versions',
+            'Pipeline disposition',
+            'Verified findings',
+            'Interpretation',
+            'Missing evidence',
+            'Follow-up Issues',
+            'Limitations',
+          ]
+            .map((h) => '# ' + h + '\nEvidence or explicit none')
+            .join('\n'),
+        );
+        return JSON.stringify(receipt);
+      },
+      () => {},
+    );
+    expect(state.report?.acceptedVersions).toEqual({ repository: 'accepted-sha' });
+    expect(state.report?.hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(readFileSync(entry, 'utf8')).toContain('accepted-sha');
+    expect(readFileSync(state.report!.path, 'utf8')).toContain('Verified workflow provenance');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(alias, { force: true });
+  }
+});

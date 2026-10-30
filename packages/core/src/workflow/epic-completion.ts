@@ -31,7 +31,8 @@ export interface EpicCompletionProvider {
 }
 /** Retained professional judgment and target-specific human decision. */
 export interface EpicCompletion {
-  status: 'blocked' | 'awaiting_confirmation' | 'closed' | 'post_closure_finalization';
+  status:
+    'blocked' | 'awaiting_confirmation' | 'closed' | 'post_closure_finalization' | 'completed';
   closureVerified?: boolean;
   deliveryVersion?: string;
   acceptedHead?: string;
@@ -78,7 +79,10 @@ export async function completeEpic(
               r.subject.number === epic.epic &&
               r.subject.kind === 'epic',
           );
-          if (owner) owner.pipeline = run.finalization!.pipeline;
+          if (owner) {
+            owner.pipeline = run.finalization!.pipeline;
+            if (run.finalization!.report) owner.report = run.finalization!.report;
+          }
         });
     };
     try {
@@ -288,6 +292,14 @@ export async function completeEpic(
             };
           });
         save();
+        if (owner) {
+          run.finalization!.context.requireReport = true;
+          run.finalization!.context.closureEvidence = run.archive;
+          run.finalization!.context.acceptedVersions = {
+            ...run.deliveries,
+            integrated: run.acceptedHead!,
+          };
+        }
         await finalizeEpic(
           run.finalization!,
           epic.originalGoal ?? epic.goal,
@@ -295,6 +307,15 @@ export async function completeEpic(
           save,
           retryFinalization ? undefined : run.finalizationHistory?.at(-1),
         );
+        if (owner && run.finalization!.report) {
+          updateRunRegistry(config, (registry) => {
+            const current = registry.runs.find((r) => r.id === owner.id)!;
+            current.report = run.finalization!.report;
+            current.phase = 'completed';
+            current.lifecycle = 'completed';
+          });
+          run.status = 'completed';
+        }
       }
       delete run.error;
       save();

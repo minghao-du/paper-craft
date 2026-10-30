@@ -1,6 +1,8 @@
 /** Specialist contracts for post-merge EPIC finalization, using existing managed turns. */
 import { dirname, isAbsolute } from 'node:path';
+import { writeResearchReport, type ResearchReport } from './research-report.js';
 import { z } from 'zod';
+import { execFileSync } from 'node:child_process';
 import type { IssueTurn } from './issue-driver.js';
 
 const text = z.string().trim().min(1);
@@ -102,10 +104,16 @@ export interface FinalizationContext {
   changes: string;
   /** Additional local writing roots for the research writer only. */
   writableDirectories?: string[];
+  /** Managed closure requires verified transactional reporting, even without scientific impact. */
+  requireReport?: boolean;
+  acceptedVersions?: Record<string, string>;
+  observedVersions?: Record<string, string>;
+  closureEvidence?: string;
 }
 /** Durable specialist results supplement, rather than replace, managed attempt records. */
 export interface EpicFinalization {
   context: FinalizationContext;
+  report?: ResearchReport;
   /** Distinguishes explicit retries at the same integrated SHA. */
   round?: string;
   plan?: z.infer<typeof planSchema>;
@@ -130,7 +138,7 @@ export async function finalizeEpic(
     ),
   );
   save();
-  if (state.plan.research.run && !state.plan.coordinator)
+  if ((state.plan.research.run || state.context.requireReport) && !state.plan.coordinator)
     throw new Error(
       'Research finalization requires designated coordinator and confirmed writing brief',
     );
@@ -157,6 +165,46 @@ export async function finalizeEpic(
           'Pipeline disposition pending: required maintenance, verification or human disposition blocks reporting',
         );
       continue;
+    }
+    if (state.context.requireReport && !state.report) {
+      if (!state.context.closureEvidence || !pipelineAccepted(state.pipeline))
+        throw new Error(
+          'Verified closure and accepted Pipeline disposition required for reporting',
+        );
+      state.report = await writeResearchReport(
+        state.plan.coordinator!,
+        {
+          objective,
+          acceptedVersions: state.context.acceptedVersions ?? {},
+          observedVersions: state.context.observedVersions ?? {
+            checkout: execFileSync('git', ['-C', state.context.checkout, 'rev-parse', 'HEAD'], {
+              encoding: 'utf8',
+            }).trim(),
+          },
+          pipeline: state.pipeline!,
+          closureEvidence: state.context.closureEvidence,
+        },
+        async (brief, writableDirectories) => {
+          const result = receiptSchema.parse(
+            JSON.parse(
+              await turn('research-state', brief, { ...state.context, writableDirectories }),
+            ),
+          );
+          if (
+            result.status !== 'completed' ||
+            result.blockers.length ||
+            result.head !== state.context.head
+          )
+            throw new Error('Research receipt failed validation');
+          return result.evidence;
+        },
+      );
+      state.research = {
+        ...state.pipeline!,
+        artifacts: [state.report.path],
+        evidence: state.report.evidence,
+      };
+      save();
     }
     if (!state[kind]) {
       if (decision.reuse) {

@@ -34,8 +34,9 @@ export interface WorkflowRun {
   provider: string;
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
-  phase?: 'post_closure_finalization';
+  phase?: 'post_closure_finalization' | 'completed';
   pipeline?: PipelineDisposition;
+  report?: import('./research-report.js').ResearchReport;
   epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string };
   orchestratorId: string;
   launchStarted?: boolean;

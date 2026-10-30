@@ -26,3 +26,11 @@ interpretations and conclusions as distinct kinds of knowledge.
 
 **Done:** All requested updates are accounted for, navigation and local-only storage
 are verified, and receipt limitations distinguish open research from missing delivery.
+
+For a managed Run, accepted Pipeline disposition and verified EPIC closure are mandatory.
+Runtime reserves the canonical report destination across Fleets and supplies a private
+candidate path. Write and verify that candidate only; runtime publishes it atomically
+and retains path, hash, revision and version attribution. Failed writing preserves the
+prior report. Keep accepted delivery versions separate from observed repository versions,
+and explicitly record unrelated concurrent changes, missing evidence and limitations.
+A report is required even when the EPIC delivered infrastructure without scientific results.

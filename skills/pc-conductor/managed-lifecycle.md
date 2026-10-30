@@ -41,3 +41,9 @@ Resume through `finishDelivery`/`landDelivery` after verified merge. Worker fina
 PR-Land uses the existing verified archive and Git bundle checks before cleanup. The driver verifies all execution termination, retains checkout ownership through verified bundle validation and worktree removal, then releases the reservation and accepts cleanup. Inspect `deliveries` for records, archive, cleanup, and delivered status; the associated immutable stage Receipts retain evidence after removal. Issue closure and Issue-Run completion follow verified cleanup. An EPIC Run remains active for its own acceptance/finalization. Resume retained completion state after failure; never rerun a verified merge or discard accepted records to retry cleanup.
 
 EPIC closure binds professional acceptance and explicit human confirmation to the delivery fingerprint (accepted integrated head, attributed changes, and completed child records). Recheck that fingerprint immediately before closure. Child-only Runs cannot initiate parent closure. Only verified EPIC closure opens `post_closure_finalization`; it does not complete the Run. Pipeline and Research-State operate after closure, retain accepted delivery versions separately from later observations, and preserve specialist occupancy and retry guards.
+
+Managed EPIC completion requires a verified report after accepted Pipeline disposition.
+The destination reservation spans Fleets and physical aliases. The report writer receives
+only its candidate writing directory; failed validation retains the prior publication.
+Registry report identity includes path, hash, revision, accepted and observed versions;
+only successful publication completes the Run. Unknown writer ownership blocks reuse.
