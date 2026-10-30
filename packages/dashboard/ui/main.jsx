@@ -1,3 +1,5 @@
+import { I18nProvider, useI18n } from './i18n.jsx';
+import { readFailure } from './i18n-core.js';
 import RecentChanges from './RecentChanges.jsx';
 import { TaskLogs } from './TaskLogs.jsx';
 import RemoteEvidence from './RemoteEvidence.jsx';
@@ -16,11 +18,11 @@ export async function read(path) {
   const result = await fetch(path, {
     headers: { Authorization: `Bearer ${sessionStorage.getItem('dashboard-token') || ''}` },
   });
-  if (!result.ok)
-    throw new Error(`Read failed (${result.status}). Open the startup link to authenticate.`);
+  if (!result.ok) throw readFailure(result.status);
   return result.json();
 }
 function App() {
+  const { language, setLanguage, t, formatDate, errorText } = useI18n();
   const [snapshot, setSnapshot] = useState(null),
     [error, setError] = useState(''),
     [fleetId, setFleetId] = useState(''),
@@ -30,7 +32,7 @@ function App() {
   const load = () =>
     read('/api/snapshot')
       .then(setSnapshot)
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e));
   useEffect(() => {
     load();
     const timer = setInterval(load, 5000);
@@ -40,27 +42,37 @@ function App() {
     <main>
       <header>
         <div>
-          <h1>Fleet Dashboard</h1>
-          <p>Read-only observations · occupancy and execution attempts remain unknown</p>
+          <h1>{t('main.title')}</h1>
+          <p>{t('main.warning')}</p>
         </div>
-        <button
-          onClick={() =>
-            read('/api/refresh')
-              .then(setSnapshot)
-              .catch((e) => setError(e.message))
-          }
-        >
-          Refresh
-        </button>
+        <div className="header-controls">
+          <div role="group" aria-label={t('main.language')}>
+            <button aria-pressed={language === 'en'} onClick={() => setLanguage('en')}>
+              English
+            </button>
+            <button aria-pressed={language === 'zh-CN'} onClick={() => setLanguage('zh-CN')}>
+              简体中文
+            </button>
+          </div>
+          <button
+            onClick={() =>
+              read('/api/refresh')
+                .then(setSnapshot)
+                .catch((e) => setError(e))
+            }
+          >
+            {t('main.refresh')}
+          </button>
+        </div>
       </header>
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{errorText(error)}</p>}
       {snapshot && (
         <>
           <nav>
             <label>
-              Fleet{' '}
+              {t('main.fleet')}{' '}
               <select value={fleetId} onChange={(e) => setFleetId(e.target.value)}>
-                <option value="">All Fleets</option>
+                <option value="">{t('main.allFleets')}</option>
                 {snapshot.fleets.map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.config}
@@ -69,10 +81,10 @@ function App() {
               </select>
             </label>{' '}
             <label>
-              Search <input value={query} onChange={(e) => setQuery(e.target.value)} />
+              {t('main.search')} <input value={query} onChange={(e) => setQuery(e.target.value)} />
             </label>{' '}
             <label>
-              Phase <input value={phase} onChange={(e) => setPhase(e.target.value)} />
+              {t('main.phase')} <input value={phase} onChange={(e) => setPhase(e.target.value)} />
             </label>{' '}
             <label>
               <input
@@ -80,11 +92,14 @@ function App() {
                 checked={attention}
                 onChange={(e) => setAttention(e.target.checked)}
               />
-              Needs attention
+              {t('main.attention')}
             </label>
           </nav>
           <p>
-            Observed {snapshot.generatedAt} · version {snapshot.version}
+            {t('main.observedVersion', {
+              time: formatDate(snapshot.generatedAt),
+              version: snapshot.version,
+            })}
           </p>
           {snapshot.fleets
             .filter((f) => !fleetId || f.id === fleetId)
@@ -92,20 +107,24 @@ function App() {
               <section key={fleet.id}>
                 <h2>{fleet.config}</h2>
                 <p>
-                  Fleet {fleet.id} · Project: {fleet.project || 'Unassociated'}
+                  {t('main.project', {
+                    id: fleet.id,
+                    project: fleet.project || t('main.unassociated'),
+                  })}
                 </p>
                 {fleet.error && (
                   <p role="alert">
-                    {fleet.error} {fleet.stale && '(stale)'}
+                    {fleet.error} {fleet.stale && t('main.stale')}
                   </p>
                 )}
-                <GitEvidence fleetId={fleet.id} /><RemoteEvidence fleetId={fleet.id} />
+                <GitEvidence fleetId={fleet.id} />
+                <RemoteEvidence fleetId={fleet.id} />
                 <table>
                   <thead>
                     <tr>
-                      <th>Association</th>
-                      <th>Phase</th>
-                      <th>Summary / evidence</th>
+                      <th>{t('main.association')}</th>
+                      <th>{t('main.phase')}</th>
+                      <th>{t('main.summary')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -137,33 +156,49 @@ function App() {
                           <td>
                             {task.summary}
                             <details>
-                              <summary>Evidence {task.stale ? '(stale)' : ''}</summary>
+                              <summary>
+                                {t('main.evidence')} {task.stale ? t('main.stale') : ''}
+                              </summary>
                               <GitHubEvidence taskId={task.id} />
-                              <p>Source: {task.source}</p>
-                              <p>Observed: {task.observedAt}</p>
+                              <p>{t('main.source', { source: task.source })}</p>
+                              <p>{t('main.observed', { time: formatDate(task.observedAt) })}</p>
                               <p>
-                                Runtime: {task.runtime} · execution attempt:{' '}
-                                {task.executionIdentity}
+                                {t('main.runtime', {
+                                  runtime: task.runtime,
+                                  identity: task.executionIdentity,
+                                })}
                               </p>
                               {task.error && <p role="alert">{task.error}</p>}
                               <p>
-                                Waiting: {task.waiting || 'Not recorded'} · last file activity:{' '}
-                                {task.modifiedAt || 'Unknown'}
+                                {t('main.waiting', {
+                                  waiting: task.waiting
+                                    ? ['planned', 'overdue', 'unknown'].includes(task.waiting)
+                                      ? t('main.' + task.waiting)
+                                      : task.waiting
+                                    : t('main.notRecorded'),
+                                  time: task.modifiedAt
+                                    ? formatDate(task.modifiedAt)
+                                    : t('main.unknown'),
+                                })}
                               </p>
                               <ul>
                                 {task.interventions?.map((item, i) => (
                                   <li key={i}>
                                     {item.reason}
-                                    <small>Source: {item.source}</small>
+                                    <small>{t('main.source', { source: item.source })}</small>
                                   </li>
                                 ))}
                               </ul>
                               <details>
-                                <summary>Runtime observations</summary>
+                                <summary>{t('main.runtimeObservations')}</summary>
                                 <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
                               </details>
                               <TaskLogs task={task} read={read} />
-                              <p>Blockers: {task.blockers.join(', ') || 'None recorded'}</p>
+                              <p>
+                                {t('main.blockers', {
+                                  blockers: task.blockers.join(', ') || t('main.noneRecorded'),
+                                })}
+                              </p>
                             </details>
                           </td>
                         </tr>
@@ -174,8 +209,12 @@ function App() {
             ))}
         </>
       )}
-      <RecentChanges read={read} fleetId={fleetId}/>
+      <RecentChanges read={read} fleetId={fleetId} />
     </main>
   );
 }
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(
+  <I18nProvider>
+    <App />
+  </I18nProvider>,
+);
