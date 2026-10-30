@@ -45,8 +45,19 @@ function App() {
   }, []);
   return (
     <main>
+      <div className="brand-bar">
+        <a href="/" className="brand">
+          <span className="brand-icon">
+            p<span>c</span>
+          </span>
+          paper-craft <span className="brand-divider">/</span>{' '}
+          <span className="brand-product">Fleet</span>
+        </a>
+        <span className="observation-mode">{t('main.readOnly')}</span>
+      </div>
       <header>
         <div>
+          <div className="eyebrow">WORKSPACE OVERVIEW</div>
           <h1>{t('main.title')}</h1>
           <p>{t('main.warning')}</p>
         </div>
@@ -73,6 +84,34 @@ function App() {
       {error && <p role="alert">{errorText(error)}</p>}
       {snapshot && (
         <>
+          <div className="overview-grid">
+            <div className="metric">
+              <span>{t('main.fleetsCount')}</span>
+              <strong>{snapshot.fleets.length.toString().padStart(2, '0')}</strong>
+              <small>{t('main.configured')}</small>
+            </div>
+            <div className="metric">
+              <span>{t('main.tasksCount')}</span>
+              <strong>
+                {snapshot.fleets
+                  .flatMap((f) => f.tasks)
+                  .length.toString()
+                  .padStart(2, '0')}
+              </strong>
+              <small>{t('main.recorded')}</small>
+            </div>
+            <div className="metric metric-attention">
+              <span>{t('main.attention')}</span>
+              <strong>
+                {snapshot.fleets
+                  .flatMap((f) => f.tasks)
+                  .filter((t) => t.interventions?.length)
+                  .length.toString()
+                  .padStart(2, '0')}
+              </strong>
+              <small>{t('main.guidance')}</small>
+            </div>
+          </div>
           <nav>
             <label>
               {t('main.fleet')}{' '}
@@ -100,7 +139,7 @@ function App() {
               {t('main.attention')}
             </label>
           </nav>
-          <p>
+          <p className="snapshot-meta">
             {t('main.observedVersion', {
               time: formatDate(snapshot.generatedAt),
               version: snapshot.version,
@@ -109,8 +148,12 @@ function App() {
           {snapshot.fleets
             .filter((f) => !fleetId || f.id === fleetId)
             .map((fleet) => (
-              <section key={fleet.id}>
-                <h2>{fleet.config}</h2>
+              <section className="fleet-section" key={fleet.id}>
+                <div className="eyebrow">FLEET / {fleet.id.slice(0, 8)}</div>
+                <h2 title={fleet.config}>
+                  {fleet.config.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] || fleet.config}
+                </h2>
+                <small className="config-path">{fleet.config}</small>
                 <p>
                   {t('main.project', {
                     id: fleet.id,
@@ -124,96 +167,102 @@ function App() {
                 )}
                 <GitEvidence fleetId={fleet.id} />
                 <RemoteEvidence fleetId={fleet.id} />
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t('main.association')}</th>
-                      <th>{t('main.phase')}</th>
-                      <th>{t('main.summary')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fleet.tasks
-                      .filter(
-                        (t) =>
-                          (!phase || t.phase.includes(phase)) &&
-                          (!attention || t.interventions?.length) &&
-                          [
-                            fleet.config,
-                            fleet.project,
-                            t.slot,
-                            t.summary,
-                            t.phase,
-                            t.issue,
-                            ...t.blockers,
-                          ]
-                            .join(' ')
-                            .toLowerCase()
-                            .includes(query.toLowerCase()),
-                      )
-                      .map((task) => (
-                        <tr key={task.id}>
-                          <td>
-                            {task.slot}
-                            <small>{task.role}</small>
-                          </td>
-                          <td>{task.phase}</td>
-                          <td>
-                            {task.summary}
-                            <details>
-                              <summary>
-                                {t('main.evidence')} {task.stale ? t('main.stale') : ''}
-                              </summary>
-                              <GitHubEvidence taskId={task.id} />
-                              <p>{t('main.source', { source: task.source })}</p>
-                              <p>{t('main.observed', { time: formatDate(task.observedAt) })}</p>
-                              <p>
-                                {t('main.runtime', {
-                                  runtime:
-                                    task.runtime === 'unknown' ? t('main.unknown') : task.runtime,
-                                  identity:
-                                    task.executionIdentity === 'unknown'
-                                      ? t('main.unknown')
-                                      : task.executionIdentity,
-                                })}
-                              </p>
-                              {task.error && <p role="alert">{task.error}</p>}
-                              <p>
-                                {t('main.waiting', {
-                                  waiting: task.waiting
-                                    ? Object.hasOwn(waitingLabels, task.waiting)
-                                      ? waitingLabels[task.waiting]
-                                      : task.waiting
-                                    : t('main.notRecorded'),
-                                  time: task.modifiedAt
-                                    ? formatDate(task.modifiedAt)
-                                    : t('main.unknown'),
-                                })}
-                              </p>
-                              <ul>
-                                {task.interventions?.map((item, i) => (
-                                  <li key={i}>
-                                    {item.reason}
-                                    <small>{t('main.source', { source: item.source })}</small>
-                                  </li>
-                                ))}
-                              </ul>
+                <div className="task-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{t('main.association')}</th>
+                        <th>{t('main.phase')}</th>
+                        <th>{t('main.summary')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fleet.tasks
+                        .filter(
+                          (t) =>
+                            (!phase || t.phase.includes(phase)) &&
+                            (!attention || t.interventions?.length) &&
+                            [
+                              fleet.config,
+                              fleet.project,
+                              t.slot,
+                              t.summary,
+                              t.phase,
+                              t.issue,
+                              ...t.blockers,
+                            ]
+                              .join(' ')
+                              .toLowerCase()
+                              .includes(query.toLowerCase()),
+                        )
+                        .map((task) => (
+                          <tr key={task.id}>
+                            <td>
+                              <strong className="task-name">{task.slot}</strong>
+                              <small>{task.role}</small>
+                            </td>
+                            <td>
+                              <span className="phase-badge" data-phase={task.phase}>
+                                {task.phase}
+                              </span>
+                            </td>
+                            <td>
+                              {task.summary}
                               <details>
-                                <summary>{t('main.runtimeObservations')}</summary>
-                                <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
+                                <summary>
+                                  {t('main.evidence')} {task.stale ? t('main.stale') : ''}
+                                </summary>
+                                <GitHubEvidence taskId={task.id} />
+                                <p>{t('main.source', { source: task.source })}</p>
+                                <p>{t('main.observed', { time: formatDate(task.observedAt) })}</p>
+                                <p>
+                                  {t('main.runtime', {
+                                    runtime:
+                                      task.runtime === 'unknown' ? t('main.unknown') : task.runtime,
+                                    identity:
+                                      task.executionIdentity === 'unknown'
+                                        ? t('main.unknown')
+                                        : task.executionIdentity,
+                                  })}
+                                </p>
+                                {task.error && <p role="alert">{task.error}</p>}
+                                <p>
+                                  {t('main.waiting', {
+                                    waiting: task.waiting
+                                      ? Object.hasOwn(waitingLabels, task.waiting)
+                                        ? waitingLabels[task.waiting]
+                                        : task.waiting
+                                      : t('main.notRecorded'),
+                                    time: task.modifiedAt
+                                      ? formatDate(task.modifiedAt)
+                                      : t('main.unknown'),
+                                  })}
+                                </p>
+                                <ul>
+                                  {task.interventions?.map((item, i) => (
+                                    <li key={i}>
+                                      {item.reason}
+                                      <small>{t('main.source', { source: item.source })}</small>
+                                    </li>
+                                  ))}
+                                </ul>
+                                <details>
+                                  <summary>{t('main.runtimeObservations')}</summary>
+                                  <pre>{JSON.stringify(task.runtimeEvidence, null, 2)}</pre>
+                                </details>
+                                <TaskLogs task={task} read={read} />
+                                <p>
+                                  {t('main.blockers', {
+                                    blockers: task.blockers.join(', ') || t('main.noneRecorded'),
+                                  })}
+                                </p>
                               </details>
-                              <TaskLogs task={task} read={read} />
-                              <p>
-                                {t('main.blockers', {
-                                  blockers: task.blockers.join(', ') || t('main.noneRecorded'),
-                                })}
-                              </p>
-                            </details>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </section>
             ))}
         </>

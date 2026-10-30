@@ -23,7 +23,7 @@ export default function RecentChanges({ read, fleetId }) {
     };
   }, []);
   return (
-    <section>
+    <section className="recent-changes">
       <h2>{t('history.heading')}</h2>
       <p>{t('history.retention')}</p>
       {error && <p role="alert">{t('history.unavailable', { detail: errorText(error) })}</p>}
