@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import {
   detectLanguage,
+  saveLanguage,
   createTranslator,
   formatDate,
   readFailure,
@@ -68,4 +69,28 @@ test('all translations have matching keys, named parameters and referenced liter
     };
     visit(parsed);
   }
+});
+
+test('automatic detection never persists while explicit choices tolerate failed writes', () => {
+  const writes: string[] = [];
+  const storage = {
+    getItem: () => null,
+    setItem: (_key: string, value: string) => {
+      writes.push(value);
+    },
+  };
+  expect(detectLanguage(storage, ['zh-SG'])).toBe('zh-CN');
+  expect(writes).toEqual([]);
+  saveLanguage(storage, 'en');
+  expect(writes).toEqual(['en']);
+  expect(() =>
+    saveLanguage(
+      {
+        setItem: () => {
+          throw Error('denied');
+        },
+      },
+      'zh-CN',
+    ),
+  ).not.toThrow();
 });
