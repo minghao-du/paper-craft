@@ -14,6 +14,7 @@ function storage() {
     return null;
   }
 }
+/** Share one presentation language without remounting data panels. */
 export function I18nProvider({ children }) {
   const [language, updateLanguage] = useState(() =>
     detectLanguage(storage(), navigator.languages, navigator.language),
@@ -37,6 +38,7 @@ export function I18nProvider({ children }) {
   }, [language, value]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
+/** Read the shared language and presentation helpers. */
 export function useI18n() {
   return useContext(Context);
 }

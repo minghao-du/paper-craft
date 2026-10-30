@@ -29,6 +29,11 @@ function App() {
     [query, setQuery] = useState(''),
     [phase, setPhase] = useState(''),
     [attention, setAttention] = useState(false);
+  const waitingLabels = {
+    planned: t('main.planned'),
+    overdue: t('main.overdue'),
+    unknown: t('main.unknown'),
+  };
   const load = () =>
     read('/api/snapshot')
       .then(setSnapshot)
@@ -164,16 +169,20 @@ function App() {
                               <p>{t('main.observed', { time: formatDate(task.observedAt) })}</p>
                               <p>
                                 {t('main.runtime', {
-                                  runtime: task.runtime,
-                                  identity: task.executionIdentity,
+                                  runtime:
+                                    task.runtime === 'unknown' ? t('main.unknown') : task.runtime,
+                                  identity:
+                                    task.executionIdentity === 'unknown'
+                                      ? t('main.unknown')
+                                      : task.executionIdentity,
                                 })}
                               </p>
                               {task.error && <p role="alert">{task.error}</p>}
                               <p>
                                 {t('main.waiting', {
                                   waiting: task.waiting
-                                    ? ['planned', 'overdue', 'unknown'].includes(task.waiting)
-                                      ? t('main.' + task.waiting)
+                                    ? Object.hasOwn(waitingLabels, task.waiting)
+                                      ? waitingLabels[task.waiting]
                                       : task.waiting
                                     : t('main.notRecorded'),
                                   time: task.modifiedAt
