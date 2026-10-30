@@ -24,7 +24,7 @@ test('collection failure resumes the original acceptance attempt and preserves e
     async preflight() {},
     async start() {
       starts++;
-      return { conversation: 'same', address: 'tmux:test', evidence: 'receipt' };
+      return { conversation: 'same', address: 'tmux:fleet:test', evidence: 'receipt' };
     },
     async collect(a: { role: string; brief: string }) {
       if (fail) {
@@ -35,6 +35,21 @@ test('collection failure resumes the original acceptance attempt and preserves e
         return JSON.stringify({
           pipeline: { run: false, reason: 'No workflow impact' },
           research: { run: false, reason: 'No research changes' },
+        });
+      if (a.role === 'pipeline-audit')
+        return JSON.stringify({
+          head: 'a'.repeat(40),
+          status: 'completed',
+          blockers: [],
+          scope: ['checked'],
+          checks: ['applicability'],
+          artifacts: [],
+          limitations: [],
+          maintenance: [],
+          disposition: 'not_applicable',
+          evidence: ['no pipeline'],
+          inspectedVersions: { repository: 'a'.repeat(40) },
+          findings: [],
         });
       return a.role === 'epic'
         ? JSON.stringify({ satisfied: true, criteria: ['verified goal'], blockers: [] })
@@ -92,8 +107,10 @@ test('collection failure resumes the original acceptance attempt and preserves e
         evidence: 'yes',
       }),
     ).rejects.toThrow('network');
-    expect(starts).toBe(4);
-    expect((await completeEpic(config, runner, provider, epic)).status).toBe('closed');
+    expect(starts).toBe(2);
+    expect((await completeEpic(config, runner, provider, epic)).status).toBe(
+      'post_closure_finalization',
+    );
     expect(starts).toBe(4);
   } finally {
     rmSync(project, { recursive: true, force: true });

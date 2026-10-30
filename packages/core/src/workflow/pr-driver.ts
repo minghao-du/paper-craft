@@ -269,20 +269,57 @@ export async function drivePullRequest(
           evidence: 'Live PR head and exclusive reserved checkout',
         }));
       }
+      const mergeDispatch = dispatch
+        ? await dispatchStage(config, runner, {
+            runId: dispatch.runId,
+            authority: dispatch.authority,
+            subject: dispatch.subject,
+            role: 'landing',
+            stage: 'pr-merge',
+            inputRevision: live.head,
+            brief: `Verify accepted PR quality for head ${live.head}; authorize compare-and-merge by the driver. Return verification evidence.`,
+            prerequisites: [dispatch.id],
+            checkout: delivery.checkout,
+          })
+        : undefined;
+      if (mergeDispatch) await runner.collect(mergeDispatch.attempts.at(-1)!);
       state.checkedHead = live.head;
       save(file, state);
       try {
         await github.merge(state.pr, live.head);
       } catch (error) {
         const changed = await github.read(state.pr);
-        if (changed.state === 'MERGED') continue;
-        if (changed.head !== live.head) continue;
-        repair = true;
-        repairEvidence = String(error);
-        continue;
+        if (changed.state !== 'MERGED') {
+          if (changed.head !== live.head) continue;
+          repair = true;
+          repairEvidence = String(error);
+          continue;
+        }
       }
       const merged = await github.read(state.pr);
       if (merged.state !== 'MERGED') throw new Error('Merge not verified');
+      if (mergeDispatch) {
+        const path = join(mergeDispatch.attempts[0].directory, 'verified-merge.json');
+        const body = JSON.stringify(merged);
+        writeFileSync(path, body, { flag: 'wx', mode: 0o400 });
+        const claim = publishStageReceipt(config, {
+          dispatchId: mergeDispatch.id,
+          attemptId: mergeDispatch.attempts[0].id,
+          runId: mergeDispatch.runId,
+          subject: mergeDispatch.subject,
+          role: 'landing',
+          stage: 'pr-merge',
+          provider: mergeDispatch.provider,
+          inputRevision: live.head,
+          outcome: 'completed',
+          evidence: [{ path, hash: createHash('sha256').update(body).digest('hex') }],
+        });
+        await acceptStageReceipt(config, mergeDispatch.authority, claim.id, async () => ({
+          currentRevision: live.head,
+          ownership: true,
+          evidence: 'Verified actual GitHub merge',
+        }));
+      }
       state.status = 'merged';
       state.mergeCommit = merged.mergeCommit;
       record();

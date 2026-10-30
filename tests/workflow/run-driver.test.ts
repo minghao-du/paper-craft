@@ -28,8 +28,12 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     base: 'main',
   };
   let launches = 0;
+  let verifiedStopped = true;
   const runner = {
     name: 'codex',
+    async stopped() {
+      return verifiedStopped;
+    },
     async preflight() {},
     async start() {
       launches++;
@@ -68,6 +72,23 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     };
     const stage = await dispatchStage(config, runner, request);
     expect((await dispatchStage(config, runner, request)).id).toBe(stage.id);
+    await expect(
+      dispatchStage(config, runner, {
+        ...request,
+        role: 'landing',
+        stage: 'pr-merge',
+        prerequisites: [],
+      }),
+    ).rejects.toThrow(/mandatory/);
+    verifiedStopped = false;
+    await expect(
+      dispatchStage(config, runner, { ...request, stage: 'other-role' }),
+    ).rejects.toThrow(/termination/);
+    await expect(
+      dispatchStage(config, runner, { ...request, inputRevision: 'new-input' }),
+    ).rejects.toThrow(/termination/);
+    verifiedStopped = true;
+
     await expect(
       retryStage(config, runner, stage.id, first.orchestratorId, async () => false),
     ).rejects.toThrow(/occupancy/);
@@ -173,6 +194,9 @@ test.each(['agy', 'claude'])(
     };
     const runner = {
       name: provider,
+      async stopped() {
+        return true;
+      },
       async preflight() {},
       async start() {
         return { conversation: 'ack', address: 'tmux:actual', evidence: 'provider ack' };
@@ -274,6 +298,9 @@ test('overlapping child intake reconnects ownership and consuming EPIC reference
   let launches = 0;
   const runner = {
     name: 'codex',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start() {
       launches++;

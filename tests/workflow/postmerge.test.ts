@@ -1,4 +1,10 @@
-import { startRun, inspectRuns } from '../../packages/core/src/workflow/run-driver.js';
+import {
+  startRun,
+  inspectRuns,
+  dispatchStage,
+  publishStageReceipt,
+  acceptStageReceipt,
+} from '../../packages/core/src/workflow/run-driver.js';
 import type { IssueTurn } from '../../packages/core/src/workflow/issue-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
@@ -72,6 +78,44 @@ test('merged delivery records and archives before releasing a real worktree; unk
       { repository: 'o/r', number: 7, title: 'delivery', body: 'bounded', kind: 'issue' },
       'codex',
     );
+    // Supply the already accepted quality/merge boundary required by managed postmerge.
+    stopped = true;
+    let predecessor: string[] = [];
+    for (const stage of ['implementation', 'pr-quality', 'pr-merge']) {
+      const d = await dispatchStage(config, runner, {
+        runId: managed.id,
+        authority: managed.orchestratorId,
+        subject: 'o/r#7',
+        role: stage === 'implementation' ? 'worker' : 'landing',
+        stage,
+        inputRevision: 'merged-head',
+        brief: stage,
+        prerequisites: predecessor,
+        checkout,
+      });
+      const evidence = join(d.attempts[0].directory, 'verified.txt');
+      writeFileSync(evidence, 'verified');
+      const { createHash } = await import('node:crypto');
+      const receipt = publishStageReceipt(config, {
+        dispatchId: d.id,
+        attemptId: d.attempts[0].id,
+        runId: managed.id,
+        subject: d.subject,
+        role: d.role,
+        stage,
+        provider: 'codex',
+        inputRevision: d.inputRevision,
+        outcome: 'completed',
+        evidence: [{ path: evidence, hash: createHash('sha256').update('verified').digest('hex') }],
+      });
+      await acceptStageReceipt(config, managed.orchestratorId, receipt.id, async () => ({
+        currentRevision: d.inputRevision,
+        ownership: true,
+        evidence: 'verified merge boundary',
+      }));
+      predecessor = [d.id];
+    }
+    stopped = false;
     roles.length = 0;
     await expect(
       finishDelivery(config, runner, provider, { repository: 'o/r', issue: 7, checkout }, 4, []),
@@ -104,7 +148,11 @@ test('merged delivery records and archives before releasing a real worktree; unk
       released: true,
       status: 'done',
     });
-    expect(graph.dispatches?.map((d) => [d.stage, d.lifecycle])).toEqual([
+    expect(
+      graph.dispatches
+        ?.filter((d) => !['implementation', 'pr-quality', 'pr-merge'].includes(d.stage))
+        .map((d) => [d.stage, d.lifecycle]),
+    ).toEqual([
       ['final-records', 'accepted'],
       ['preservation-cleanup', 'accepted'],
     ]);

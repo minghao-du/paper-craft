@@ -47,3 +47,5 @@ The destination reservation spans Fleets and physical aliases. The report writer
 only its candidate writing directory; failed validation retains the prior publication.
 Registry report identity includes path, hash, revision, accepted and observed versions;
 only successful publication completes the Run. Unknown writer ownership blocks reuse.
+
+Managed business turns publish immutable result receipts before progression. Runtime requires accepted Worker implementation before PR quality, exact-head quality before merge, merge before records, and records before cleanup. Distinct executions sharing a checkout transfer only after verified termination; business acceptance alone leaves occupancy reserved. An interrupted report retains its candidate and writer lock. Use finalization retry only after verifying the specific recorded writer stopped; a lock belonging to another Run remains occupied.

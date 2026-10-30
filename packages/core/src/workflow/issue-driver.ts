@@ -1,3 +1,4 @@
+import { startBusinessTurn, collectBusinessTurn } from './run-driver.js';
 import { subjectOrchestrator, reserveRunCheckout, inspectRuns } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Durable automatic standalone Issue round trips. */
@@ -187,7 +188,7 @@ export async function driveIssue(
         if (last && !last.result) {
           if (!last.conversation || last.status !== 'running')
             throw new Error('Missing receipt: inspect original attempt before retry');
-          last.result = await runner.collect(last);
+          last.result = await collectBusinessTurn(config, runner, last);
           save(file, task);
         }
         const completed = task.turns.at(-1);
@@ -231,7 +232,13 @@ export async function driveIssue(
         save(file, task);
         if (role === 'worker' && conductor.run)
           reserveRunCheckout(config, conductor.run, conductor.id, task.checkout);
-        const receipt = await runner.start(turn);
+        const receipt = await startBusinessTurn(
+          config,
+          runner,
+          turn,
+          issue.repository,
+          issue.number,
+        );
         if (!receipt.conversation || !receipt.address || !receipt.evidence)
           throw new Error('Expected actual Runner receipt');
         Object.assign(turn, receipt, { status: 'running' });

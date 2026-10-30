@@ -20,7 +20,7 @@ import {
   type ManagedAttempt,
   type RunnerAdapter,
 } from './runtime.js';
-import type { PipelineDisposition } from './epic-finalization.js';
+import { pipelineAccepted, type PipelineDisposition } from './epic-finalization.js';
 import type { IssueInput } from './issue-driver.js';
 
 /** Verified tracker subject, with explicit scope rather than title heuristics. */
@@ -220,6 +220,8 @@ export interface StageRequest {
   inputRevision: string;
   brief: string;
   prerequisites: string[];
+  terminalSession?: string;
+  writableDirectories?: string[];
   checkout?: string;
 }
 /** A generation groups retries of unchanged immutable inputs. */
@@ -290,8 +292,35 @@ export async function dispatchStage(
   request: StageRequest,
 ): Promise<StageDispatch> {
   await runner.preflight();
+  const snapshot = inspectRuns(config);
+  const checkout = workflowSource(config, request.checkout ?? config.project);
+  const occupying =
+    snapshot.dispatches?.filter(
+      (d) => d.runId === request.runId && d.attempts.some((a) => a.checkout === checkout),
+    ) ?? [];
+  for (const prior of occupying) {
+    if (
+      prior.subject === request.subject &&
+      prior.role === request.role &&
+      prior.stage === request.stage &&
+      prior.inputRevision === request.inputRevision &&
+      prior.brief === request.brief
+    )
+      continue;
+    const attempt = prior.attempts.at(-1)!;
+    if (
+      !(await (
+        runner as RunnerAdapter & { stopped?(a: ManagedAttempt): Promise<boolean> }
+      ).stopped?.(attempt))
+    )
+      throw new Error(
+        'Prior execution termination unverified; prerequisite occupancy remains reserved',
+      );
+  }
   let launch = false;
   const dispatch = updateRunRegistry(config, (registry) => {
+    if (registry.revision !== snapshot.revision)
+      throw new Error('Execution ownership changed during termination verification; retry');
     const run = authorize(registry, request.runId, request.authority);
     if (runner.name !== run.provider) throw new Error('Run provider mismatch');
     if (!request.brief.trim() || !request.inputRevision || !request.stage || !request.subject)
@@ -312,6 +341,42 @@ export async function dispatchStage(
       JSON.stringify(latest.prerequisites) === JSON.stringify(request.prerequisites)
     )
       return latest;
+    const mandatory: Record<string, string> = {
+      'pr-merge': 'pr-quality',
+      'final-records': 'pr-merge',
+      'preservation-cleanup': 'final-records',
+    };
+    if (
+      request.stage === 'pr-quality' &&
+      !registry.dispatches.some(
+        (d) =>
+          d.runId === run.id &&
+          d.subject === request.subject &&
+          d.role === 'worker' &&
+          d.lifecycle === 'accepted',
+      )
+    )
+      throw new Error('Missing mandatory accepted Worker implementation');
+    if (request.role === 'pipeline-audit' && !run.epicClosure)
+      throw new Error('Pipeline requires verified EPIC closure');
+    if (
+      request.role === 'research-state' &&
+      (!run.epicClosure || !run.pipeline || !pipelineAccepted(run.pipeline))
+    )
+      throw new Error('Report requires accepted Pipeline disposition');
+    const predecessor = mandatory[request.stage];
+    if (
+      predecessor &&
+      !registry.dispatches.some(
+        (d) =>
+          d.runId === run.id &&
+          d.subject === request.subject &&
+          d.stage === predecessor &&
+          d.lifecycle === 'accepted' &&
+          (request.stage !== 'pr-merge' || d.inputRevision === request.inputRevision),
+      )
+    )
+      throw new Error('Missing mandatory accepted predecessor: ' + predecessor);
     for (const prerequisite of request.prerequisites) {
       const d = findDispatch(registry, prerequisite);
       if (d.runId !== run.id || d.lifecycle !== 'accepted')
@@ -342,6 +407,8 @@ export async function dispatchStage(
       created: new Date().toISOString(),
       directory,
       checkout,
+      terminalSession: request.terminalSession,
+      writableDirectories: request.writableDirectories,
     };
     const next: StageDispatch = {
       ...request,
@@ -845,4 +912,67 @@ export function reserveRunCheckout(
     authorize(registry, runId, authority);
     reserveCheckout(config, registry, runId, physical);
   });
+}
+
+/** Launch a business turn through the owning Run protocol; legacy has no fabricated identity. */
+export async function startBusinessTurn(
+  config: FleetConfig,
+  runner: RunnerAdapter,
+  attempt: ManagedAttempt,
+  repository: string,
+  number: number,
+): Promise<ManagedAttempt> {
+  const owner = subjectOrchestrator(config, repository, number);
+  if (!owner?.run) return Object.assign(attempt, await runner.start(attempt));
+  const dispatch = await dispatchStage(config, runner, {
+    runId: owner.run,
+    authority: owner.id,
+    subject: `${repository}#${number}`,
+    role: attempt.role,
+    stage:
+      'business-' +
+      attempt.role +
+      '-' +
+      createHash('sha256').update(attempt.brief).digest('hex').slice(0, 16),
+    inputRevision: createHash('sha256').update(attempt.brief).digest('hex'),
+    brief: attempt.brief,
+    prerequisites: [],
+    checkout: attempt.checkout,
+    terminalSession: attempt.terminalSession,
+    writableDirectories: attempt.writableDirectories,
+  });
+  return Object.assign(attempt, dispatch.attempts.at(-1));
+}
+/** Publish and accept collected evidence before a managed business turn can advance. */
+export async function collectBusinessTurn(
+  config: FleetConfig,
+  runner: RunnerAdapter & { collect(a: ManagedAttempt): Promise<string> },
+  attempt: ManagedAttempt,
+): Promise<string> {
+  const result = await runner.collect(attempt);
+  const dispatch = inspectRuns(config).dispatches?.find((d) =>
+    d.attempts.some((a) => a.id === attempt.id),
+  );
+  if (dispatch && dispatch.lifecycle !== 'accepted') {
+    const path = join(attempt.directory, 'business-result-' + randomUUID() + '.md');
+    writeFileSync(path, result, { flag: 'wx', mode: 0o400 });
+    const receipt = publishStageReceipt(config, {
+      dispatchId: dispatch.id,
+      attemptId: attempt.id,
+      runId: dispatch.runId,
+      subject: dispatch.subject,
+      role: dispatch.role,
+      stage: dispatch.stage,
+      provider: dispatch.provider,
+      inputRevision: dispatch.inputRevision,
+      outcome: 'completed',
+      evidence: [{ path, hash: createHash('sha256').update(result).digest('hex') }],
+    });
+    await acceptStageReceipt(config, dispatch.authority, receipt.id, async () => ({
+      currentRevision: dispatch.inputRevision,
+      ownership: true,
+      evidence: 'Collected immutable business result under reserved Run authority',
+    }));
+  }
+  return result;
 }

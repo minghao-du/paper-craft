@@ -40,17 +40,17 @@ not a live execution probe. The automatic dispatch loop is supplied by the subse
    directory; repeated completed intake does not replay execution. Worker briefs
    require project AGENTS.md and applicable lower directory guidance. Task stages
    delivered here do not prove PR merge, final records or cleanup completed.
-   For an EPIC-owned Issue, start or resume its persistent `/pc-epic <number>`
-   agent and reconcile its keyed registration under the shared workflow contract.
+   For a child Issue, retain parent context and dependencies while delivering only that child.
+   Reconnect to its registered execution owner under the shared managed lifecycle.
 
 3. Obtain each active EPIC's scoped task briefs, order, dependencies, readiness and blockers.
    Record user priorities and apply the shared scheduling contract to the measured resource
    inventory below; dispatch eligible work with `/pc-conductor-spawn`.
    A worker may delegate helpers within that task; independent work returns as intent.
 4. Collect completion and review findings and all required EPIC confirmations at the current PR head,
-   then request the user's explicit PR/SHA approval under the shared contract. Route
+   then dispatch automatic guarded PR-Land merge under the shared managed lifecycle. Route
    revision requests to the worker, retaining retry counts and attributed evidence.
-   Finish with either a recorded approval request or a concrete blocker and next owner.
+   Finish with accepted delivery evidence or a concrete blocker and next owner.
 5. Reconcile queued intent and receiver receipts before yielding; arm the shared
    workflow's wake-up mechanism when available. A successful send is not handling.
 
@@ -60,8 +60,8 @@ user judgments to the user; mechanical placement remains the conductor's respons
 
 ## EPIC finalization
 
-Before requesting EPIC closure after verified merges and landing records, read
-[post-merge finalization](finalization.md) and schedule its specialist gates.
+After delivered children, bind final acceptance and explicit human closure confirmation to the accepted delivery versions.
+Verify actual closure before scheduling Pipeline applicability, Worker maintenance and specialist verification, then Research-State reporting under [the managed lifecycle](managed-lifecycle.md).
 
 ## Conventions
 

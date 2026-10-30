@@ -1,3 +1,5 @@
+import { releaseResearchWriter } from './research-report.js';
+import { startBusinessTurn, collectBusinessTurn } from './run-driver.js';
 import {
   finalizeEpic,
   type EpicFinalization,
@@ -124,7 +126,7 @@ export async function completeEpic(
           if (retained.result !== undefined) return retained.result;
           if (!retained.conversation || retained.status !== 'running')
             throw new Error('Missing original receipt; retain unknown occupancy');
-          retained.result = await runner.collect(retained);
+          retained.result = await collectBusinessTurn(config, runner, retained);
           save();
           return retained.result;
         }
@@ -146,7 +148,11 @@ export async function completeEpic(
         run.turns.push(attempt);
         writeFileSync(join(directory, 'brief.md'), brief);
         save();
-        Object.assign(attempt, await runner.start(attempt), { status: 'running' });
+        Object.assign(
+          attempt,
+          await startBusinessTurn(config, runner, attempt, epic.repository, epic.epic),
+          { status: 'running' },
+        );
         if (context && !attempt.address?.startsWith(`tmux:${context.terminalSession}:`))
           throw new Error(
             'Specialist receipt must identify a window in the existing fleet session',
@@ -154,7 +160,7 @@ export async function completeEpic(
         if (!attempt.conversation || !attempt.evidence || !attempt.address)
           throw new Error('Expected actual Runner receipt');
         save();
-        attempt.result = await runner.collect(attempt);
+        attempt.result = await collectBusinessTurn(config, runner, attempt);
         save();
         return attempt.result;
       };
@@ -168,6 +174,14 @@ export async function completeEpic(
               'Retry requires verified specialist termination and released writing ownership',
             );
         }
+      }
+      if (retryFinalization && run.finalization?.plan?.coordinator) {
+        await releaseResearchWriter(run.finalization.plan.coordinator.entry, async (owner) => {
+          const writer = run.turns.find(
+            (t) => t.role === 'research-state' && t.brief.includes('.report-' + owner.revision),
+          );
+          return !!writer && !!runner.stopped && (await runner.stopped(writer));
+        });
       }
       if (retryFinalization) {
         for (const attempt of run.turns) {

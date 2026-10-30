@@ -267,6 +267,10 @@ test('managed reporting serializes aliases, preserves prior report on failure an
       ),
     ).rejects.toThrow('writer failed');
     expect(readFileSync(entry, 'utf8')).toBe('previous accepted report');
+    const { releaseResearchWriter } =
+      await import('../../packages/core/src/workflow/research-report.js');
+    await expect(releaseResearchWriter(entry, async () => false)).rejects.toThrow(/termination/);
+    await releaseResearchWriter(entry, async () => true);
     await finalizeEpic(
       state,
       'goal',

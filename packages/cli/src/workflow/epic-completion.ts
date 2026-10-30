@@ -1,10 +1,11 @@
+import { startBusinessTurn, collectBusinessTurn } from '@paper-craft/core/workflow/run-driver';
 /** Connect professional head gates and final human EPIC closure to public workflow. */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { completeEpic, type EpicCloseDecision } from '@paper-craft/core/workflow/epic-completion';
-import { inspectConductor } from '@paper-craft/core/workflow/runtime';
+
 import { landDelivery, finishDelivery } from '@paper-craft/core/workflow/postmerge';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { stateDirectory } from '@paper-craft/core/workflow/handoff';
@@ -14,6 +15,7 @@ import type { CompletionRunner } from '@paper-craft/core/workflow/postmerge';
 import { driveIssue, readIssue, type IssueTurn } from '@paper-craft/core/workflow/issue-driver';
 import {
   inspectRuns,
+  subjectOrchestrator,
   referenceRunSubject,
   updateRunRegistry,
 } from '@paper-craft/core/workflow/run-driver';
@@ -203,11 +205,16 @@ export async function finishEpic(
             writeFileSync(join(directory, 'attempt.json'), JSON.stringify(turn, null, 2));
           writeFileSync(join(directory, 'brief.md'), brief);
           save();
-          if (fresh) Object.assign(turn, await runner.start(turn), { status: 'running' });
+          if (fresh)
+            Object.assign(
+              turn,
+              await startBusinessTurn(config, runner, turn, epic.repository, epic.epic),
+              { status: 'running' },
+            );
           save();
           if (!turn.conversation || turn.status !== 'running')
             throw new Error('Reconcile original professional gate before retry');
-          turn.result = turn.result ?? (await runner.collect(turn));
+          turn.result = turn.result ?? (await collectBusinessTurn(config, runner, turn));
           save();
           const approval = JSON.parse(turn.result);
           if (
@@ -278,7 +285,7 @@ export async function finishEpic(
           execFileSync('git', ['status', '--porcelain'], { cwd: checkout, encoding: 'utf8' }).trim()
         )
           throw new Error('Finalization snapshot changed; preserve and reconcile checkout');
-        const conductor = inspectConductor(config);
+        const conductor = subjectOrchestrator(config, epic.repository, epic.epic);
         const terminalSession = process.env.TMUX
           ? execFileSync('tmux', ['display-message', '-p', '#S'], { encoding: 'utf8' }).trim()
           : conductor?.address?.replace(/^tmux:/, '').split(':')[0];

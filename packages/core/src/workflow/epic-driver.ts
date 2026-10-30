@@ -1,3 +1,4 @@
+import { startBusinessTurn, collectBusinessTurn } from './run-driver.js';
 import {
   subjectOrchestrator,
   reserveRunCheckout,
@@ -138,7 +139,7 @@ export async function driveEpic(
       if (retained.result === undefined) {
         if (!retained.conversation || retained.status !== 'running')
           throw new Error('Missing original receipt; retain unknown occupancy');
-        retained.result = await runner.collect(retained);
+        retained.result = await collectBusinessTurn(config, runner, retained);
         save(file, run);
       }
       if (role === 'epic') epicConversation = retained.conversation;
@@ -176,13 +177,13 @@ export async function driveEpic(
     try {
       if (role === 'worker' && conductor!.run)
         reserveRunCheckout(config, conductor!.run, conductor!.id, checkout);
-      const receipt = await runner.start(t);
+      const receipt = await startBusinessTurn(config, runner, t, epic.repository, epic.number);
       if (!receipt.conversation || !receipt.address || !receipt.evidence)
         throw new Error('Expected actual Runner receipt');
       Object.assign(t, receipt, { status: 'running' });
       if (role === 'epic') epicConversation = t.conversation;
       save(file, run);
-      t.result = await runner.collect(t);
+      t.result = await collectBusinessTurn(config, runner, t);
       save(file, run);
       return t.result;
     } catch (error) {

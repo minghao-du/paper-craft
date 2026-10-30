@@ -46,12 +46,14 @@ export async function writeResearchReport(
   const staging = join(dirname(destination), '.report-' + revision);
   mkdirSync(staging);
   const candidate = join(staging, basename(destination));
+  let writerReturned = false;
   try {
     writeFileSync(join(lock, 'owner.json'), JSON.stringify({ coordinator, revision, destination }));
     const evidence = await write(
       `Invoke /pc-research-state using designated coordinator ${JSON.stringify(coordinator)}. Write ONLY the candidate report ${candidate}; do not modify the published report ${destination}. Original objective and version-bound evidence: ${JSON.stringify(facts)}. Distinguish accepted EPIC versions from observed repository versions and unrelated concurrent changes. Include these headings: Objective, Accepted delivery versions, Observed repository versions, Pipeline disposition, Verified findings, Interpretation, Missing evidence, Follow-up Issues, Limitations. Do not infer scientific results from infrastructure progress. Return normal completed research receipt with evidence after verifying the candidate.`,
       [staging],
     );
+    writerReturned = true;
     const body = readFileSync(candidate, 'utf8');
     for (const heading of [
       'Objective',
@@ -95,7 +97,24 @@ export async function writeResearchReport(
       observedVersions: facts.observedVersions,
     };
   } finally {
-    rmSync(staging, { recursive: true, force: true });
-    rmSync(lock, { recursive: true, force: true });
+    if (writerReturned) {
+      rmSync(staging, { recursive: true, force: true });
+      rmSync(lock, { recursive: true, force: true });
+    }
   }
+}
+
+/** Release an interrupted writer only after independent proof that its execution stopped. */
+export async function releaseResearchWriter(
+  destination: string,
+  verifyStopped: (owner: { revision: string }) => Promise<boolean>,
+): Promise<void> {
+  if (!existsSync(dirname(destination))) return;
+  const physical = existsSync(destination)
+    ? realpathSync(destination)
+    : join(realpathSync(dirname(destination)), basename(destination));
+  if (!existsSync(physical + '.writer-lock')) return;
+  const owner = JSON.parse(readFileSync(join(physical + '.writer-lock', 'owner.json'), 'utf8'));
+  if (!(await verifyStopped(owner))) throw new Error('Research writer termination unverified');
+  rmSync(physical + '.writer-lock', { recursive: true, force: true });
 }

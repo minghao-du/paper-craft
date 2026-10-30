@@ -214,7 +214,7 @@ When transient local outputs or benchmarks were produced, record in the PR body 
 ### Step 8: Report to the conductor
 
 Before execution, verify an explicit owning EPIC and its brief under the shared workflow contract.
-After creating the PR, report the full head SHA and current completion/check evidence to the conductor for EPIC confirmation and user approval. Retain status and worklog; workers release ownership only through the landing handoff. Independent follow-up work uses `/pc-conductor-handoff`.
+After creating the PR, report the full head SHA and current completion/check evidence to the Orchestrator for exact-head EPIC confirmation and automatic guarded PR-Land merge. Retain status and worklog; workers release ownership only through the landing handoff. Independent follow-up work uses `/pc-conductor-handoff`.
 Provide a concise summary that highlights things the user needs to **judge**:
 
 - **Underlying bugs or tech debt** discovered during the work (even if worked around)

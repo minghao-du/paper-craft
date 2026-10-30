@@ -1,4 +1,9 @@
-import { startRun, inspectRuns } from '../../packages/core/src/workflow/run-driver.js';
+import {
+  startRun,
+  inspectRuns,
+  startBusinessTurn,
+  collectBusinessTurn,
+} from '../../packages/core/src/workflow/run-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,6 +43,9 @@ test('landing repairs failed checks and rechecks changed heads without human app
   };
   const runner = {
     name: 'controlled',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start(a: any) {
       roles.push(a.role);
@@ -100,6 +108,9 @@ test('moved heads repeat Landing gates and EPIC confirmation is required before 
   };
   const runner = {
     name: 'controlled',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start(a: import('../../packages/core/src/workflow/runtime.js').ManagedAttempt) {
       return { conversation: a.id, address: 'tmux:test', evidence: 'receipt' };
@@ -172,6 +183,9 @@ test('uncertain merge is reconciled once and retains merged version', async () =
   };
   const runner = {
     name: 'codex',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start() {
       return { conversation: 'c', address: 'tmux:test', evidence: 'ack' };
@@ -187,6 +201,14 @@ test('uncertain merge is reconciled once and retains merged version', async () =
       { repository: 'o/r', number: 3, title: 'deliver', body: 'bounded task', kind: 'issue' },
       'codex',
     );
+    const implementation = await startBusinessTurn(
+      config,
+      runner,
+      { ...managed.orchestrator!, role: 'worker', brief: 'Implement bounded Issue' },
+      'o/r',
+      3,
+    );
+    await collectBusinessTurn(config, runner, implementation);
     const result = await drivePullRequest(config, runner, github, {
       repository: 'o/r',
       issue: 3,

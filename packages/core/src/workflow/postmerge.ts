@@ -88,6 +88,19 @@ export async function finishDelivery(
     : { status: 'running', turns: [], runId: orchestrator?.run };
   const turn = async (role: IssueTurn['role'], brief: string) => {
     let attempt = run.turns.find((t) => t.role === role);
+    if (
+      attempt?.status === 'starting' &&
+      run.runId &&
+      !inspectRuns(config).dispatches?.some(
+        (d) =>
+          d.runId === run.runId &&
+          d.stage === (role === 'worker' ? 'final-records' : 'preservation-cleanup'),
+      )
+    ) {
+      run.turns = run.turns.filter((t) => t !== attempt);
+      attempt = undefined;
+      save();
+    }
     if (!attempt) {
       const id = randomUUID(),
         directory = stateDirectory(config, '.runtime', 'completion', key, id);

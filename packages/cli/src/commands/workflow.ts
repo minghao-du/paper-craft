@@ -1,4 +1,9 @@
-import { startRun, inspectRuns, recoverRun } from '@paper-craft/core/workflow/run-driver';
+import {
+  startRun,
+  inspectRuns,
+  recoverRun,
+  subjectOrchestrator,
+} from '@paper-craft/core/workflow/run-driver';
 import { execFileSync } from 'node:child_process';
 import { CodexShortRunner } from '@paper-craft/core/workflow/subagents';
 import { recoverFleet } from '@paper-craft/core/workflow/recovery';
@@ -147,6 +152,9 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       const runner = new CodexRunner();
       output(
         await recoverFleet(config, runner, new CodexShortRunner(), async (work) => {
+          const runner = managedRunner(
+            subjectOrchestrator(config, work.repository, work.number)?.runner ?? 'codex',
+          );
           const issue = readIssue(config.project, work.number);
           if (issue.repository !== work.repository)
             throw new Error('Recovered repository differs from live Issue');
@@ -215,7 +223,13 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       const epic = inspectEpicRun(config, options.repository, Number(number));
       if (!epic) throw new Error('Expected delivered EPIC record');
       output(
-        await finishEpic(config, new CodexRunner(), epic, undefined, options.retry),
+        await finishEpic(
+          config,
+          managedRunner(subjectOrchestrator(config, epic.repository, epic.epic)?.runner ?? 'codex'),
+          epic,
+          undefined,
+          options.retry,
+        ),
         opts.human(),
       );
     } catch (error) {
@@ -240,12 +254,19 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         const epic = inspectEpicRun(config, options.repository, Number(number));
         if (!epic) throw new Error('Expected delivered EPIC record');
         output(
-          await finishEpic(config, new CodexRunner(), epic, {
-            epic: Number(number),
-            confirmed: true,
-            source: 'human',
-            evidence: options.humanConfirmation,
-          }),
+          await finishEpic(
+            config,
+            managedRunner(
+              subjectOrchestrator(config, epic.repository, epic.epic)?.runner ?? 'codex',
+            ),
+            epic,
+            {
+              epic: Number(number),
+              confirmed: true,
+              source: 'human',
+              evidence: options.humanConfirmation,
+            },
+          ),
           opts.human(),
         );
       } catch (error) {
@@ -263,7 +284,9 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     try {
       const config = loadFleetConfig(options.config);
       const issue = readIssue(config.project, Number(number));
-      const runner = new CodexRunner();
+      const runner = managedRunner(
+        subjectOrchestrator(config, issue.repository, issue.number)?.runner ?? 'codex',
+      );
       const task = await driveIssue(config, runner, issue);
       output(
         await landDelivery(
@@ -307,7 +330,9 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         output(
           await landDelivery(
             config,
-            new CodexRunner(),
+            managedRunner(
+              subjectOrchestrator(config, issue.repository, issue.number)?.runner ?? 'codex',
+            ),
             new GitHubPullRequests(
               existsSync(task.checkout) ? task.checkout : config.project,
               issue.repository,
