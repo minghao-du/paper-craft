@@ -3,6 +3,7 @@ import history from './locales/history.js';
 import logs from './locales/logs.js';
 import evidence from './locales/evidence.js';
 
+/** Shared English and Simplified Chinese interface messages. */
 export const dictionaries = {
   en: { ...main.en, ...history.en, ...logs.en, ...evidence.en },
   'zh-CN': { ...main['zh-CN'], ...history['zh-CN'], ...logs['zh-CN'], ...evidence['zh-CN'] },
