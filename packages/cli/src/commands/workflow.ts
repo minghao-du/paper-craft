@@ -203,7 +203,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     conductor
       .command('finalize-epic <number>')
-      .description('Run or resume specialist finalization and EPIC acceptance')
+      .description('Assess EPIC delivery; finalize specialists only after confirmed closure')
       .requiredOption('--repository <owner/name>', 'Target repository')
       .option(
         '--retry',

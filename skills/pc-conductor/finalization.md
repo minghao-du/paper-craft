@@ -1,7 +1,8 @@
-# EPIC post-merge finalization
+# EPIC post-closure finalization
 
 Use after required children are delivered, PR merges and landing records are verified,
-and the EPIC Agent has assessed the original goal. This is part of EPIC completion;
+the EPIC Agent has accepted the original goal, and the human has explicitly confirmed
+closure for that delivery version. Verify actual closure before specialist dispatch. This is part of EPIC completion;
 standalone Issues do not acquire these steps.
 
 ## 1. Establish scope and ownership
@@ -64,11 +65,12 @@ human closure decision from a superseded baseline.
 **Done:** Both tasks are verified completed or confirmed skipped, with no unresolved
 blocking findings or required-delivery evidence gaps.
 
-## 4. Return to acceptance
+## 4. Retain finalization status
 
-Obtain the EPIC Agent's final acceptance of the original objective at the current
-baseline with both receipts. Conductor presents the evidence and requests explicit
-human EPIC closure. Managed completion enforces these gates before its close operation.
+Verified closure opens `post_closure_finalization`; it does not complete the Run.
+Retain acceptance, explicit human evidence, accepted versions and closure archive while
+specialists run. Failures preserve the closed EPIC and keep finalization pending.
+Do not reuse closure confirmation to accept a changed pre-closure delivery set.
 
-**Done:** Final professional acceptance and human confirmation refer to this EPIC and
-current baseline. Conductor has performed scheduling and evidence checks only.
+**Done:** Pipeline disposition and final reporting have observable evidence; their
+required completion gates determine Run completion without another EPIC close operation.

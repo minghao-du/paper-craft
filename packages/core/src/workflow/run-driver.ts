@@ -33,6 +33,8 @@ export interface WorkflowRun {
   provider: string;
   policy: { name: string; revision: number };
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
+  phase?: 'post_closure_finalization';
+  epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string };
   orchestratorId: string;
   launchStarted?: boolean;
   orchestrator?: ManagedAttempt;

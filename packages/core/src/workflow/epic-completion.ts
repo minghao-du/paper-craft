@@ -3,6 +3,7 @@ import {
   type EpicFinalization,
   type FinalizationContext,
 } from './epic-finalization.js';
+import { inspectRuns, updateRunRegistry } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Goal acceptance and the sole human workflow approval: closing an EPIC. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -18,6 +19,8 @@ export interface EpicCloseDecision {
   confirmed: boolean;
   source: 'human';
   evidence: string;
+  /** Delivery fingerprint presented by the closure request. */
+  deliveryVersion?: string;
 }
 /** Delivery performs head-bound professional gates and verified postmerge completion. */
 export interface EpicCompletionProvider {
@@ -28,7 +31,10 @@ export interface EpicCompletionProvider {
 }
 /** Retained professional judgment and target-specific human decision. */
 export interface EpicCompletion {
-  status: 'blocked' | 'awaiting_confirmation' | 'closed';
+  status: 'blocked' | 'awaiting_confirmation' | 'closed' | 'post_closure_finalization';
+  closureVerified?: boolean;
+  deliveryVersion?: string;
+  acceptedHead?: string;
   deliveries: Record<string, string>;
   turns: IssueTurn[];
   acceptance?: { satisfied: boolean; criteria: string[]; blockers: string[] };
@@ -66,7 +72,14 @@ export async function completeEpic(
       renameSync(temp, file);
     };
     try {
-      if (run.status === 'closed') return run;
+      const owner = inspectRuns(config).runs.find(
+        (r) =>
+          r.subject.repository === epic.repository &&
+          r.subject.number === epic.epic &&
+          r.lifecycle !== 'completed',
+      );
+      if (owner && owner.subject.kind !== 'epic')
+        throw new Error('Issue-only Run cannot close or finalize parent EPIC');
       if (
         epic.status !== 'delivered' ||
         !epic.tasks.length ||
@@ -145,7 +158,17 @@ export async function completeEpic(
         }
         save();
       }
-      if (retryFinalization || run.finalization?.context.head !== context.head) {
+      const version = createHash('sha256')
+        .update(
+          JSON.stringify({
+            head: context.head,
+            changes: context.changes,
+            deliveries: run.deliveries,
+          }),
+        )
+        .digest('hex');
+      if (!run.closureVerified && (run.deliveryVersion !== version || retryFinalization)) {
+        run.deliveryVersion = version;
         if (
           !retryFinalization &&
           run.turns.some(
@@ -169,6 +192,11 @@ export async function completeEpic(
         save();
         if (superseded && decision)
           throw new Error('Baseline changed; obtain new finalization and human confirmation');
+      }
+      if (retryFinalization && run.closureVerified) {
+        if (run.finalization) (run.finalizationHistory ??= []).push(run.finalization);
+        run.finalization = { context, round: randomUUID() };
+        save();
       }
       if (!run.acceptance?.satisfied) {
         const answer = JSON.parse(
@@ -194,56 +222,28 @@ export async function completeEpic(
         save();
         return run;
       }
-      run.status = 'blocked';
-      save();
-      await finalizeEpic(
-        run.finalization!,
-        epic.originalGoal ?? epic.goal,
-        (role, brief, context) => turn(role, brief, context, true),
-        save,
-        retryFinalization ? undefined : run.finalizationHistory?.at(-1),
-      );
-      if (run.finalAccepted !== context.head) {
-        const answer = JSON.parse(
-          await turn(
-            'epic',
-            `Reassess original EPIC objective ${epic.originalGoal ?? epic.goal} at integration SHA ${context.head} after finalization ${JSON.stringify(run.finalization)}. Reply JSON {"satisfied":true,"criteria":["criterion and evidence"],"blockers":[]}.`,
-            undefined,
-            true,
-          ),
-        );
-        if (
-          answer.satisfied !== true ||
-          !Array.isArray(answer.criteria) ||
-          !answer.criteria.length ||
-          !answer.criteria.every((x: unknown) => typeof x === 'string' && x.trim()) ||
-          !Array.isArray(answer.blockers) ||
-          answer.blockers.length
-        )
-          throw new Error(
-            'EPIC post-finalization acceptance missing; preserve evidence for repair',
-          );
-        run.acceptance = answer;
-        run.finalAccepted = context.head;
-        save();
-      }
-      if ((await provider.finalizationContext()).head !== context.head)
-        throw new Error('Integration changed during finalization; reconcile scope before closure');
-      if (!run.request) {
+      if (!run.closureVerified && !run.request) {
         run.request = await turn(
           'conductor',
-          `Present evidence and request one explicit human confirmation to close EPIC ${epic.repository}#${epic.epic}. Goal ${epic.originalGoal ?? epic.goal}; acceptance ${JSON.stringify(run.acceptance)}; deliveries ${JSON.stringify(run.deliveries)}; finalization ${JSON.stringify(run.finalization)}. Do not close without human confirmation.`,
+          `Present evidence and request one explicit human confirmation to close EPIC ${epic.repository}#${epic.epic}. Delivery version ${run.deliveryVersion}. Goal ${epic.originalGoal ?? epic.goal}; acceptance ${JSON.stringify(run.acceptance)}; deliveries ${JSON.stringify(run.deliveries)}; finalization ${JSON.stringify(run.finalization)}. Do not close without human confirmation.`,
         );
         save();
       }
-      run.status = 'awaiting_confirmation';
-      if (decision) {
+      if (!run.closureVerified) run.status = 'awaiting_confirmation';
+      if (decision && !run.closureVerified) {
         if (decision.epic !== epic.epic || decision.source !== 'human' || !decision.evidence.trim())
           throw new Error('Expected explicit human decision for this EPIC');
-        run.decision = decision;
+        if (decision.deliveryVersion && decision.deliveryVersion !== run.deliveryVersion)
+          throw new Error('Human confirmation delivery version changed');
+        run.decision = { ...decision, deliveryVersion: run.deliveryVersion };
         save();
       }
-      if (run.decision?.confirmed) {
+      if (!run.closureVerified && run.decision?.confirmed) {
+        const current = await provider.finalizationContext();
+        if (current.head !== context.head || current.changes !== context.changes)
+          throw new Error(
+            'Delivery changed before closure; obtain renewed acceptance and confirmation',
+          );
         await provider.close(epic.epic);
         run.archive = join(home, 'accepted.json');
         writeFileSync(
@@ -260,7 +260,31 @@ export async function completeEpic(
             2,
           ),
         );
-        run.status = 'closed';
+        run.closureVerified = true;
+        run.acceptedHead = context.head;
+        save();
+      }
+      if (run.closureVerified) {
+        run.status = 'post_closure_finalization';
+        if (owner)
+          updateRunRegistry(config, (registry) => {
+            const current = registry.runs.find((r) => r.id === owner.id)!;
+            current.phase = 'post_closure_finalization';
+            current.epicClosure = {
+              deliveryVersion: run.deliveryVersion!,
+              head: run.acceptedHead!,
+              evidence: run.archive!,
+              confirmed: run.decision!.evidence,
+            };
+          });
+        save();
+        await finalizeEpic(
+          run.finalization!,
+          epic.originalGoal ?? epic.goal,
+          (role, brief, context) => turn(role, brief, context, true),
+          save,
+          retryFinalization ? undefined : run.finalizationHistory?.at(-1),
+        );
       }
       delete run.error;
       save();

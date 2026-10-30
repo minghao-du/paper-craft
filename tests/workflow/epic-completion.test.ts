@@ -17,6 +17,8 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
   let satisfied = false,
     closed = 0,
     landed = 0;
+  let specialistPlans = 0;
+  let head = 'a'.repeat(40);
   const runner = {
     name: 'test',
     async preflight() {},
@@ -24,11 +26,14 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
       return { conversation: a.id, address: 'tmux:test', evidence: 'receipt' };
     },
     async collect(a: { role: string; brief: string }) {
-      if (a.brief.includes('Confirm applicability'))
+      if (a.brief.includes('Confirm applicability')) {
+        specialistPlans++;
+        expect(closed).toBe(1);
         return JSON.stringify({
           pipeline: { run: false, reason: 'No workflow changes' },
           research: { run: false, reason: 'No scientific impact' },
         });
+      }
       return a.role === 'epic'
         ? JSON.stringify({
             satisfied,
@@ -61,7 +66,7 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
   const provider = {
     async finalizationContext() {
       return {
-        head: 'a'.repeat(40),
+        head,
         checkout: project,
         terminalSession: 'fleet',
         changes: 'verified PR diff',
@@ -93,6 +98,19 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
       ).status,
     ).toBe('awaiting_confirmation');
     expect(closed).toBe(0);
+    expect(specialistPlans).toBe(0);
+    head = 'b'.repeat(40);
+    await expect(
+      completeEpic(config, runner, provider, epic, {
+        epic: 1,
+        confirmed: true,
+        source: 'human',
+        evidence: 'stale confirmation',
+      }),
+    ).rejects.toThrow('Baseline changed');
+    expect(closed).toBe(0);
+    await completeEpic(config, runner, provider, epic);
+
     expect(
       (
         await completeEpic(config, runner, provider, epic, {
@@ -102,7 +120,7 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
           evidence: 'Close EPIC 1',
         })
       ).status,
-    ).toBe('closed');
+    ).toBe('post_closure_finalization');
     await completeEpic(config, runner, provider, epic);
     expect(closed).toBe(1);
     expect(landed).toBe(1);
@@ -111,7 +129,7 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
   }
 });
 
-test('specialist failures preserve attempts, block downstream writing and closure, and repairs require a new baseline', async () => {
+test('post-closure specialist failures preserve attempts and block reporting until verified retry', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-finalization-')));
   mkdirSync(join(project, 'pool'));
   const config = {
@@ -122,8 +140,8 @@ test('specialist failures preserve attempts, block downstream writing and closur
     worktrees: true,
     base: 'main',
   };
-  let head = 'a'.repeat(40),
-    closed = 0,
+  const head = 'a'.repeat(40);
+  let closed = 0,
     failStartup = true,
     terminated = false;
   const starts: string[] = [];
@@ -223,22 +241,12 @@ test('specialist failures preserve attempts, block downstream writing and closur
     );
     expect(starts.filter((r) => r === 'pipeline-audit')).toHaveLength(1);
     expect(starts).not.toContain('research-state');
-    expect(closed).toBe(0);
+    expect(closed).toBe(1);
     terminated = true;
     const retried = await completeEpic(config, runner, provider, epic, undefined, true);
-    expect(retried.status).toBe('awaiting_confirmation');
+    expect(retried.status).toBe('post_closure_finalization');
     expect(retried.turns.find((t) => t.role === 'pipeline-audit')?.retired).toBe(true);
     expect(retried.finalizationHistory).toHaveLength(1);
-    head = 'b'.repeat(40);
-    await expect(completeEpic(config, runner, provider, epic, decision)).rejects.toThrow(
-      'Baseline changed',
-    );
-    expect((await completeEpic(config, runner, provider, epic)).status).toBe(
-      'awaiting_confirmation',
-    );
-    expect(starts.slice(-4)).toEqual(['pipeline-audit', 'research-state', 'epic', 'conductor']);
-    expect(closed).toBe(0);
-    expect((await completeEpic(config, runner, provider, epic, decision)).status).toBe('closed');
     expect(closed).toBe(1);
   } finally {
     rmSync(project, { recursive: true, force: true });

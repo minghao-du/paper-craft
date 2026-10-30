@@ -64,7 +64,7 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         path: config.project,
         role: 'Orchestrator',
         source: run.brief.path,
-        phase: run.lifecycle,
+        phase: run.phase ?? run.lifecycle,
         summary: `${run.subject.repository}#${run.subject.number} (${run.provider})${run.subject.parent ? `; child of #${run.subject.parent}` : ''}`,
         issue: run.subject.number,
         blockers: [
