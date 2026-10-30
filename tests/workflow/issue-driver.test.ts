@@ -55,9 +55,17 @@ test('standalone intake automatically routes two worker results back to conducto
       number: 7,
       title: 'task',
       body: 'deliver',
-      parent: undefined,
+      parent: 3,
+      blockedBy: [],
     };
+    await expect(driveIssue(config, runner, { ...issue, blockedBy: [6] })).rejects.toThrow(
+      /dependencies/,
+    );
     const first = await driveIssue(config, runner, issue);
+    expect(first.parent).toBe(3);
+    expect(
+      first.turns.filter((t) => t.role === 'worker').every((t) => t.brief.includes('no siblings')),
+    ).toBe(true);
     expect(first.status).toBe('done');
     expect(first.turns.filter((t) => t.role === 'worker')).toHaveLength(2);
     expect(first.turns.find((t) => t.role === 'worker')?.brief).toContain('AGENTS.md');
@@ -93,6 +101,7 @@ test('GitHub intake retains repository and parent identity and fails on unreadab
       gh,
       `#!/usr/bin/env node
 if(process.argv.includes('view')) console.log(JSON.stringify('owner/repo').slice(1,-1));
+else if (process.argv.some(a => a.includes('blocked_by'))) console.log('[]');
 else console.log(process.env.PC_TEST_GH_FAILURE ? JSON.stringify({errors:[{message:'unavailable'}]}) : JSON.stringify({data:{repository:{nameWithOwner:'owner/repo',issue:{number:7,title:'task',body:'body',parent:{number:9}}}}}));
 `,
       { mode: 0o700 },

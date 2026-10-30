@@ -1,4 +1,9 @@
-import { subjectOrchestrator, reserveRunCheckout } from './run-driver.js';
+import {
+  subjectOrchestrator,
+  reserveRunCheckout,
+  referenceRunSubject,
+  inspectRuns,
+} from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Repository-scoped EPIC planning and dependency-aware Worker dispatch. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -7,7 +12,14 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { stateDirectory } from './handoff.js';
 import { workflowSource, type FleetConfig } from './fleet-config.js';
-import { readIssue, type IssueInput, type IssueTurn, type RoundRunner } from './issue-driver.js';
+import {
+  driveIssue,
+  inspectIssueRun,
+  type IssueRun,
+  type IssueInput,
+  type IssueTurn,
+  type RoundRunner,
+} from './issue-driver.js';
 /** EPIC professional judgment, separate from mechanical resource allocation. */
 export interface EpicTask {
   number: number;
@@ -57,17 +69,14 @@ export function inspectEpicRun(
   const file = join(location(config, repository, number), 'epic.json');
   return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : undefined;
 }
-/** Resolve the actual parent before choosing standalone or EPIC dispatch. */
+/** Compatibility child entry: deliver only the requested child, never expand to its parent. */
 export async function driveEpicIssue(
   config: FleetConfig,
   runner: RoundRunner,
   issue: IssueInput,
-  maxWorkers = 2,
-): Promise<EpicRun> {
+): Promise<IssueRun> {
   if (!issue.parent) throw new Error('Expected issue with verified EPIC parent');
-  const epic = readIssue(config.project, issue.parent);
-  if (epic.repository !== issue.repository) throw new Error('EPIC repository differs from Issue');
-  return driveEpic(config, runner, epic, maxWorkers, issue);
+  return driveIssue(config, runner, issue);
 }
 /** Ask the EPIC Agent for professional readiness, then dispatch bounded independent batches. */
 export async function driveEpic(
@@ -87,6 +96,7 @@ export async function driveEpic(
     throw new Error('Expected repository, positive EPIC number and Worker limit');
   await runner.preflight();
   const conductor = subjectOrchestrator(config, epic.repository, epic.number);
+  if (conductor?.run && conductor.runner !== runner.name) throw new Error('Run provider conflict');
   if (!conductor?.conversation || conductor.status !== 'running')
     throw new Error('Expected acknowledged managed Conductor');
   const home = location(config, epic.repository, epic.number);
@@ -252,8 +262,36 @@ export async function driveEpic(
       if (!ready.length)
         throw new Error('EPIC has unresolved semantic dependencies or readiness blockers');
       if (!config.worktrees) throw new Error('Automatic EPIC allocation requires local_worktrees');
-      // Allocate serially: each checkout has one owner before concurrent execution begins.
+      // Claim or reference every child before allocating any execution.
       for (const task of ready) {
+        if (!conductor.run) continue;
+        const owner = referenceRunSubject(
+          config,
+          conductor.run,
+          `${epic.repository}#${task.number}`,
+        );
+        if (owner === conductor.run) continue;
+        const ownerRun = inspectRuns(config).runs.find((r) => r.id === owner)!;
+        if (ownerRun.provider !== runner.name)
+          throw new Error('Referenced child provider conflict');
+        const delivery = inspectIssueRun(config, epic.repository, task.number);
+        if (!delivery || delivery.status !== 'done')
+          throw new Error(`Referenced child #${task.number} delivery pending in Run ${owner}`);
+        const acceptance = JSON.parse(
+          await turn(
+            'epic',
+            `Validate referenced child #${task.number} against this EPIC objective and scoped brief: ${epic.body}\n${task.brief}\nEvidence: ${JSON.stringify(delivery)}\nReply only JSON {"accepted":true} or {"accepted":false}. Do not inherit authorization.`,
+          ),
+        );
+        if (acceptance.accepted !== true)
+          throw new Error('Referenced child requires EPIC acceptance');
+        task.result = JSON.stringify(delivery);
+        task.checkout = delivery.checkout;
+        save(file, run);
+      }
+      const ownedReady = ready.filter((t) => !t.result);
+      // Allocate serially: each checkout has one owner before concurrent execution begins.
+      for (const task of ownedReady) {
         if (task.checkout) {
           workflowSource(config, task.checkout);
           continue;
@@ -276,7 +314,7 @@ export async function driveEpic(
         save(file, run);
       }
       // A stage result unlocks scheduling only after its code is present locally.
-      for (const task of ready) {
+      for (const task of ownedReady) {
         for (const number of task.blockedBy) {
           const prerequisite = run.tasks.find((t) => t.number === number)!;
           if (!prerequisite.checkout) throw new Error('Missing prerequisite checkout evidence');
@@ -297,7 +335,7 @@ export async function driveEpic(
         }
       }
       const results = await Promise.allSettled(
-        ready.map(async (t) => {
+        ownedReady.map(async (t) => {
           t.result = await turn(
             'worker',
             `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and applicable lower directory guidance.\nRepository ${epic.repository}, EPIC #${epic.number}, Issue #${t.number}.\nScope: ${t.body}\n${t.brief}\nReturn stage result and evidence; stop after this stage.`,

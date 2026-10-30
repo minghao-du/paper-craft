@@ -1,4 +1,4 @@
-import { subjectOrchestrator, reserveRunCheckout } from './run-driver.js';
+import { subjectOrchestrator, reserveRunCheckout, inspectRuns } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Durable automatic standalone Issue round trips. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -15,6 +15,8 @@ export interface IssueInput {
   title: string;
   body: string;
   parent?: number;
+  /** Open tracker dependencies; undefined on a child is unresolved metadata. */
+  blockedBy?: number[];
 }
 /** Runner completion is distinct from startup receipt. */
 export interface RoundRunner extends RunnerAdapter {
@@ -30,6 +32,7 @@ export interface IssueTurn extends ManagedAttempt {
 export interface IssueRun {
   repository: string;
   issue: number;
+  parent?: number;
   id: string;
   checkout: string;
   status: 'running' | 'done' | 'blocked';
@@ -62,7 +65,22 @@ export function readIssue(project: string, number: number): IssueInput {
   if (data.errors || !data.data?.repository?.issue)
     throw new Error('Expected accessible GitHub issue and parent evidence');
   const r = data.data.repository;
-  return { ...r.issue, repository: r.nameWithOwner, parent: r.issue.parent?.number };
+  const dependencies = JSON.parse(
+    execFileSync('gh', ['api', `repos/${repo}/issues/${number}/dependencies/blocked_by`], {
+      cwd: project,
+      encoding: 'utf8',
+    }),
+  );
+  if (!Array.isArray(dependencies))
+    throw new Error('Expected accessible GitHub issue dependencies');
+  return {
+    ...r.issue,
+    repository: r.nameWithOwner,
+    parent: r.issue.parent?.number,
+    blockedBy: dependencies
+      .filter((d: { state: string }) => d.state !== 'closed')
+      .map((d: { number: number }) => d.number),
+  };
 }
 function repository(project: string): string {
   return execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], {
@@ -92,11 +110,19 @@ export async function driveIssue(
     issue.number < 1
   )
     throw new Error('Expected repository owner/name and positive issue number');
-  if (issue.parent) throw new Error(`Issue belongs to EPIC #${issue.parent}; use EPIC planning`);
+  if (issue.parent && !issue.blockedBy)
+    throw new Error('Child dependencies unresolved; refresh tracker metadata');
+  if (issue.blockedBy?.length) throw new Error(`Unmet dependencies: ${issue.blockedBy.join(', ')}`);
   await runner.preflight();
   const conductor = subjectOrchestrator(config, issue.repository, issue.number);
+  if (conductor?.run && conductor.runner !== runner.name) throw new Error('Run provider conflict');
   if (!conductor?.conversation || conductor.status !== 'running')
     throw new Error('Expected acknowledged managed Conductor');
+  if (conductor.run) {
+    const owner = inspectRuns(config).runs.find((r) => r.id === conductor.run);
+    if (owner?.subject.kind === 'epic')
+      throw new Error(`Child execution owned by EPIC Run ${owner.id}; inspect or resume that Run`);
+  }
   // Finish its initial turn before resuming the same conversation.
   await runner.collect(conductor);
   const key = createHash('sha256')
@@ -118,6 +144,8 @@ export async function driveIssue(
   try {
     if (existsSync(file)) {
       task = JSON.parse(readFileSync(file, 'utf8'));
+      if (task.parent !== issue.parent)
+        throw new Error(`Parent scope conflict: EPIC #${issue.parent}`);
       if (task.status === 'done') return task;
     } else {
       if (!config.worktrees)
@@ -134,6 +162,7 @@ export async function driveIssue(
       task = {
         repository: issue.repository,
         issue: issue.number,
+        parent: issue.parent,
         id: key,
         checkout,
         status: 'running',
@@ -168,9 +197,9 @@ export async function driveIssue(
           )
             throw new Error('Expected Conductor action worker with brief, or done');
           role = 'worker';
-          brief = `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and obey all applicable lower directory guidance in your checkout.\nRepository ${issue.repository}, Issue #${issue.number}.\nScope: ${issue.body}\n${decision.brief}\nReturn your stage result and evidence; stop after this assigned stage.`;
+          brief = `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and obey all applicable lower directory guidance in your checkout.\nRepository ${issue.repository}, Issue #${issue.number}.\nParent context: ${issue.parent ?? 'none'}; no siblings or parent closure authorized.\nScope: ${issue.body}\n${decision.brief}\nReturn your stage result and evidence; stop after this assigned stage.`;
         } else
-          brief = `Coordinate Issue ${issue.repository}#${issue.number}: ${issue.title}\n${issue.body}\n${completed ? `Worker result (${completed.id}): ${completed.result}` : 'Select first task.'}\nReply only JSON {"action":"worker","brief":"bounded next stage"} or {"action":"done"}. Done means stages requested here are delivered; PR merge and final cleanup are separate workflow phases.`;
+          brief = `Coordinate Issue ${issue.repository}#${issue.number}: ${issue.title}\n${issue.body}\nParent context: ${issue.parent ?? 'none'}; no siblings or parent closure authorized.\n${completed ? `Worker result (${completed.id}): ${completed.result}` : 'Select first task.'}\nReply only JSON {"action":"worker","brief":"bounded next stage"} or {"action":"done"}. Done means stages requested here are delivered; PR merge and final cleanup are separate workflow phases.`;
         const id = randomUUID();
         const dir = stateDirectory(config, '.runtime', 'tasks', key, id);
         mkdirSync(dir, { recursive: true });

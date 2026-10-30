@@ -238,3 +238,5 @@ records remain pending and keep the checkout intact.
 ## Managed completion
 
 When dispatched inside a Run, publish correlated results through [the shared managed lifecycle](../pc-conductor/managed-lifecycle.md). Include immutable evidence and input revision; wait for acceptance or explicit correction feedback. Do not dispatch the next top-level role yourself.
+
+For child-only intake, retain parent constraints and verified open dependencies. Never start siblings or parent finalization. Follow the [shared overlap contract](../pc-conductor/managed-lifecycle.md#child-only-intake-and-overlapping-runs): reconnect to an existing execution owner and let consuming EPICs independently accept delivered evidence.

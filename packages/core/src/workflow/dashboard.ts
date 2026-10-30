@@ -65,9 +65,10 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
         role: 'Orchestrator',
         source: run.brief.path,
         phase: run.lifecycle,
-        summary: `${run.subject.repository}#${run.subject.number} (${run.provider})`,
+        summary: `${run.subject.repository}#${run.subject.number} (${run.provider})${run.subject.parent ? `; child of #${run.subject.parent}` : ''}`,
         issue: run.subject.number,
         blockers: [
+          ...(run.subject.blockedBy ?? []).map((n) => `Dependency #${n} remains open`),
           ...(run.orchestrator?.error ? [run.orchestrator.error] : []),
           ...(run.reconciliation?.blockers ?? []),
         ],

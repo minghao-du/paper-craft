@@ -21,7 +21,7 @@ import {
   inspectConductor,
   startConductor,
 } from '@paper-craft/core/workflow/runtime';
-import { driveEpic, driveEpicIssue, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
+import { driveEpic, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
@@ -258,19 +258,12 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   configured(
     conductor
       .command('issue <number>')
-      .description('Resolve Issue parent and automatically dispatch standalone or EPIC stages'),
+      .description('Deliver only the requested Issue, retaining parent constraints'),
   ).action(async (number: string, options: Options) => {
     try {
       const config = loadFleetConfig(options.config);
       const issue = readIssue(config.project, Number(number));
       const runner = new CodexRunner();
-      if (issue.parent) {
-        output(
-          await finishEpic(config, runner, await driveEpicIssue(config, runner, issue)),
-          opts.human(),
-        );
-        return;
-      }
       const task = await driveIssue(config, runner, issue);
       output(
         await landDelivery(

@@ -115,6 +115,20 @@ export async function startRun(
   }
   try {
     const registry = inspectRuns(config);
+    const ownership = registry.subjects?.find(
+      (s) => s.subject === `${subject.repository}#${subject.number}`,
+    );
+    const owningRun = registry.runs.find((r) => r.id === ownership?.ownerRunId);
+    if (owningRun && owningRun.subject.number !== subject.number) {
+      if (owningRun.provider !== provider)
+        throw new Error('Existing child execution provider conflict');
+      return owningRun;
+    }
+    if (subject.parent && !subject.blockedBy)
+      throw new Error('Child dependencies unresolved; refresh tracker metadata');
+    if (subject.blockedBy?.length)
+      throw new Error(`Unmet dependencies: ${subject.blockedBy.join(', ')}`);
+
     const existing = registry.runs.find(
       (r) =>
         r.subject.repository === subject.repository &&

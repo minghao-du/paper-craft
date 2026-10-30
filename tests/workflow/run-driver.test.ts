@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
   startRun,
+  referenceRunSubject,
   inspectRuns,
   dispatchStage,
   publishStageReceipt,
@@ -258,3 +259,51 @@ test.each(['agy', 'claude'])(
     }
   },
 );
+
+test('overlapping child intake reconnects ownership and consuming EPIC references preserve provider', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-overlap-')));
+  mkdirSync(join(project, 'pool'));
+  const config = {
+    file: join(project, '.epic-config.json'),
+    project,
+    root: join(project, 'pool'),
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  let launches = 0;
+  const runner = {
+    name: 'codex',
+    async preflight() {},
+    async start() {
+      launches++;
+      return { conversation: 'session', address: 'tmux:verified', evidence: 'ack' };
+    },
+  };
+  const subject = {
+    repository: 'owner/repo',
+    number: 20,
+    kind: 'epic' as const,
+    title: 'parent',
+    body: 'goal',
+  };
+  try {
+    const epic = await startRun(config, runner, subject, 'codex');
+    referenceRunSubject(config, epic.id, 'owner/repo#21');
+    const child = { ...subject, number: 21, kind: 'issue' as const, parent: 20, blockedBy: [] };
+    expect((await startRun(config, runner, child, 'codex')).id).toBe(epic.id);
+    await expect(startRun(config, { ...runner, name: 'claude' }, child, 'claude')).rejects.toThrow(
+      /provider conflict/,
+    );
+    expect(launches).toBe(1);
+    const standalone = await startRun(config, runner, { ...child, number: 22 }, 'codex');
+    expect(referenceRunSubject(config, epic.id, 'owner/repo#22')).toBe(standalone.id);
+    expect(inspectRuns(config).subjects?.find((s) => s.subject === 'owner/repo#22')).toMatchObject({
+      ownerRunId: standalone.id,
+      consumingRunIds: [epic.id],
+    });
+    expect(launches).toBe(2);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
