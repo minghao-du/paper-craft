@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
+import { useI18n } from './i18n.jsx';
+/** Read original log segments with localized controls and metadata. */
 export function TaskLogs({ task, read }) {
+  const { t, formatDate, errorText } = useI18n();
   const [kind, setKind] = useState('worklog'),
     [log, setLog] = useState(null),
     [error, setError] = useState(''),
@@ -14,8 +17,14 @@ export function TaskLogs({ task, read }) {
         ),
       );
     } catch (e) {
-      setError(e.message);
+      setError(e);
     }
+  };
+  const states = {
+    read: t('logs.stateRead'),
+    absent: t('logs.stateAbsent'),
+    error: t('logs.stateError'),
+    unknown: t('logs.stateUnknown'),
   };
   return (
     <details
@@ -23,9 +32,9 @@ export function TaskLogs({ task, read }) {
         if (e.currentTarget.open && !log) load();
       }}
     >
-      <summary>Logs</summary>
+      <summary>{t('logs.heading')}</summary>
       <label>
-        Source{' '}
+        {t('logs.source')}{' '}
         <select
           value={kind}
           onChange={(e) => {
@@ -33,36 +42,48 @@ export function TaskLogs({ task, read }) {
             load(e.target.value);
           }}
         >
-          <option value="worklog">Worklog</option>
-          <option value="terminal">Verified terminal</option>
-          <option value="runner">Runner log</option>
+          <option value="worklog">{t('logs.worklog')}</option>
+          <option value="terminal">{t('logs.terminal')}</option>
+          <option value="runner">{t('logs.runner')}</option>
         </select>
       </label>
-      <button onClick={() => load()}>Refresh log</button>
+      <button onClick={() => load()}>{t('logs.refresh')}</button>
       <button
         disabled={!log?.text}
-        onClick={() =>
-          navigator.clipboard
-            .writeText(log.text)
-            .then(() => setCopied(true))
-            .catch(() => setError('Copy unavailable; select and copy text manually'))
-        }
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(log.text);
+            setError('');
+            setCopied(true);
+          } catch {
+            setCopied(false);
+            setError({ translationKey: 'logs.copyFailed' });
+          }
+        }}
       >
-        {copied ? 'Copied' : 'Copy segment'}
+        {copied ? t('logs.copied') : t('logs.copy')}
       </button>
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{errorText(error)}</p>}
       {log && (
         <>
           <small>
-            {log.source || kind} · read {log.readAt} · {log.state} · offset {log.offset}
+            {t('logs.metadata', {
+              source: log.source || kind,
+              readAt: formatDate(log.readAt),
+              state: Object.hasOwn(states, log.state) ? states[log.state] : log.state,
+              offset: log.offset,
+            })}
           </small>
           {log.error && <p role="alert">{log.error}</p>}
           {log.detail && <p>{log.detail}</p>}
-          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: '24rem', overflow: 'auto' }}>
+          <pre
+            aria-label={t('logs.segment')}
+            style={{ whiteSpace: 'pre-wrap', maxHeight: '24rem', overflow: 'auto' }}
+          >
             {log.text}
           </pre>
           {log.nextOffset != null && (
-            <button onClick={() => load(kind, log.nextOffset)}>Next segment</button>
+            <button onClick={() => load(kind, log.nextOffset)}>{t('logs.next')}</button>
           )}
         </>
       )}
