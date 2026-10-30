@@ -2,6 +2,7 @@ import {
   finalizeEpic,
   type EpicFinalization,
   type FinalizationContext,
+  type PipelineMaintenanceProvider,
 } from './epic-finalization.js';
 import { inspectRuns, updateRunRegistry } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
@@ -25,6 +26,7 @@ export interface EpicCloseDecision {
 /** Delivery performs head-bound professional gates and verified postmerge completion. */
 export interface EpicCompletionProvider {
   deliver(task: EpicTask): Promise<string>;
+  maintenance?: PipelineMaintenanceProvider;
   close(epic: number): Promise<void>;
   /** Resolve verified merged changes and a safe checkout at the current integrated SHA. */
   finalizationContext(): Promise<FinalizationContext>;
@@ -78,7 +80,10 @@ export async function completeEpic(
               r.subject.number === epic.epic &&
               r.subject.kind === 'epic',
           );
-          if (owner) owner.pipeline = run.finalization!.pipeline;
+          if (owner) {
+            owner.pipeline = run.finalization!.pipeline;
+            owner.pipelineMaintenance = run.finalization!.maintenanceDeliveries;
+          }
         });
     };
     try {
@@ -294,6 +299,7 @@ export async function completeEpic(
           (role, brief, context) => turn(role, brief, context, true),
           save,
           retryFinalization ? undefined : run.finalizationHistory?.at(-1),
+          provider.maintenance,
         );
       }
       delete run.error;

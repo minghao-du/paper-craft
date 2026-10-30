@@ -36,6 +36,8 @@ export interface WorkflowRun {
   lifecycle: 'reserved' | 'running' | 'blocked' | 'completed';
   phase?: 'post_closure_finalization';
   pipeline?: PipelineDisposition;
+  pipelineApprovals?: Record<string, { source: 'human'; ledger: string; evidence: string }>;
+  pipelineMaintenance?: import('./epic-finalization.js').EpicFinalization['maintenanceDeliveries'];
   epicClosure?: { deliveryVersion: string; head: string; evidence: string; confirmed: string };
   orchestratorId: string;
   launchStarted?: boolean;

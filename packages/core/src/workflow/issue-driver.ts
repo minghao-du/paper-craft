@@ -120,7 +120,18 @@ export async function driveIssue(
     throw new Error('Expected acknowledged managed Conductor');
   if (conductor.run) {
     const owner = inspectRuns(config).runs.find((r) => r.id === conductor.run);
-    if (owner?.subject.kind === 'epic')
+    const finding =
+      owner?.epicClosure &&
+      owner.pipeline?.findings.find(
+        (f) => f.classification === 'required_maintenance' && f.issue === issue.number,
+      );
+    if (
+      finding?.migrationLedger &&
+      (owner!.pipelineApprovals?.[issue.number]?.ledger !== finding.migrationLedger ||
+        owner!.pipelineApprovals?.[issue.number]?.source !== 'human')
+    )
+      throw new Error('Migration Ledger approval missing before maintenance dispatch');
+    if (owner?.subject.kind === 'epic' && !finding)
       throw new Error(`Child execution owned by EPIC Run ${owner.id}; inspect or resume that Run`);
   }
   // Finish its initial turn before resuming the same conversation.

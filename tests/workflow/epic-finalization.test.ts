@@ -171,3 +171,62 @@ test.each([
   else await work;
   expect(state.pipeline?.disposition).toBe(disposition);
 });
+
+test('maintenance waits for ledger approval and complete delivery before specialist verification', async () => {
+  const state: EpicFinalization = {
+    context,
+    plan: { pipeline: { run: true, reason: 'audit' }, research: { run: false, reason: 'none' } },
+    pipeline: {
+      ...receipt,
+      disposition: 'changes_needed',
+      findings: [
+        {
+          id: 'move',
+          classification: 'required_maintenance',
+          description: 'Move rule',
+          evidence: ['audit'],
+          issue: 123,
+          migrationLedger: 'ledger-v1',
+        },
+      ],
+    },
+  };
+  const calls: string[] = [];
+  const provider = {
+    identify: async () => 123,
+    approveMigration: async () => undefined,
+    deliver: async () => {
+      calls.push('worker');
+      return { pr: 4, version: 'fix', evidence: 'archive', status: 'done' as const };
+    },
+  };
+  const turn = async () => {
+    calls.push('verify');
+    return JSON.stringify({
+      ...receipt,
+      disposition: 'completed',
+      findings: state.pipeline!.findings,
+      maintenance: [
+        {
+          finding: 'move',
+          issue: 123,
+          delivered: true,
+          verifiedVersions: { repository: 'fix' },
+          evidence: ['verification'],
+        },
+      ],
+    });
+  };
+  await expect(finalizeEpic(state, 'goal', turn, () => {}, undefined, provider)).rejects.toThrow(
+    /Ledger/,
+  );
+  expect(calls).toEqual([]);
+  provider.approveMigration = async () => ({
+    source: 'human' as const,
+    ledger: 'ledger-v1',
+    evidence: 'approved exact ledger',
+  });
+  await finalizeEpic(state, 'goal', turn, () => {}, undefined, provider);
+  expect(calls).toEqual(['worker', 'verify']);
+  expect(state.pipeline?.disposition).toBe('completed');
+});

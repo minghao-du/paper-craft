@@ -46,6 +46,7 @@ const pipelineSchema = receiptSchema.extend({
       description: text,
       evidence: z.array(text).min(1),
       issue: z.number().int().positive().optional(),
+      migrationLedger: text.optional(),
     }),
   ),
   maintenance: z.array(
@@ -94,6 +95,18 @@ export function pipelineAccepted(result: PipelineDisposition | undefined): boole
     )
   );
 }
+/** Host connects bounded maintenance to the ordinary Worker/PR-Land lifecycle. */
+export interface PipelineMaintenanceProvider {
+  identify(finding: PipelineDisposition['findings'][number]): Promise<number>;
+  approveMigration(
+    issue: number,
+    ledger: string,
+  ): Promise<{ source: 'human'; ledger: string; evidence: string } | undefined>;
+  deliver(
+    issue: number,
+    finding: PipelineDisposition['findings'][number],
+  ): Promise<{ status: 'done'; pr: number; version: string; evidence: string }>;
+}
 /** Verified integrated code and actual per-PR changes; never inferred from a single range. */
 export interface FinalizationContext {
   head: string;
@@ -110,6 +123,17 @@ export interface EpicFinalization {
   round?: string;
   plan?: z.infer<typeof planSchema>;
   pipeline?: PipelineDisposition;
+  maintenanceDeliveries?: Record<
+    string,
+    {
+      issue: number;
+      pr: number;
+      version: string;
+      evidence: string;
+      approval?: { source: 'human'; ledger: string; evidence: string };
+    }
+  >;
+
   research?: z.infer<typeof receiptSchema> | { status: 'skipped'; reason: string };
 }
 /** Sequentially obtain professional applicability and verified specialist results. */
@@ -119,6 +143,7 @@ export async function finalizeEpic(
   turn: (role: IssueTurn['role'], brief: string, context?: FinalizationContext) => Promise<string>,
   save: () => void,
   previous?: EpicFinalization,
+  maintenance?: PipelineMaintenanceProvider,
 ): Promise<void> {
   const context = JSON.stringify({ ...state.context, round: state.round });
   state.plan ??= planSchema.parse(
@@ -150,6 +175,79 @@ export async function finalizeEpic(
             ),
           ),
         );
+        save();
+      }
+      if (state.pipeline.disposition === 'changes_needed' && maintenance) {
+        state.maintenanceDeliveries ??= {};
+        for (const finding of state.pipeline.findings.filter(
+          (f) => f.classification === 'required_maintenance',
+        )) {
+          finding.issue ??= await maintenance.identify(finding);
+          if (!Number.isSafeInteger(finding.issue) || finding.issue < 1)
+            throw new Error('Maintenance requires a bounded linked Issue');
+          save();
+          if (state.maintenanceDeliveries[finding.id]) continue;
+          const approval = finding.migrationLedger
+            ? await maintenance.approveMigration(finding.issue, finding.migrationLedger)
+            : undefined;
+          if (
+            finding.migrationLedger &&
+            (!approval ||
+              approval.source !== 'human' ||
+              approval.ledger !== finding.migrationLedger ||
+              !approval.evidence.trim())
+          )
+            throw new Error(
+              'Migration Ledger requires explicit human approval before Worker mutation',
+            );
+          const delivered = await maintenance.deliver(finding.issue, finding);
+          if (
+            delivered.status !== 'done' ||
+            !delivered.pr ||
+            !delivered.version ||
+            !delivered.evidence
+          )
+            throw new Error('Maintenance delivery remains pending');
+          state.maintenanceDeliveries[finding.id] = {
+            ...delivered,
+            issue: finding.issue,
+            approval,
+          };
+          save();
+        }
+        const verified = pipelineSchema.parse(
+          JSON.parse(
+            await turn(
+              'pipeline-audit',
+              `Invoke /pc-pipeline-refactor to verify only the required structural findings after Worker/PR-Land delivery. Do not implement. Original audit ${JSON.stringify(state.pipeline)}. Complete merge, final records, archive and cleanup evidence ${JSON.stringify(state.maintenanceDeliveries)}. Verify actual delivered versions and applicable local/remote evidence; unresolved fixes stay changes_needed. Reply using the original PipelineDisposition JSON contract with maintenance delivered and verifiedVersions, head ${state.context.head}.`,
+              state.context,
+            ),
+          ),
+        );
+        if (
+          verified.findings.some(
+            (f) =>
+              f.classification === 'required_maintenance' &&
+              !state.pipeline!.findings.some((original) => original.id === f.id),
+          )
+        )
+          throw new Error('Verification expanded maintenance scope');
+        for (const original of state.pipeline.findings.filter(
+          (f) => f.classification === 'required_maintenance',
+        )) {
+          const delivery = state.maintenanceDeliveries[original.id];
+          if (
+            !verified.findings.some((f) => f.id === original.id && f.issue === original.issue) ||
+            !verified.maintenance.some(
+              (m) =>
+                m.finding === original.id &&
+                m.issue === original.issue &&
+                Object.values(m.verifiedVersions).includes(delivery.version),
+            )
+          )
+            throw new Error('Verification must retain and verify every delivered finding');
+        }
+        state.pipeline = verified;
         save();
       }
       if (state.pipeline.head !== state.context.head || !pipelineAccepted(state.pipeline))

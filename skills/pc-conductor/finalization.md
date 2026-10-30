@@ -81,3 +81,12 @@ Do not reuse closure confirmation to accept a changed pre-closure delivery set.
 
 **Done:** Pipeline disposition and final reporting have observable evidence; their
 required completion gates determine Run completion without another EPIC close operation.
+
+
+## Maintenance delivery
+
+For `changes_needed`, identify a bounded Issue with marker `Pipeline maintenance EPIC #<epic> finding <id>` and originating Run attribution. Persist the finding-to-Issue link before dispatch. Worker implements through normal Issue and PR-Land gates, final records, verified preservation and cleanup; Pipeline-Refactor only audits and verifies.
+
+Covered moves/deletions require a finding `migrationLedger` identifying the exact approved ledger version. Obtain explicit human approval first. The host reads `<configured root>/.runtime/migration-approvals/<issue>.json` via the configured workflow state directory, with `source: "human"`, matching `ledger`, and nonempty approval `evidence`; never fabricate this file from model judgment. Missing or changed approval blocks Worker dispatch. Inspect `stateDirectory(config, '.runtime', 'migration-approvals')` for the actual configured state path.
+
+After delivery, dispatch Pipeline-Refactor verification with merge versions, archive evidence and applicable local/remote checks. Every original required finding must remain attributed and verify its delivered version before `completed` unlocks reporting. Failed delivery/verification remains pending on the closed EPIC. Retry reuses recorded complete deliveries.

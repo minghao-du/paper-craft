@@ -11,7 +11,12 @@ import { stateDirectory } from '@paper-craft/core/workflow/handoff';
 import type { FleetConfig } from '@paper-craft/core/workflow/fleet-config';
 import type { EpicRun } from '@paper-craft/core/workflow/epic-driver';
 import type { CompletionRunner } from '@paper-craft/core/workflow/postmerge';
-import type { IssueTurn } from '@paper-craft/core/workflow/issue-driver';
+import { driveIssue, readIssue, type IssueTurn } from '@paper-craft/core/workflow/issue-driver';
+import {
+  inspectRuns,
+  referenceRunSubject,
+  updateRunRegistry,
+} from '@paper-craft/core/workflow/run-driver';
 /** No intermediate human approval; head-specific professional judgment comes from EPIC role. */
 export async function finishEpic(
   config: FleetConfig,
@@ -24,6 +29,116 @@ export async function finishEpic(
     config,
     runner,
     {
+      maintenance: {
+        async identify(finding) {
+          const marker = `Pipeline maintenance EPIC #${epic.epic} finding ${finding.id}`;
+          const issues = JSON.parse(
+            execFileSync(
+              'gh',
+              [
+                'issue',
+                'list',
+                '--repo',
+                epic.repository,
+                '--state',
+                'all',
+                '--search',
+                marker,
+                '--json',
+                'number,body',
+              ],
+              { cwd: config.project, encoding: 'utf8' },
+            ),
+          );
+          const existing = issues.filter((i: { body: string }) => i.body.includes(marker));
+          if (existing.length > 1) throw new Error('Ambiguous maintenance Issue attribution');
+          if (existing.length) return existing[0].number;
+          const body = `${marker}\nOriginating closed EPIC: ${epic.repository}#${epic.epic}\nFinding: ${finding.description}\nEvidence: ${finding.evidence.join(', ')}\nBounded structural maintenance only. Use Worker and normal PR-Land delivery. ${finding.migrationLedger ? `Migration Ledger ${finding.migrationLedger} requires explicit approval before mutation.` : ''}`;
+          const url = execFileSync(
+            'gh',
+            [
+              'issue',
+              'create',
+              '--repo',
+              epic.repository,
+              '--title',
+              `Pipeline maintenance: ${finding.id}`,
+              '--body',
+              body,
+            ],
+            { cwd: config.project, encoding: 'utf8' },
+          ).trim();
+          const number = Number(url.split('/').at(-1));
+          if (!Number.isSafeInteger(number))
+            throw new Error('Expected created maintenance Issue identity');
+          return number;
+        },
+        async approveMigration(issue, ledger) {
+          const file = join(
+            stateDirectory(config, '.runtime', 'migration-approvals'),
+            `${issue}.json`,
+          );
+          if (!existsSync(file)) return undefined;
+          const approved = JSON.parse(readFileSync(file, 'utf8'));
+          if (
+            approved.source !== 'human' ||
+            approved.ledger !== ledger ||
+            !approved.evidence?.trim()
+          )
+            return undefined;
+          updateRunRegistry(config, (registry) => {
+            const owner = registry.runs.find(
+              (r) => r.subject.repository === epic.repository && r.subject.number === epic.epic,
+            );
+            if (owner) (owner.pipelineApprovals ??= {})[issue] = approved;
+          });
+          return approved;
+        },
+        async deliver(number, finding) {
+          const issue = readIssue(config.project, number);
+          if (!issue.body.includes(`Pipeline maintenance EPIC #${epic.epic} finding ${finding.id}`))
+            throw new Error('Maintenance Issue missing audit attribution');
+          const owner = inspectRuns(config).runs.find(
+            (r) =>
+              r.subject.repository === epic.repository &&
+              r.subject.number === epic.epic &&
+              r.subject.kind === 'epic',
+          );
+          if (owner) referenceRunSubject(config, owner.id, `${epic.repository}#${number}`);
+          const key = createHash('sha256')
+            .update(`${config.file}:${epic.repository}:${number}`)
+            .digest('hex');
+          const priorFile = join(
+            stateDirectory(config, '.runtime', 'completion', key),
+            'completion.json',
+          );
+          const prFile = join(stateDirectory(config, '.runtime', 'pull-requests', key), 'pr.json');
+          if (existsSync(priorFile) && existsSync(prFile)) {
+            const prior = JSON.parse(readFileSync(priorFile, 'utf8'));
+            const pr = JSON.parse(readFileSync(prFile, 'utf8')).pr;
+            if (prior.status === 'done' && prior.archive) {
+              const merged = await new GitHubPullRequests(config.project, epic.repository).read(pr);
+              if (!merged.mergeCommit) throw new Error('Missing actual maintenance merge version');
+              return { status: 'done', pr, version: merged.mergeCommit, evidence: prior.archive };
+            }
+          }
+          const task = await driveIssue(config, runner, issue);
+          if (task.status !== 'done') throw new Error('Maintenance Worker delivery pending');
+          const github = new GitHubPullRequests(task.checkout, epic.repository);
+          const pr = await github.ensure();
+          const completion = await landDelivery(config, runner, github, {
+            repository: epic.repository,
+            issue: number,
+            checkout: task.checkout,
+          });
+          const merged = await new GitHubPullRequests(config.project, epic.repository).read(pr);
+          if (completion.status !== 'done' || !completion.archive || !merged.mergeCommit)
+            throw new Error(
+              'Maintenance requires verified merge, records, preservation and cleanup',
+            );
+          return { status: 'done', pr, version: merged.mergeCommit, evidence: completion.archive };
+        },
+      },
       async deliver(task) {
         const completionKey = createHash('sha256')
           .update(`${config.file}:${epic.repository}:${task.number}`)
