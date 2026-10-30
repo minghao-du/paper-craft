@@ -10,6 +10,8 @@ import type { FleetConfig } from './fleet-config.js';
 export interface ManagedAttempt {
   id: string;
   fleet: string;
+  /** Run identity when launched through additive Run intake. */
+  run?: string;
   role: 'conductor' | 'worker' | 'epic' | 'landing' | 'pipeline-audit' | 'research-state';
   runner: string;
   brief: string;
@@ -60,6 +62,7 @@ export async function startConductor(
   config: FleetConfig,
   runner: RunnerAdapter,
   brief: string,
+  run?: string,
 ): Promise<ManagedAttempt> {
   if (!brief.trim()) throw new Error('Expected a non-empty Conductor brief');
   await runner.preflight();
@@ -73,11 +76,12 @@ export async function startConductor(
       });
     throw error;
   }
-  const id = randomUUID();
+  const id = run ?? randomUUID();
   const directory = join(home(config), id);
   mkdirSync(directory);
   const attempt: ManagedAttempt = {
     id,
+    run,
     fleet: createHash('sha256').update(config.file).digest('hex'),
     role: 'conductor',
     runner: runner.name,

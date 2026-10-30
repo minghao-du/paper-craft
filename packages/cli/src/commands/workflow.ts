@@ -1,3 +1,5 @@
+import { startRun, inspectRuns } from '@paper-craft/core/workflow/run-driver';
+import { execFileSync } from 'node:child_process';
 import { CodexShortRunner } from '@paper-craft/core/workflow/subagents';
 import { recoverFleet } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
@@ -63,6 +65,46 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       }),
     );
   registerSubagentCommands(workflow, opts);
+  const orchestrator = workflow
+    .command('orchestrator')
+    .description('Create or inspect a subject-scoped managed Run');
+  configured(
+    orchestrator.command('status').description('Read Fleet Run and Orchestrator ownership'),
+  ).action((options: Options) =>
+    run(() => output(inspectRuns(loadFleetConfig(options.config)), opts.human())),
+  );
+  configured(
+    orchestrator
+      .command('start <issue>')
+      .description('Create or reconnect a Run from configured repository context')
+      .requiredOption('--provider <provider>', 'Managed provider (initially codex)'),
+  ).action(async (number: string, options: Options & { provider: string }) => {
+    try {
+      const config = loadFleetConfig(options.config);
+      const subject = readIssue(config.project, Number(number));
+      const children: unknown = JSON.parse(
+        execFileSync(
+          'gh',
+          ['api', `repos/${subject.repository}/issues/${subject.number}/sub_issues`],
+          { cwd: config.project, encoding: 'utf8' },
+        ),
+      );
+      if (!Array.isArray(children)) throw new Error('Cannot resolve Issue/EPIC scope');
+      output(
+        await startRun(
+          config,
+          new CodexRunner(),
+          { ...subject, kind: children.length ? 'epic' : 'issue' },
+          options.provider,
+        ),
+        opts.human(),
+      );
+    } catch (error) {
+      run(() => {
+        throw error;
+      });
+    }
+  });
   const conductor = workflow
     .command('conductor')
     .description('Start or inspect the Fleet managed Conductor');

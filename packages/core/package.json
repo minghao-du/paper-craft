@@ -146,6 +146,11 @@
       "paper-craft-source": "./src/workflow/recovery.ts",
       "types": "./dist/workflow/recovery.d.ts",
       "default": "./dist/workflow/recovery.js"
+    },
+    "./workflow/run-driver": {
+      "paper-craft-source": "./src/workflow/run-driver.ts",
+      "types": "./dist/workflow/run-driver.d.ts",
+      "default": "./dist/workflow/run-driver.js"
     }
   },
   "files": [

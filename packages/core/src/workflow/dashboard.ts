@@ -1,3 +1,4 @@
+import { inspectRuns, type WorkflowRun } from './run-driver.js';
 /** File-backed evidence shared by Dashboard and JSON CLI; never scheduling authority. */
 import { readFile, realpath, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -25,6 +26,9 @@ export interface DashboardTask {
   issue?: number;
   pr?: string;
   runtime: 'unknown';
+  /** Verified registry ownership, absent on legacy file-only tasks. */
+  runId?: string;
+  orchestratorId?: string;
   executionIdentity: 'unknown';
   observedAt: string;
   stale: boolean;
@@ -37,6 +41,8 @@ export interface DashboardFleet {
   project?: string;
   observedAt: string;
   tasks: DashboardTask[];
+  /** Run ownership is projected without mutating runtime state. */
+  runs?: WorkflowRun[];
   error?: string;
   stale: boolean;
 }
@@ -46,6 +52,26 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
   const fleet: DashboardFleet = { ...registration, observedAt, tasks: [], stale: false };
   try {
     const config = loadFleetConfig(registration.config);
+    fleet.runs = inspectRuns(config).runs;
+    for (const run of fleet.runs) {
+      fleet.tasks.push({
+        id: `${registration.id}:run:${run.id}`,
+        slot: `run-${run.id}`,
+        path: config.project,
+        role: 'Orchestrator',
+        source: run.brief.path,
+        phase: run.lifecycle,
+        summary: `${run.subject.repository}#${run.subject.number} (${run.provider})`,
+        issue: run.subject.number,
+        blockers: run.orchestrator?.error ? [run.orchestrator.error] : [],
+        runId: run.id,
+        orchestratorId: run.orchestratorId,
+        runtime: 'unknown',
+        executionIdentity: 'unknown',
+        observedAt,
+        stale: false,
+      });
+    }
     const names = config.worktrees
       ? (await readdir(config.root)).filter((n) => /^issue-\d+$/.test(n))
       : config.slots;

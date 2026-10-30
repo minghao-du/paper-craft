@@ -464,3 +464,7 @@ Use the authoritative `.epic-config.json` for clone/worktree layout; this CLI do
 EPIC orchestration still reads `.epic-config.json` for now.
 
 For managed execution, public runtime `waitAttempt` records bounded wait timeout separately from execution, `cancelAttempt` records capability and verified receipt or failure, and `reconcileAttempt` verifies terminal evidence without releasing role or checkout ownership. Codex cancellation is unsupported; keep resources reserved on timeout, failed cancellation or unknown execution. Collect the original attempt before considering a new execution.
+
+## Subject-scoped Run intake
+
+For a requested Issue/EPIC, use `pc workflow orchestrator start <issue> --provider codex --config <authoritative-config>`. Inspect with `pc workflow orchestrator status --config <authoritative-config>`. Intake is complete when the registry links the requested subject, fixed provider, immutable brief and acknowledged Orchestrator attempt. A reserved or blocked Run is pending, not a successful startup. Repeated intake reconnects it; never remove reservations to force a replacement. This initial path retains Fleet-wide exclusion. Existing `workflow conductor` operations remain available for legacy callers; missing legacy Run identity stays unknown. The shared launch/evidence contract is implemented by Managed Runtime; role procedures must not infer acceptance from tmux presence.
