@@ -1,5 +1,9 @@
 import { releaseResearchWriter } from './research-report.js';
-import { startBusinessTurn, collectBusinessTurn } from './run-driver.js';
+import {
+  startBusinessTurn,
+  collectBusinessTurn,
+  acceptValidatedBusinessTurns,
+} from './run-driver.js';
 import {
   finalizeEpic,
   type EpicFinalization,
@@ -324,6 +328,11 @@ export async function completeEpic(
           save,
           retryFinalization ? undefined : run.finalizationHistory?.at(-1),
           provider.maintenance,
+        );
+        await acceptValidatedBusinessTurns(
+          config,
+          run.turns.filter((t) => !t.retired),
+          'Validated EPIC acceptance, human closure, Pipeline disposition and report publication',
         );
         if (owner && run.finalization!.report) {
           updateRunRegistry(config, (registry) => {

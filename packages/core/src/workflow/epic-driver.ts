@@ -1,4 +1,9 @@
-import { startBusinessTurn, collectBusinessTurn } from './run-driver.js';
+import {
+  startBusinessTurn,
+  collectBusinessTurn,
+  acceptValidatedBusinessTurns,
+  validateImplementationResult,
+} from './run-driver.js';
 import {
   subjectOrchestrator,
   reserveRunCheckout,
@@ -131,7 +136,12 @@ export async function driveEpic(
   save(file, run);
   let epicConversation: string | undefined;
   let replay = 0;
-  async function turn(role: IssueTurn['role'], brief: string, checkout = config.project) {
+  async function turn(
+    role: IssueTurn['role'],
+    brief: string,
+    checkout = config.project,
+    subjectNumber = epic.number,
+  ) {
     const retained = run.turns[replay++];
     if (retained) {
       if (retained.role !== role || retained.brief !== brief)
@@ -139,7 +149,14 @@ export async function driveEpic(
       if (retained.result === undefined) {
         if (!retained.conversation || retained.status !== 'running')
           throw new Error('Missing original receipt; retain unknown occupancy');
-        retained.result = await collectBusinessTurn(config, runner, retained);
+        retained.result = await collectBusinessTurn(
+          config,
+          runner,
+          retained,
+          role === 'worker'
+            ? (raw) => validateImplementationResult(raw, epic.repository, subjectNumber)
+            : undefined,
+        );
         save(file, run);
       }
       if (role === 'epic') epicConversation = retained.conversation;
@@ -177,13 +194,20 @@ export async function driveEpic(
     try {
       if (role === 'worker' && conductor!.run)
         reserveRunCheckout(config, conductor!.run, conductor!.id, checkout);
-      const receipt = await startBusinessTurn(config, runner, t, epic.repository, epic.number);
+      const receipt = await startBusinessTurn(config, runner, t, epic.repository, subjectNumber);
       if (!receipt.conversation || !receipt.address || !receipt.evidence)
         throw new Error('Expected actual Runner receipt');
       Object.assign(t, receipt, { status: 'running' });
       if (role === 'epic') epicConversation = t.conversation;
       save(file, run);
-      t.result = await collectBusinessTurn(config, runner, t);
+      t.result = await collectBusinessTurn(
+        config,
+        runner,
+        t,
+        role === 'worker'
+          ? (raw) => validateImplementationResult(raw, epic.repository, subjectNumber)
+          : undefined,
+      );
       save(file, run);
       return t.result;
     } catch (error) {
@@ -249,6 +273,11 @@ export async function driveEpic(
     for (let cycle = 0; cycle < 20; cycle++) {
       const pending = run.tasks.filter((t) => !t.result);
       if (!pending.length) {
+        await acceptValidatedBusinessTurns(
+          config,
+          run.turns,
+          'Validated EPIC readiness and all scoped child results against original objective',
+        );
         run.status = 'delivered';
         delete run.error;
         save(file, run);
@@ -339,8 +368,9 @@ export async function driveEpic(
         ownedReady.map(async (t) => {
           t.result = await turn(
             'worker',
-            `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and applicable lower directory guidance.\nRepository ${epic.repository}, EPIC #${epic.number}, Issue #${t.number}.\nScope: ${t.body}\n${t.brief}\nReturn stage result and evidence; stop after this stage.`,
+            `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and applicable lower directory guidance.\nRepository ${epic.repository}, EPIC #${epic.number}, Issue #${t.number}.\nScope: ${t.body}\n${t.brief}\nReturn JSON {"status":"completed","repository":"${epic.repository}","issue":${t.number},"evidence":"implementation and tests"} only on success; otherwise status changes_needed. Stop after this stage.`,
             t.checkout,
+            t.number,
           );
           save(file, run);
         }),

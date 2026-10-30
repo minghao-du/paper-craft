@@ -304,7 +304,8 @@ export async function dispatchStage(
       prior.role === request.role &&
       prior.stage === request.stage &&
       prior.inputRevision === request.inputRevision &&
-      prior.brief === request.brief
+      prior.brief === request.brief &&
+      JSON.stringify(prior.prerequisites) === JSON.stringify(request.prerequisites)
     )
       continue;
     const attempt = prior.attempts.at(-1)!;
@@ -943,11 +944,12 @@ export async function startBusinessTurn(
   });
   return Object.assign(attempt, dispatch.attempts.at(-1));
 }
-/** Publish and accept collected evidence before a managed business turn can advance. */
+/** Publish collected evidence; accept only after explicit domain validation. */
 export async function collectBusinessTurn(
   config: FleetConfig,
   runner: RunnerAdapter & { collect(a: ManagedAttempt): Promise<string> },
   attempt: ManagedAttempt,
+  validate?: (result: string) => void,
 ): Promise<string> {
   const result = await runner.collect(attempt);
   const dispatch = inspectRuns(config).dispatches?.find((d) =>
@@ -968,6 +970,8 @@ export async function collectBusinessTurn(
       outcome: 'completed',
       evidence: [{ path, hash: createHash('sha256').update(result).digest('hex') }],
     });
+    if (!validate) return result;
+    validate(result);
     await acceptStageReceipt(config, dispatch.authority, receipt.id, async () => ({
       currentRevision: dispatch.inputRevision,
       ownership: true,
@@ -975,4 +979,44 @@ export async function collectBusinessTurn(
     }));
   }
   return result;
+}
+
+/** Validate scoped implementation completion before it becomes a PR prerequisite. */
+export function validateImplementationResult(
+  result: string,
+  repository: string,
+  issue: number,
+): void {
+  const value = JSON.parse(result);
+  if (
+    value.status !== 'completed' ||
+    value.repository !== repository ||
+    value.issue !== issue ||
+    typeof value.evidence !== 'string' ||
+    !value.evidence.trim()
+  )
+    throw new Error(
+      'Expected completed implementation with matching repository/Issue and evidence',
+    );
+}
+
+/** Accept published turns only at a caller's validated domain completion boundary. */
+export async function acceptValidatedBusinessTurns(
+  config: FleetConfig,
+  attempts: ManagedAttempt[],
+  domainEvidence: string,
+): Promise<void> {
+  if (!domainEvidence.trim()) throw new Error('Domain acceptance evidence required');
+  for (const attempt of attempts) {
+    const registry = inspectRuns(config);
+    const dispatch = registry.dispatches?.find((d) => d.attempts.some((a) => a.id === attempt.id));
+    if (!dispatch || dispatch.lifecycle === 'accepted') continue;
+    const receipt = registry.receipts?.filter((r) => r.dispatchId === dispatch.id).at(-1);
+    if (!receipt) throw new Error('Business completion receipt missing');
+    await acceptStageReceipt(config, dispatch.authority, receipt.id, async () => ({
+      currentRevision: dispatch.inputRevision,
+      ownership: true,
+      evidence: domainEvidence,
+    }));
+  }
 }

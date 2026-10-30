@@ -1,4 +1,8 @@
-import { startBusinessTurn, collectBusinessTurn } from '@paper-craft/core/workflow/run-driver';
+import {
+  startBusinessTurn,
+  collectBusinessTurn,
+  acceptValidatedBusinessTurns,
+} from '@paper-craft/core/workflow/run-driver';
 /** Connect professional head gates and final human EPIC closure to public workflow. */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -223,6 +227,11 @@ export async function finishEpic(
             !approval.evidence.trim()
           )
             throw new Error('EPIC professional approval missing; retain delivery for repair');
+          await acceptValidatedBusinessTurns(
+            config,
+            [turn],
+            `Validated professional approval for ${epic.repository}#${task.number} head ${head}: ${approval.evidence}`,
+          );
           return { epic: epic.epic, head, evidence: approval.evidence };
         };
         const result = await landDelivery(

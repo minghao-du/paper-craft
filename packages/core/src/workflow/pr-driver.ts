@@ -121,6 +121,48 @@ export async function drivePullRequest(
       )
         throw new Error('PR repository or Issue attribution mismatch');
       if (live.state === 'MERGED') {
+        const graph = inspectRuns(config);
+        const pending = graph.dispatches
+          ?.filter(
+            (d) =>
+              d.runId === orchestrator?.run &&
+              d.subject === `${delivery.repository}#${delivery.issue}` &&
+              d.stage === 'pr-merge' &&
+              d.lifecycle !== 'superseded',
+          )
+          .at(-1);
+        if (pending && pending.lifecycle !== 'accepted') {
+          if (pending.inputRevision !== live.head || !live.mergeCommit)
+            throw new Error('Merged version does not match reserved merge Dispatch');
+          let receipt = graph.receipts?.find(
+            (r) => r.dispatchId === pending.id && r.outcome === 'completed',
+          );
+          if (!receipt) {
+            const path = join(
+              pending.attempts[0].directory,
+              'reconciled-merge-' + randomUUID() + '.json',
+            );
+            const body = JSON.stringify(live);
+            writeFileSync(path, body, { flag: 'wx', mode: 0o400 });
+            receipt = publishStageReceipt(config, {
+              dispatchId: pending.id,
+              attemptId: pending.attempts.at(-1)!.id,
+              runId: pending.runId,
+              subject: pending.subject,
+              role: pending.role,
+              stage: pending.stage,
+              provider: pending.provider,
+              inputRevision: pending.inputRevision,
+              outcome: 'completed',
+              evidence: [{ path, hash: createHash('sha256').update(body).digest('hex') }],
+            });
+          }
+          await acceptStageReceipt(config, pending.authority, receipt.id, async () => ({
+            currentRevision: live.head,
+            ownership: true,
+            evidence: 'Reconciled actual GitHub merge at reserved head and merge commit',
+          }));
+        }
         state.mergeCommit = live.mergeCommit;
         state.status = 'merged';
         record();
@@ -152,7 +194,21 @@ export async function drivePullRequest(
       )
         throw new Error('Missing current-head EPIC professional confirmation');
       const role = failed ? 'worker' : 'landing';
-      const previous = state.turns.at(-1);
+      let previous = state.turns.at(-1);
+      if (
+        previous?.status === 'starting' &&
+        orchestrator?.run &&
+        !inspectRuns(config).dispatches?.some(
+          (d) =>
+            d.runId === orchestrator.run &&
+            d.brief === previous!.brief &&
+            d.role === previous!.role,
+        )
+      ) {
+        state.turns.pop();
+        previous = state.turns.at(-1);
+        save(file, state);
+      }
       if (previous && previous.result === undefined) {
         if (!previous.conversation || previous.status !== 'running')
           throw new Error('Missing original receipt; preserve unknown occupancy');

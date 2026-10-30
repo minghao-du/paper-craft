@@ -132,6 +132,11 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       ownership: true,
       evidence: 'checked current facts',
     }));
+    verifiedStopped = false;
+    await expect(
+      dispatchStage(config, runner, { ...request, prerequisites: [stage.id] }),
+    ).rejects.toThrow(/termination/);
+    verifiedStopped = true;
     expect((await dispatchStage(config, runner, dependent)).stage).toBe('merge');
     expect(inspectRuns(config).receipts).toHaveLength(2);
     // Crash after publication but before the registry/event update: recover immutable files.

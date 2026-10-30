@@ -2,6 +2,7 @@ import {
   startRun,
   inspectRuns,
   startBusinessTurn,
+  validateImplementationResult,
   collectBusinessTurn,
 } from '../../packages/core/src/workflow/run-driver.js';
 import { test, expect } from 'vitest';
@@ -149,7 +150,8 @@ test('uncertain merge is reconciled once and retains merged version', async () =
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-pr-uncertain-')));
   mkdirSync(join(project, 'pool'));
   let merged = false,
-    calls = 0;
+    calls = 0,
+    interruptMergedRead = true;
   const config = {
     file: join(project, '.epic-config.json'),
     project,
@@ -163,6 +165,10 @@ test('uncertain merge is reconciled once and retains merged version', async () =
       return 2;
     },
     async read() {
+      if (merged && interruptMergedRead) {
+        interruptMergedRead = false;
+        throw new Error('interrupted before merge publication');
+      }
       return {
         head: 'evaluated',
         state: merged ? 'MERGED' : 'OPEN',
@@ -191,7 +197,14 @@ test('uncertain merge is reconciled once and retains merged version', async () =
       return { conversation: 'c', address: 'tmux:test', evidence: 'ack' };
     },
     async collect() {
-      return JSON.stringify({ passed: true, head: 'evaluated', evidence: 'verified checks' });
+      return JSON.stringify({
+        status: 'completed',
+        repository: 'o/r',
+        issue: 3,
+        passed: true,
+        head: 'evaluated',
+        evidence: 'verified checks',
+      });
     },
   };
   try {
@@ -208,7 +221,50 @@ test('uncertain merge is reconciled once and retains merged version', async () =
       'o/r',
       3,
     );
-    await collectBusinessTurn(config, runner, implementation);
+    for (const invalid of [
+      'malformed',
+      JSON.stringify({
+        status: 'changes_needed',
+        repository: 'o/r',
+        issue: 3,
+        evidence: 'failed tests',
+      }),
+    ]) {
+      await expect(
+        collectBusinessTurn(
+          config,
+          {
+            ...runner,
+            async collect() {
+              return invalid;
+            },
+          },
+          implementation,
+          (raw) => validateImplementationResult(raw, 'o/r', 3),
+        ),
+      ).rejects.toThrow();
+      expect(
+        inspectRuns(config).dispatches?.find((d) =>
+          d.attempts.some((a) => a.id === implementation.id),
+        )?.lifecycle,
+      ).not.toBe('accepted');
+      await expect(
+        drivePullRequest(config, runner, github, {
+          repository: 'o/r',
+          issue: 3,
+          checkout: project,
+        }),
+      ).rejects.toThrow(/Worker implementation/);
+    }
+    await collectBusinessTurn(config, runner, implementation, (raw) =>
+      validateImplementationResult(raw, 'o/r', 3),
+    );
+    await expect(
+      drivePullRequest(config, runner, github, { repository: 'o/r', issue: 3, checkout: project }),
+    ).rejects.toThrow('interrupted before merge publication');
+    expect(inspectRuns(config).dispatches?.find((d) => d.stage === 'pr-merge')?.lifecycle).toBe(
+      'running',
+    );
     const result = await drivePullRequest(config, runner, github, {
       repository: 'o/r',
       issue: 3,
@@ -223,7 +279,7 @@ test('uncertain merge is reconciled once and retains merged version', async () =
       status: 'merged',
       mergeCommit: 'merged-sha',
     });
-    expect(graph.dispatches?.[0].lifecycle).toBe('accepted');
+    expect(graph.dispatches?.find((d) => d.stage === 'pr-merge')?.lifecycle).toBe('accepted');
     expect(graph.runs[0].lifecycle).toBe('running');
   } finally {
     rmSync(project, { recursive: true, force: true });

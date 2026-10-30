@@ -1,4 +1,9 @@
-import { startBusinessTurn, collectBusinessTurn } from './run-driver.js';
+import {
+  startBusinessTurn,
+  collectBusinessTurn,
+  acceptValidatedBusinessTurns,
+  validateImplementationResult,
+} from './run-driver.js';
 import { subjectOrchestrator, reserveRunCheckout, inspectRuns } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Durable automatic standalone Issue round trips. */
@@ -188,7 +193,14 @@ export async function driveIssue(
         if (last && !last.result) {
           if (!last.conversation || last.status !== 'running')
             throw new Error('Missing receipt: inspect original attempt before retry');
-          last.result = await collectBusinessTurn(config, runner, last);
+          last.result = await collectBusinessTurn(
+            config,
+            runner,
+            last,
+            last.role === 'worker'
+              ? (raw) => validateImplementationResult(raw, issue.repository, issue.number)
+              : undefined,
+          );
           save(file, task);
         }
         const completed = task.turns.at(-1);
@@ -197,6 +209,11 @@ export async function driveIssue(
         if (completed?.role === 'conductor') {
           const decision = JSON.parse(completed.result!);
           if (decision.action === 'done') {
+            await acceptValidatedBusinessTurns(
+              config,
+              task.turns,
+              'Validated scoped Worker completion and Orchestrator done decision',
+            );
             task.status = 'done';
             delete task.error;
             save(file, task);
@@ -209,7 +226,7 @@ export async function driveIssue(
           )
             throw new Error('Expected Conductor action worker with brief, or done');
           role = 'worker';
-          brief = `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and obey all applicable lower directory guidance in your checkout.\nRepository ${issue.repository}, Issue #${issue.number}.\nParent context: ${issue.parent ?? 'none'}; no siblings or parent closure authorized.\nScope: ${issue.body}\n${decision.brief}\nReturn your stage result and evidence; stop after this assigned stage.`;
+          brief = `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and obey all applicable lower directory guidance in your checkout.\nRepository ${issue.repository}, Issue #${issue.number}.\nParent context: ${issue.parent ?? 'none'}; no siblings or parent closure authorized.\nScope: ${issue.body}\n${decision.brief}\nReturn JSON {"status":"completed","repository":"${issue.repository}","issue":${issue.number},"evidence":"implementation and tests"} only after successful scoped implementation. Otherwise return status changes_needed with evidence. Stop after this assigned stage.`;
         } else
           brief = `Coordinate Issue ${issue.repository}#${issue.number}: ${issue.title}\n${issue.body}\nParent context: ${issue.parent ?? 'none'}; no siblings or parent closure authorized.\n${completed ? `Worker result (${completed.id}): ${completed.result}` : 'Select first task.'}\nReply only JSON {"action":"worker","brief":"bounded next stage"} or {"action":"done"}. Done means stages requested here are delivered; PR merge and final cleanup are separate workflow phases.`;
         const id = randomUUID();

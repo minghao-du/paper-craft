@@ -9,8 +9,8 @@ Read [the shared runtime and workflow contract](../lib/workflow.md) before using
 Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
 
 The conductor is the user's primary conversation and the top-level scheduler.
-Read the shared workflow's **Scheduling and approval contract** for ownership,
-role boundaries, durable evidence and the commit-bound user approval gate.
+Managed Runs use [the managed lifecycle](managed-lifecycle.md) for role ownership, automatic guarded PR merge, and explicit final EPIC closure confirmation.
+Legacy execution follows its recorded scheduling and approval policy.
 Use this skill at cold start and every reconciliation to inventory clones, tmux and
 hosts. Topic decomposition, readiness and confirmation belong to `/pc-epic`.
 
@@ -251,12 +251,10 @@ Check this by what you are about to **do**:
 | **report a number you did not compute** | re-derive it, or relay the basis — *"it reports X"*, not *"X"* |
 | **close or reopen an issue** | verify the criterion against `main`, not against the PR that claims it |
 | **land a PR** | `/pc-pr-land`, never a hand-rolled `gh pr merge`. Never send a worker a runnable `gh pr merge` recipe either — it bypasses the skill's preservation and cleanup. Say *"`/pc-pr-land`"* |
-| **request user approval** | current worker/review findings and all required EPIC confirmations cover the full live SHA under the shared approval contract |
+| **request human EPIC closure confirmation** | accepted original objective and exact delivery versions remain current; follow the managed lifecycle |
 | **cite an artifact by path** | preserve it outside a pooled slot before citing |
 
-Before landing, follow the shared scheduling/approval contract and dispatch a landing
-agent through `/pc-pr-land`; a conductor or worker never substitutes standing delegation
-for commit-bound user approval.
+For a managed Run, dispatch automatic guarded landing through `/pc-pr-land` after accepted exact-head quality and applicable EPIC confirmation. Human confirmation applies to final EPIC closure and explicit Migration Ledger gates. Legacy workflows use their recorded approval policy.
 
 #### Preserving an artifact you will cite
 
