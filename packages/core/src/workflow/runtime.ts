@@ -53,22 +53,24 @@ function save(path: string, attempt: ManagedAttempt): void {
   renameSync(temporary, path);
 }
 /** Read durable occupancy, without treating missing runtime evidence as release. */
-export function inspectConductor(config: FleetConfig, run?: string): ManagedAttempt | undefined {
-  const path = join(home(config), run ? `orchestrator-${run}.json` : 'conductor.json');
+export function inspectConductor(config: FleetConfig, run: string): ManagedAttempt | undefined {
+  if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
+  const path = join(home(config), `orchestrator-${run}.json`);
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt) : undefined;
 }
-/** Exclusively claim the Fleet conductor, preserving failed/unknown launches for recovery. */
+/** Exclusively claim the Run conductor, preserving failed/unknown launches for recovery. */
 export async function startConductor(
   config: FleetConfig,
   runner: RunnerAdapter,
   brief: string,
-  run?: string,
+  run: string,
 ): Promise<ManagedAttempt> {
+  if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   if (!brief.trim()) throw new Error('Expected a non-empty Conductor brief');
   await runner.preflight();
   mkdirSync(home(config), { recursive: true });
   try {
-    mkdirSync(join(home(config), run ? `orchestrator-${run}.lock` : 'conductor.lock'));
+    mkdirSync(join(home(config), `orchestrator-${run}.lock`));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST')
       throw new Error('Conductor occupied; inspect persisted attempt before recovery', {
@@ -76,7 +78,7 @@ export async function startConductor(
       });
     throw error;
   }
-  const id = run ?? randomUUID();
+  const id = run;
   const directory = join(home(config), id);
   mkdirSync(directory);
   const attempt: ManagedAttempt = {
@@ -91,7 +93,8 @@ export async function startConductor(
     directory,
     checkout: config.project,
   };
-  const path = join(home(config), run ? `orchestrator-${run}.json` : 'conductor.json');
+  if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
+  const path = join(home(config), `orchestrator-${run}.json`);
   save(path, attempt);
   writeFileSync(join(directory, 'brief.md'), brief, { mode: 0o600 });
   try {

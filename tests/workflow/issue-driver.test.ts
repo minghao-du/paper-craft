@@ -1,3 +1,8 @@
+import {
+  startRun,
+  referenceRunSubject,
+  inspectRuns,
+} from '../../packages/core/src/workflow/run-driver.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +13,7 @@ import {
   inspectIssueRun,
   readIssue,
 } from '../../packages/core/src/workflow/issue-driver.js';
-import { startConductor, type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
+import { type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
 test('standalone intake automatically routes two worker results back to conductor without replay', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-drive-')));
   mkdirSync(join(project, 'pool'));
@@ -34,13 +39,22 @@ test('standalone intake automatically routes two worker results back to conducto
   };
   let workerResults = 0;
   const runner = {
-    name: 'controlled',
+    name: 'codex',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start(a: ManagedAttempt) {
       return { conversation: a.conversation ?? a.id, address: 'tmux:test', evidence: 'received' };
     },
     async collect(a: ManagedAttempt) {
-      if (a.role === 'worker') return `delivered ${++workerResults}`;
+      if (a.role === 'worker')
+        return JSON.stringify({
+          status: 'completed',
+          repository: 'owner/repo',
+          issue: 7,
+          evidence: `delivered ${++workerResults}`,
+        });
       return JSON.stringify(
         a.brief.includes('delivered 2')
           ? { action: 'done' }
@@ -49,7 +63,12 @@ test('standalone intake automatically routes two worker results back to conducto
     },
   };
   try {
-    await startConductor(config, runner, 'coordinate');
+    await startRun(
+      config,
+      runner,
+      { repository: 'owner/repo', number: 7, kind: 'issue', title: 'task', body: 'deliver' },
+      'codex',
+    );
     const issue = {
       repository: 'owner/repo',
       number: 7,
@@ -70,6 +89,7 @@ test('standalone intake automatically routes two worker results back to conducto
     expect(first.turns.filter((t) => t.role === 'worker')).toHaveLength(2);
     expect(first.turns.find((t) => t.role === 'worker')?.brief).toContain('AGENTS.md');
     const failedIssue = { ...issue, number: 8 };
+    referenceRunSubject(config, inspectRuns(config).runs[0].id, 'owner/repo#8');
     const failedRunner = {
       ...runner,
       async start() {
@@ -77,7 +97,7 @@ test('standalone intake automatically routes two worker results back to conducto
       },
     };
     await expect(driveIssue(config, failedRunner, failedIssue)).rejects.toThrow(
-      'lost acknowledgement',
+      'Expected actual Runner receipt',
     );
     const failed = inspectIssueRun(config, 'owner/repo', 8)!;
     expect(failed).toMatchObject({ status: 'blocked' });

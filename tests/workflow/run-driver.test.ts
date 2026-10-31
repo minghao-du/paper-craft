@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { readDashboardFleet } from '../../packages/core/src/workflow/dashboard.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,10 +51,22 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
   };
   try {
     writeFileSync(config.file, JSON.stringify({ clone_root: 'pool', local_worktrees: true }));
+    const runtime = stateDirectory(
+      config,
+      '.runtime',
+      createHash('sha256').update(config.file).digest('hex'),
+    );
+    mkdirSync(runtime, { recursive: true });
+    writeFileSync(join(runtime, 'conductor.json'), JSON.stringify({ status: 'running' }));
     const first = await startRun(config, runner, subject, 'codex');
     expect(first.orchestrator?.status).toBe('running');
     expect((await startRun(config, runner, subject, 'codex')).id).toBe(first.id);
-    const other = await startRun(config, runner, { ...subject, number: 8 }, 'codex');
+    const other = await startRun(
+      config,
+      { ...runner, name: 'claude' },
+      { ...subject, number: 8 },
+      'claude',
+    );
     expect(other.orchestratorId).not.toBe(first.orchestratorId);
     expect(launches).toBe(2);
     const snapshot = await readDashboardFleet({ id: 'fleet', config: config.file });

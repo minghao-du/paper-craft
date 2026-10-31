@@ -149,6 +149,11 @@ describe('portable workflow file contract', () => {
         cwd: project,
         encoding: 'utf8',
       });
+    for (const removed of ['start', 'status']) {
+      const result = cli('workflow', 'conductor', removed);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('unknown command');
+    }
     const root = cli('workflow', 'root', '--path');
     expect(root.status, root.stderr).toBe(0);
     expect(root.stdout.trim()).toBe(pool);
