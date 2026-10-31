@@ -66,6 +66,13 @@ while the runner supplies its own invocation, prompt input and reset behavior.
 Claude Code is not a required runner.
 Native messaging and runner-specific session APIs are optional capabilities.
 Git/file commands remain usable without starting a terminal session.
+Each Run has one Orchestrator authority, materialized by exactly one active managed
+attempt. Every managed attempt belongs to a Run. Fleet is a configuration and
+resource boundary, with no scheduling agent. The Run Registry arbitrates resources
+deterministically; provider is fixed at intake and read from the Run thereafter.
+Managed start, inspect and recovery require a Run; batch recovery uses that same
+per-Run path. There are no compatibility entry points or legacy runtime reads
+(see [ADR 0002](docs/adr/0002-run-scoped-orchestrator.md)).
 An unavailable occupancy check means unknown, never free.
 Automatic reclaim remains blocked until occupancy and all preservation and
 completion checks are verified; the portable CLI provides read-only evidence.
@@ -77,5 +84,5 @@ Core exposes domain data and services without Commander, MCP or model-host
 contexts. CLI and MCP depend on Core's public package exports; Core never imports
 an adapter. Host-specific registration, response formatting and process lifecycle
 belong in adapters. A future native DeepSeek plugin follows the same direction.
-Shared skills remain at the repository root. Existing CLI commands, configuration
-paths and JSONL formats remain the compatibility boundary.
+Shared skills remain at the repository root. CLI commands, configuration paths and
+JSONL formats are explicit public contracts.
