@@ -41,7 +41,8 @@ Verify that all external prerequisite dependencies and requirements are satisfie
 
 Inspect the issue requirements for required external inputs — trained models, weights, data tables, or external files.
 Read the project's `.paper-craft/compute.md` when present to resolve where each input will be consumed and its expected path; otherwise use the issue's environment and paths.
-Verify that each prerequisite file exists and is readable in that environment, using the configured platform skill for remote checks. Inputs verified there satisfy this prerequisite without additional authorization or a local copy.
+Verify that each prerequisite file exists and is readable in that environment, using the configured platform skill for remote checks.
+Inputs verified there satisfy this prerequisite without additional authorization or a local copy.
 
 When any prerequisite input is missing, inaccessible, or has an unresolved environment or path:
 - **Halt immediately** before writing any code, modifying files, or creating a feature branch.

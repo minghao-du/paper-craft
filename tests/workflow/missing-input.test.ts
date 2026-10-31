@@ -211,11 +211,17 @@ describe('Missing Input Protocol', () => {
       expect(content).toContain('### Step 2: Input verification');
 
       // Exact 3-part notification exists
-      expect(content).toContain('🚨 缺少前置依赖输入文件，无法继续执行任务：');
-      expect(content).toContain('- 缺失文件及预期路径: `<relative/path/to/file>`');
-      expect(content).toContain('- 依赖该文件的操作: `<说明是哪个评测脚本/验证步骤需要它>`');
       expect(content).toContain(
-        '- 请操作: 请将该文件放置在上述指定路径，或者告知替代的 mock 方案 / 是否授权重新生成？',
+        'Prerequisite input verification is blocked; the task cannot proceed:',
+      );
+      expect(content).toContain(
+        '- Input file, consuming environment, expected path, and blocker: `<file, environment, path, missing / inaccessible / unresolved mapping>`',
+      );
+      expect(content).toContain(
+        '- Dependent operation: `<evaluation script or verification step that requires this file>`',
+      );
+      expect(content).toContain(
+        '- Action needed: `<provide the file, restore access, or clarify the environment and path; describe the proposed substitute or regeneration plan and request authorization if needed>`',
       );
 
       // Explicit prohibitions from ticket #10 are present
