@@ -89,14 +89,14 @@ export async function readDashboardFleet(registration: FleetRegistration): Promi
       ? (await readdir(config.root)).filter((n) => /^issue-\d+$/.test(n))
       : config.slots;
     const locations = [
-      { slot: 'conductor', path: config.project },
+      { slot: 'orchestrator', path: config.project },
       ...names.map((slot) => ({ slot, path: join(config.root, slot) })),
     ];
     for (const location of locations) {
       const task: DashboardTask = {
         ...location,
         id: `${registration.id}:${location.slot}`,
-        role: location.slot === 'conductor' ? 'Conductor / configured EPIC' : 'Worker',
+        role: location.slot === 'orchestrator' ? 'Orchestrator / configured EPIC' : 'Worker',
         source: join(location.path, '.epic-status.json'),
         phase: 'unknown',
         summary: '',

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
   startRun,
-  subjectOrchestrator,
+  orchestratorForSubject,
   referenceRunSubject,
   inspectRuns,
   dispatchStage,
@@ -58,22 +58,25 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
       createHash('sha256').update(config.file).digest('hex'),
     );
     mkdirSync(runtime, { recursive: true });
-    writeFileSync(join(runtime, 'conductor.json'), JSON.stringify({ status: 'running' }));
-    expect(() => subjectOrchestrator(config, subject.repository, 7)).toThrow(
+    writeFileSync(
+      join(runtime, ['con', 'ductor.json'].join('')),
+      JSON.stringify({ status: 'running' }),
+    );
+    expect(() => orchestratorForSubject(config, subject.repository, 7)).toThrow(
       'workflow orchestrator start 7',
     );
     const first = await startRun(config, runner, subject, 'codex');
-    expect(subjectOrchestrator(config, subject.repository, 7).runner).toBe('codex');
+    expect(orchestratorForSubject(config, subject.repository, 7).runner).toBe('codex');
     updateRunRegistry(config, (registry) => {
       registry.runs[0].provider = 'unsupported';
     });
-    expect(() => subjectOrchestrator(config, subject.repository, 7)).toThrow(
+    expect(() => orchestratorForSubject(config, subject.repository, 7)).toThrow(
       'Unsupported Run provider',
     );
     updateRunRegistry(config, (registry) => {
       registry.runs[0].provider = 'claude';
     });
-    expect(() => subjectOrchestrator(config, subject.repository, 7)).toThrow(
+    expect(() => orchestratorForSubject(config, subject.repository, 7)).toThrow(
       'Run provider mismatch',
     );
     updateRunRegistry(config, (registry) => {

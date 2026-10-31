@@ -27,7 +27,7 @@ export function registerSubagentCommands(workflow: Command, opts: { human: () =>
       .option('--timeout-ms <number>', 'Bounded wait; timeout preserves execution occupancy')
       .option('--id <uuid>', 'Task identity')
       .option('--input <file>', 'JSON task request (parent, checkout, mode, brief, files)')
-      .option('--issue <number>', 'Worker Issue for Conductor handoff')
+      .option('--issue <number>', 'Worker Issue for Orchestrator handoff')
       .option('--fleet-limit <number>', 'Fleet concurrency limit', '4')
       .option('--parent-limit <number>', 'Parent concurrency limit', '2')
       .action(

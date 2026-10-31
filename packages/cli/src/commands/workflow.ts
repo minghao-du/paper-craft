@@ -2,7 +2,7 @@ import {
   startRun,
   inspectRuns,
   recoverRun,
-  subjectOrchestrator,
+  orchestratorForSubject,
 } from '@paper-craft/core/workflow/run-driver';
 import { execFileSync } from 'node:child_process';
 import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
@@ -37,7 +37,7 @@ interface Options {
 function configured(command: Command): Command {
   return command.option(
     '--config <file>',
-    'Authoritative conductor configuration',
+    'Authoritative Fleet configuration',
     '.epic-config.json',
   );
 }
@@ -160,7 +160,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     try {
       const config = loadFleetConfig(options.config);
       const runner = managedRunner(
-        subjectOrchestrator(config, options.repository, Number(number)).runner,
+        orchestratorForSubject(config, options.repository, Number(number)).runner,
       );
       const epic = inspectEpicRun(config, options.repository, Number(number));
       if (!epic) throw new Error('Expected delivered EPIC record');
@@ -185,7 +185,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       try {
         const config = loadFleetConfig(options.config);
         const runner = managedRunner(
-          subjectOrchestrator(config, options.repository, Number(number)).runner,
+          orchestratorForSubject(config, options.repository, Number(number)).runner,
         );
         const epic = inspectEpicRun(config, options.repository, Number(number));
         if (!epic) throw new Error('Expected delivered EPIC record');
@@ -214,7 +214,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       const config = loadFleetConfig(options.config);
       const issue = readIssue(config.project, Number(number));
       const runner = managedRunner(
-        subjectOrchestrator(config, issue.repository, issue.number).runner,
+        orchestratorForSubject(config, issue.repository, issue.number).runner,
       );
       const task = await driveIssue(config, runner, issue);
       output(
@@ -254,7 +254,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
         const config = loadFleetConfig(options.config);
         const issue = readIssue(config.project, Number(number));
         const runner = managedRunner(
-          subjectOrchestrator(config, issue.repository, issue.number).runner,
+          orchestratorForSubject(config, issue.repository, issue.number).runner,
         );
         const task = inspectIssueRun(config, issue.repository, issue.number);
         if (!task || task.status !== 'done')
@@ -350,7 +350,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
             : 'Check conservative file overlap across registered slots',
         ),
     )
-      .option('--fetch', 'Refresh origin base refs in the conductor and slots before checking')
+      .option('--fetch', 'Refresh origin base refs in the project and slots before checking')
       .action((options: Options) =>
         run(() => {
           const report = checkFleet(loadFleetConfig(options.config), kind, options.fetch);

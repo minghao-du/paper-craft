@@ -124,7 +124,7 @@ export async function completeEpic(
           (t) =>
             t.role === role &&
             t.brief === brief &&
-            (t.result === undefined || role === 'conductor' || reuse),
+            (t.result === undefined || role === 'orchestrator' || reuse),
         );
         if (retained) {
           if (retained.result !== undefined) return retained.result;
@@ -259,7 +259,7 @@ export async function completeEpic(
       }
       if (!run.closureVerified && !run.request) {
         run.request = await turn(
-          'conductor',
+          'orchestrator',
           `Present evidence and request one explicit human confirmation to close EPIC ${epic.repository}#${epic.epic}. Delivery version ${run.deliveryVersion}. Goal ${epic.originalGoal ?? epic.goal}; acceptance ${JSON.stringify(run.acceptance)}; deliveries ${JSON.stringify(run.deliveries)}; finalization ${JSON.stringify(run.finalization)}. Do not close without human confirmation.`,
         );
         save();
