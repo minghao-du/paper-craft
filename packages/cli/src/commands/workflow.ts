@@ -148,7 +148,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       output(
         await recoverFleet(config, runner, new CodexShortRunner(), async (work) => {
           const runner = managedRunner(
-            subjectOrchestrator(config, work.repository, work.number)?.runner ?? 'codex',
+            subjectOrchestrator(config, work.repository, work.number).runner,
           );
           const issue = readIssue(config.project, work.number);
           if (issue.repository !== work.repository)
@@ -173,7 +173,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     }
   });
   configured(
-    conductor
+    orchestrator
       .command('finalize-epic <number>')
       .description('Assess EPIC delivery; finalize specialists only after confirmed closure')
       .requiredOption('--repository <owner/name>', 'Target repository')
@@ -184,18 +184,12 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
   ).action(async (number: string, options: Options & { repository: string; retry?: boolean }) => {
     try {
       const config = loadFleetConfig(options.config);
+      const runner = managedRunner(
+        subjectOrchestrator(config, options.repository, Number(number)).runner,
+      );
       const epic = inspectEpicRun(config, options.repository, Number(number));
       if (!epic) throw new Error('Expected delivered EPIC record');
-      output(
-        await finishEpic(
-          config,
-          managedRunner(subjectOrchestrator(config, epic.repository, epic.epic)?.runner ?? 'codex'),
-          epic,
-          undefined,
-          options.retry,
-        ),
-        opts.human(),
-      );
+      output(await finishEpic(config, runner, epic, undefined, options.retry), opts.human());
     } catch (error) {
       run(() => {
         throw error;
@@ -203,7 +197,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     }
   });
   configured(
-    conductor
+    orchestrator
       .command('close-epic <number>')
       .description('Record explicit human confirmation, close and archive an accepted EPIC')
       .requiredOption('--repository <owner/name>', 'Target repository')
@@ -215,22 +209,18 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     ) => {
       try {
         const config = loadFleetConfig(options.config);
+        const runner = managedRunner(
+          subjectOrchestrator(config, options.repository, Number(number)).runner,
+        );
         const epic = inspectEpicRun(config, options.repository, Number(number));
         if (!epic) throw new Error('Expected delivered EPIC record');
         output(
-          await finishEpic(
-            config,
-            managedRunner(
-              subjectOrchestrator(config, epic.repository, epic.epic)?.runner ?? 'codex',
-            ),
-            epic,
-            {
-              epic: Number(number),
-              confirmed: true,
-              source: 'human',
-              evidence: options.humanConfirmation,
-            },
-          ),
+          await finishEpic(config, runner, epic, {
+            epic: Number(number),
+            confirmed: true,
+            source: 'human',
+            evidence: options.humanConfirmation,
+          }),
           opts.human(),
         );
       } catch (error) {
@@ -241,7 +231,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     },
   );
   configured(
-    conductor
+    orchestrator
       .command('issue <number>')
       .description('Deliver only the requested Issue, retaining parent constraints'),
   ).action(async (number: string, options: Options) => {
@@ -249,7 +239,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       const config = loadFleetConfig(options.config);
       const issue = readIssue(config.project, Number(number));
       const runner = managedRunner(
-        subjectOrchestrator(config, issue.repository, issue.number)?.runner ?? 'codex',
+        subjectOrchestrator(config, issue.repository, issue.number).runner,
       );
       const task = await driveIssue(config, runner, issue);
       output(
@@ -276,7 +266,7 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
     }
   });
   configured(
-    conductor
+    orchestrator
       .command('land <issue>')
       .description('Merge, record, preserve and clean delivered PR stages automatically'),
   )
@@ -288,15 +278,16 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       try {
         const config = loadFleetConfig(options.config);
         const issue = readIssue(config.project, Number(number));
+        const runner = managedRunner(
+          subjectOrchestrator(config, issue.repository, issue.number).runner,
+        );
         const task = inspectIssueRun(config, issue.repository, issue.number);
         if (!task || task.status !== 'done')
           throw new Error('Expected delivered Issue stages before landing');
         output(
           await landDelivery(
             config,
-            managedRunner(
-              subjectOrchestrator(config, issue.repository, issue.number)?.runner ?? 'codex',
-            ),
+            runner,
             new GitHubPullRequests(
               existsSync(task.checkout) ? task.checkout : config.project,
               issue.repository,

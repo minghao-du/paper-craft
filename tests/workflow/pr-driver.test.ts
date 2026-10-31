@@ -10,6 +10,41 @@ import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { drivePullRequest } from '../../packages/core/src/workflow/pr-driver.js';
+async function intake(
+  config: Parameters<typeof startRun>[0],
+  runner: Parameters<typeof startRun>[1],
+  number: number,
+) {
+  const managed = await startRun(
+    config,
+    runner,
+    { repository: 'o/r', number, title: 'task', body: 'task', kind: 'issue' },
+    'codex',
+  );
+  const worker = await startBusinessTurn(
+    config,
+    runner,
+    { ...managed.orchestrator!, role: 'worker', brief: 'Implement task' },
+    'o/r',
+    number,
+  );
+  await collectBusinessTurn(
+    config,
+    {
+      ...runner,
+      async collect() {
+        return JSON.stringify({
+          status: 'completed',
+          repository: 'o/r',
+          issue: number,
+          evidence: 'implemented',
+        });
+      },
+    },
+    worker,
+    (raw) => validateImplementationResult(raw, 'o/r', number),
+  );
+}
 test('landing repairs failed checks and rechecks changed heads without human approval', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-pr-')));
   mkdirSync(join(project, 'pool'));
@@ -43,7 +78,7 @@ test('landing repairs failed checks and rechecks changed heads without human app
     },
   };
   const runner = {
-    name: 'controlled',
+    name: 'codex',
     async stopped() {
       return true;
     },
@@ -58,13 +93,21 @@ test('landing repairs failed checks and rechecks changed heads without human app
     },
   };
   try {
+    await intake(config, runner, 3);
+    roles.length = 0;
     const result = await drivePullRequest(config, runner, github, {
       repository: 'o/r',
       issue: 3,
       checkout: project,
     });
     expect(result.status).toBe('merged');
-    expect(roles).toEqual(['landing', 'worker', 'landing']);
+    expect(roles.filter((r) => r !== 'conductor')).toEqual([
+      'landing',
+      'landing',
+      'worker',
+      'landing',
+      'landing',
+    ]);
     expect(checks).toBeGreaterThanOrEqual(3);
     expect(merged).toBe(1);
     await drivePullRequest(config, runner, github, {
@@ -108,7 +151,7 @@ test('moved heads repeat Landing gates and EPIC confirmation is required before 
     },
   };
   const runner = {
-    name: 'controlled',
+    name: 'codex',
     async stopped() {
       return true;
     },
@@ -124,6 +167,12 @@ test('moved heads repeat Landing gates and EPIC confirmation is required before 
     },
   };
   try {
+    await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 9, title: 'task', body: 'task', kind: 'issue' },
+      'codex',
+    );
     await expect(
       drivePullRequest(config, runner, github, {
         repository: 'o/r',
@@ -133,13 +182,14 @@ test('moved heads repeat Landing gates and EPIC confirmation is required before 
       }),
     ).rejects.toThrow('EPIC professional confirmation');
     expect(landings).toBe(0);
+    await intake(config, runner, 10);
     const result = await drivePullRequest(config, runner, github, {
       repository: 'o/r',
       issue: 10,
       checkout: project,
     });
     expect(result.checkedHead).toBe('second');
-    expect(landings).toBe(2);
+    expect(landings).toBe(3);
     expect(merged).toBe(true);
   } finally {
     rmSync(project, { recursive: true, force: true });

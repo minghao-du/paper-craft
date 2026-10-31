@@ -69,6 +69,8 @@ export async function drivePullRequest(
     delivery.issue < 1
   )
     throw new Error('Expected repository and positive Issue identity');
+  const owner = subjectOrchestrator(config, delivery.repository, delivery.issue);
+  if (owner.runner !== runner.name) throw new Error('Run provider mismatch');
   await runner.preflight();
   const key = createHash('sha256')
     .update(`${config.file}:${delivery.repository}:${delivery.issue}`)
@@ -346,6 +348,10 @@ export async function drivePullRequest(
       } catch (error) {
         const changed = await github.read(state.pr);
         if (changed.state !== 'MERGED') {
+          if (mergeDispatch)
+            updateRunRegistry(config, (registry) => {
+              registry.dispatches!.find((d) => d.id === mergeDispatch.id)!.lifecycle = 'rejected';
+            });
           if (changed.head !== live.head) continue;
           repair = true;
           repairEvidence = String(error);

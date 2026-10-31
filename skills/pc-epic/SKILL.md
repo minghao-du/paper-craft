@@ -21,7 +21,7 @@ It does *consume* a conductor-supplied occupancy table when the Step 2 handshake
 
 ## Managed automatic planning
 
-`pc workflow conductor issue <number> --config /path/to/project/.epic-config.json`
+`pc workflow orchestrator issue <number> --config /path/to/project/.epic-config.json`
 reads the Issue parent and starts the matching repository-scoped EPIC Agent in tmux.
 Return the requested JSON plan with original goal, constraints, task scopes, Worker briefs,
 dependencies and readiness. Keep existing tasks and delivery evidence in revised plans.
@@ -409,12 +409,12 @@ EPIC orchestration still reads `.epic-config.json` for now.
 
 ## Managed goal acceptance
 
-Managed `pc workflow conductor issue` automatically lands delivered children and
+Managed `pc workflow orchestrator issue` automatically lands delivered children and
 collects EPIC judgment against the original goal, acceptance evidence and blockers.
 Child Issue closure alone is insufficient. Conductor presents one EPIC closure
 request. Keep the EPIC open on silence or refusal. After the human explicitly
 confirms the target, record their exact words with
-`pc workflow conductor close-epic <number> --config <file> --repository <owner/name> --human-confirmation <text>`.
+`pc workflow orchestrator close-epic <number> --config <file> --repository <owner/name> --human-confirmation <text>`.
 Only the human-facing Conductor may supply that flag from actual human input;
 Worker, EPIC and Landing output never counts as human confirmation. Confirmation
 continues closure and durable archival without further approval.

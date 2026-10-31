@@ -1,3 +1,4 @@
+import { startRun } from '../../packages/core/src/workflow/run-driver.js';
 import { createHash } from 'node:crypto';
 import { stateDirectory } from '../../packages/core/src/workflow/handoff.js';
 import { test, expect } from 'vitest';
@@ -20,13 +21,34 @@ test('collection failure resumes the original acceptance attempt and preserves e
     fail = true,
     closes = 0;
   const runner = {
-    name: 'controlled',
+    name: 'codex',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start() {
       starts++;
       return { conversation: 'same', address: 'tmux:fleet:test', evidence: 'receipt' };
     },
     async collect(a: { role: string; brief: string }) {
+      if (a.role === 'research-state' && a.brief.includes('Write ONLY the candidate report')) {
+        const candidate = a.brief.match(/candidate report (.*?); do not/)![1];
+        writeFileSync(
+          candidate,
+          'Objective\nAccepted delivery versions\nObserved repository versions\nPipeline disposition\nVerified findings\nInterpretation\nMissing evidence\nFollow-up Issues\nLimitations',
+        );
+        return JSON.stringify({
+          head: 'a'.repeat(40),
+          status: 'completed',
+          evidence: ['verified report'],
+          blockers: [],
+          scope: [],
+          checks: [],
+          artifacts: [candidate],
+          limitations: [],
+        });
+      }
+
       if (fail) {
         fail = false;
         throw Error('collection unavailable');
@@ -34,6 +56,11 @@ test('collection failure resumes the original acceptance attempt and preserves e
       if (a.brief.includes('Confirm applicability'))
         return JSON.stringify({
           pipeline: { run: false, reason: 'No workflow impact' },
+          coordinator: {
+            identity: 'Project coordinator',
+            entry: join(project, 'RESEARCH-STATE.local.md'),
+            brief: 'verified judgments',
+          },
           research: { run: false, reason: 'No research changes' },
         });
       if (a.role === 'pipeline-audit')
@@ -82,6 +109,7 @@ test('collection failure resumes the original acceptance attempt and preserves e
         head: 'a'.repeat(40),
         checkout: project,
         terminalSession: 'fleet',
+        observedVersions: { repository: 'a'.repeat(40) },
         changes: 'verified PR files',
       };
     },
@@ -94,6 +122,12 @@ test('collection failure resumes the original acceptance attempt and preserves e
     },
   };
   try {
+    await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 1, title: 'goal', body: 'goal', kind: 'epic' },
+      'codex',
+    );
     const key = createHash('sha256').update(`${config.file}:o/r:1`).digest('hex');
     const stale = join(stateDirectory(config, '.runtime', 'epic-completion', key), 'driver.lock');
     mkdirSync(stale);
@@ -107,11 +141,9 @@ test('collection failure resumes the original acceptance attempt and preserves e
         evidence: 'yes',
       }),
     ).rejects.toThrow('network');
-    expect(starts).toBe(2);
-    expect((await completeEpic(config, runner, provider, epic)).status).toBe(
-      'post_closure_finalization',
-    );
-    expect(starts).toBe(4);
+    expect(starts).toBe(3);
+    expect((await completeEpic(config, runner, provider, epic)).status).toBe('completed');
+    expect(starts).toBe(6);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
@@ -159,7 +191,7 @@ test('lost startup notification recovers attributed receipt and result without r
   let continued = 0;
   let collected = 0;
   const runner = {
-    name: 'controlled',
+    name: 'codex',
     async recoverReceipt() {
       return {
         conversation: 'original-thread',

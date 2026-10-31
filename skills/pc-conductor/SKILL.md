@@ -30,7 +30,7 @@ not a live execution probe. The automatic dispatch loop is supplied by the subse
 1. Load the authoritative config and register this conductor's verified runtime address
    in `$CLONE_ROOT/.conductor-session`; unavailable messaging uses durable files.
 2. Read the Issue's repository and EPIC parent. For standalone work, use
-   `pc workflow conductor issue <number> --config <authoritative-config>` while the
+   `pc workflow orchestrator issue <number> --config <authoritative-config>` while the
    managed Conductor is available. This command automatically resumes Conductor,
    allocates a new configured local worktree, dispatches Worker stages and returns
    their results until Conductor reports those stages delivered. Keep it running

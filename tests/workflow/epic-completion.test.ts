@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { startRun } from '../../packages/core/src/workflow/run-driver.js';
 import { test, expect } from 'vitest';
 import { mkdtempSync, realpathSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,17 +22,43 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
   let specialistPlans = 0;
   let head = 'a'.repeat(40);
   const runner = {
-    name: 'test',
+    name: 'codex',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start(a: { id: string }) {
       return { conversation: a.id, address: 'tmux:fleet:window', evidence: 'receipt' };
     },
     async collect(a: { role: string; brief: string }) {
+      if (a.role === 'research-state' && a.brief.includes('Write ONLY the candidate report')) {
+        const candidate = a.brief.match(/candidate report (.*?); do not/)![1];
+        writeFileSync(
+          candidate,
+          'Objective\nAccepted delivery versions\nObserved repository versions\nPipeline disposition\nVerified findings\nInterpretation\nMissing evidence\nFollow-up Issues\nLimitations',
+        );
+        return JSON.stringify({
+          head: head,
+          status: 'completed',
+          evidence: ['verified report'],
+          blockers: [],
+          scope: [],
+          checks: [],
+          artifacts: [candidate],
+          limitations: [],
+        });
+      }
+
       if (a.brief.includes('Confirm applicability')) {
         specialistPlans++;
         expect(closed).toBe(1);
         return JSON.stringify({
           pipeline: { run: false, reason: 'No workflow changes' },
+          coordinator: {
+            identity: 'Project coordinator',
+            entry: join(project, 'RESEARCH-STATE.local.md'),
+            brief: 'verified judgments',
+          },
           research: { run: false, reason: 'No scientific impact' },
         });
       }
@@ -84,6 +112,7 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
         head,
         checkout: project,
         terminalSession: 'fleet',
+        observedVersions: { repository: 'a'.repeat(40) },
         changes: 'verified PR diff',
       };
     },
@@ -96,6 +125,12 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
     },
   };
   try {
+    await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 1, title: 'goal', body: 'goal', kind: 'epic' },
+      'codex',
+    );
     expect((await completeEpic(config, runner, provider, epic)).status).toBe('blocked');
     expect(closed).toBe(0);
     satisfied = true;
@@ -135,7 +170,7 @@ test('goal evidence and explicit target human confirmation gate EPIC closure; re
           evidence: 'Close EPIC 1',
         })
       ).status,
-    ).toBe('post_closure_finalization');
+    ).toBe('completed');
     await completeEpic(config, runner, provider, epic);
     expect(closed).toBe(1);
     expect(landed).toBe(1);
@@ -181,28 +216,46 @@ test('post-closure specialist failures preserve attempts and block reporting unt
     status: 'delivered' as const,
   };
   const runner = {
-    name: 'test',
+    name: 'codex',
     async preflight() {},
-    async stopped() {
-      return terminated;
+    async stopped(a: { role: string }) {
+      return ['pipeline-audit', 'research-state'].includes(a.role) ? terminated : true;
     },
     async start(a: { id: string; role: string; terminalSession?: string }) {
       starts.push(a.role);
       if (a.role === 'pipeline-audit' && failStartup) throw new Error('lost acknowledgement');
       return {
         conversation: a.id,
-        address: a.terminalSession ? `tmux:${a.terminalSession}:${a.id}` : 'tmux:other',
+        address: a.terminalSession ? `tmux:${a.terminalSession}:${a.id}` : 'tmux:fleet:controlled',
         evidence: 'runner acknowledgement',
       };
     },
     async collect(a: { role: string; brief: string }) {
+      if (a.role === 'research-state' && a.brief.includes('Write ONLY the candidate report')) {
+        const candidate = a.brief.match(/candidate report (.*?); do not/)![1];
+        writeFileSync(
+          candidate,
+          'Objective\nAccepted delivery versions\nObserved repository versions\nPipeline disposition\nVerified findings\nInterpretation\nMissing evidence\nFollow-up Issues\nLimitations',
+        );
+        return JSON.stringify({
+          head: head,
+          status: 'completed',
+          evidence: ['verified report'],
+          blockers: [],
+          scope: [],
+          checks: [],
+          artifacts: [candidate],
+          limitations: [],
+        });
+      }
+
       if (a.brief.includes('Confirm applicability'))
         return JSON.stringify({
           pipeline: { run: true, reason: 'Changed workflow script' },
           research: { run: true, reason: 'New result' },
           coordinator: {
             identity: 'Project coordinator',
-            entry: '/local/research-state/RESEARCH-STATE.local.md',
+            entry: join(project, 'RESEARCH-STATE.local.md'),
             brief: 'Confirmed evidence and interpretation',
           },
         });
@@ -236,6 +289,7 @@ test('post-closure specialist failures preserve attempts and block reporting unt
         head,
         checkout: project,
         terminalSession: 'fleet',
+        observedVersions: { repository: 'a'.repeat(40) },
         changes: 'verified changed script',
       };
     },
@@ -248,8 +302,14 @@ test('post-closure specialist failures preserve attempts and block reporting unt
   };
   const decision = { epic: 1, confirmed: true, source: 'human' as const, evidence: 'Close EPIC 1' };
   try {
+    await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 1, title: 'goal', body: 'goal', kind: 'epic' },
+      'codex',
+    );
     await expect(completeEpic(config, runner, provider, epic, decision)).rejects.toThrow(
-      'lost acknowledgement',
+      'Specialist receipt',
     );
     await expect(completeEpic(config, runner, provider, epic, undefined, true)).rejects.toThrow(
       'verified specialist termination',
@@ -263,7 +323,7 @@ test('post-closure specialist failures preserve attempts and block reporting unt
     expect(closed).toBe(1);
     terminated = true;
     const retried = await completeEpic(config, runner, provider, epic, undefined, true);
-    expect(retried.status).toBe('post_closure_finalization');
+    expect(retried.status).toBe('completed');
     expect(retried.turns.find((t) => t.role === 'pipeline-audit')?.retired).toBe(true);
     expect(retried.finalizationHistory).toHaveLength(1);
     expect(closed).toBe(1);
