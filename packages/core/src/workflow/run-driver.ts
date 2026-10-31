@@ -659,6 +659,7 @@ export async function recoverRun(
     replaceOrchestrator?: boolean;
   } = {},
 ): Promise<{ blockers: string[]; pendingDispatches: string[] }> {
+  if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error('Expected a valid Run id');
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
   if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
@@ -796,6 +797,8 @@ export async function recoverRun(
       if (current.orchestratorId !== replacement!.id) throw new Error('Recovery authority changed');
       current.orchestrator = replacement;
       current.lifecycle = replacement!.status === 'running' ? 'running' : 'blocked';
+      if (replacement!.status !== 'running')
+        blockers.push('Orchestrator startup pending; unknown occupancy remains reserved');
     });
   }
   return { blockers, pendingDispatches };

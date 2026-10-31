@@ -10,23 +10,28 @@ role. Restore conversations through the selected runner's supported exact-sessio
 mechanism; runtime layout is separate from EPIC identity, checkout ownership and approval.
 If it is unavailable, retain durable state and report manual continuation required.
 
-Reconcile conductor records first, then each keyed EPIC and task. A restored worker or
-landing agent waits for the conductor's verified next assignment/transfer before editing.
-The lifecycle contract determines the next operation, including when merge already
-succeeded. Conversation restoration alone grants no authorization or checkout ownership.
+Reconcile the owning Run before resuming its EPIC or task. A restored worker or
+landing agent waits for its Run's verified next assignment before editing.
+Conversation restoration alone grants no checkout ownership.
 
-For a managed Fleet, reconcile original execution receipts and continue recorded workflows:
+For one Run, reconcile startup receipts and durable results:
 
 ```sh
-pc workflow conductor recover --config /absolute/path/.epic-config.json
+pc workflow orchestrator recover <run> --config /absolute/path/.epic-config.json
 ```
 
-Recovery collects original attempts and automatically continues recorded Issue or EPIC stages.
-Unknown execution retains ownership and blocks continuation until reconciled. A lost driver lock is reclaimable only with a recorded PID proven absent;
-legacy unknown locks remain blocked for inspection. Continuation includes merged PRs and verified postmerge cleanup.
-Persisted explicit human EPIC-close confirmation survives recovery; silence remains
-unconfirmed. Missing startup receipts, unknown execution and missing archive evidence
-retain the checkout and require the specific missing evidence, never generic approval.
+Use `--replace` only after verified termination of the previous Orchestrator.
+To reconcile every incomplete Run independently:
+
+```sh
+pc workflow orchestrator recover-all --config /absolute/path/.epic-config.json
+```
+
+Unknown occupancy retains resources and exits with code 2. Batch recovery reports each
+Run, including provider failures; unowned legacy work is blocked for explicit completion
+or archival and is never resumed. Recovery reconciles evidence; continue stages through
+the owning Run after inspecting its blockers. Persisted explicit human EPIC-close
+confirmation survives recovery; silence remains unconfirmed.
 
 Run on the machine that owns the tmux workspace. Recovery spans all sessions on the **selected tmux server**, without a project or `.epic-config.json`. Each server needs its own configuration and snapshot directory; read [plugin setup](references/tmux.md) when installing or handling multiple servers.
 

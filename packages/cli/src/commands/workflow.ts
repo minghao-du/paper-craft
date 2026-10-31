@@ -5,8 +5,7 @@ import {
   subjectOrchestrator,
 } from '@paper-craft/core/workflow/run-driver';
 import { execFileSync } from 'node:child_process';
-import { CodexShortRunner } from '@paper-craft/core/workflow/subagents';
-import { recoverFleet } from '@paper-craft/core/workflow/recovery';
+import { recoverAllRuns } from '@paper-craft/core/workflow/recovery';
 import { finishEpic } from '../workflow/epic-completion.js';
 import { landDelivery } from '@paper-craft/core/workflow/postmerge';
 import { registerSubagentCommands } from './workflow-subagents.js';
@@ -20,8 +19,8 @@ import {
   writeIntent,
 } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
-import { CodexRunner, managedRunner } from '@paper-craft/core/workflow/runtime';
-import { driveEpic, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
+import { managedRunner } from '@paper-craft/core/workflow/runtime';
+import { inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
 import { inspectIssueRun } from '@paper-craft/core/workflow/issue-driver';
@@ -121,55 +120,31 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       const run = inspectRuns(config).runs.find((run) => run.id === id);
       if (!run) throw new Error('Unknown Run');
       const runner = managedRunner(run.provider);
-      output(
-        await recoverRun(config, runner, id, {
-          replaceOrchestrator: options.replace,
-          stopped: (attempt) => runner.stopped(attempt),
-        }),
-        opts.human(),
-      );
+      const result = await recoverRun(config, runner, id, {
+        replaceOrchestrator: options.replace,
+        stopped: (attempt) => runner.stopped(attempt),
+      });
+      output(result, opts.human());
+      if (result.blockers.length) process.exitCode = 2;
     } catch (error) {
       run(() => {
         throw error;
       });
     }
   });
-  const conductor = workflow
-    .command('conductor')
-    .description('Start or inspect the Fleet managed Conductor');
   configured(
-    conductor
-      .command('recover')
-      .description('Reconcile original attempts and automatically continue persisted workflows'),
+    orchestrator
+      .command('recover-all')
+      .description('Reconcile each incomplete Run; report unowned work as blocked'),
   ).action(async (options: Options) => {
     try {
-      const config = loadFleetConfig(options.config);
-      const runner = new CodexRunner();
-      output(
-        await recoverFleet(config, runner, new CodexShortRunner(), async (work) => {
-          const runner = managedRunner(
-            subjectOrchestrator(config, work.repository, work.number).runner,
-          );
-          const issue = readIssue(config.project, work.number);
-          if (issue.repository !== work.repository)
-            throw new Error('Recovered repository differs from live Issue');
-          if (work.epic) return finishEpic(config, runner, await driveEpic(config, runner, issue));
-          const task = await driveIssue(config, runner, issue);
-          return landDelivery(
-            config,
-            runner,
-            new GitHubPullRequests(
-              existsSync(task.checkout) ? task.checkout : config.project,
-              work.repository,
-            ),
-            { repository: work.repository, issue: work.number, checkout: task.checkout },
-          );
-        }),
-        opts.human(),
-      );
+      const result = await recoverAllRuns(loadFleetConfig(options.config), managedRunner);
+      output(result, opts.human());
+      if (result.status === 'unknown') process.exitCode = 2;
     } catch (error) {
-      output({ status: 'blocked', error: String(error) }, false);
-      process.exitCode = 2;
+      run(() => {
+        throw error;
+      });
     }
   });
   configured(

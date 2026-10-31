@@ -43,7 +43,7 @@ Managed completion retains context, applicability, results and turns in its exis
 specialist receipts contain `head`, `status` (`completed` or `blocked`), `evidence`,
 `blockers`, `scope`, `checks`, `artifacts`, and `limitations`. Explain checks not run.
 Conductor records research-only confirmed skips with their reasons. Preserve old rounds and attempts.
-Use `pc workflow conductor recover` with the authoritative config to reconcile original receipts
+Use `pc workflow orchestrator recover <run>` with the authoritative config to reconcile original receipts
 and collect results; inspect that command's help for continuation options.
 
 For an explicit fresh round after a resolved failure, use
