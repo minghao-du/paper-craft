@@ -9,14 +9,14 @@ Read [the shared runtime and workflow contract](../lib/workflow.md) before using
 Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
 
 Topic-scoped strategy for EPIC-based multi-clone orchestration: program state, issue/PR triage, EPIC body composition, and the semantic judgment calls a topic-agnostic fleet scanner structurally cannot make (a model-semantics change landing mid-sweep, a deletion in one issue that a sibling issue's patch depends on).
-Fleet mechanics — clone/tmux inventory, staleness checks, spawning, pruning of clone-side artifacts — belong to `/pc-conductor`.
+Fleet mechanics — clone/tmux inventory, staleness checks, spawning, pruning of clone-side artifacts — belong to `/pc-orchestrator`.
 The two roles coordinate over `SendMessage` and a shared `.spawn-prompts/` directory (see Step 6); they do not need to be the same session, though they may run side-by-side in one tmux host.
 
 Use this at **session start** to establish topic context.
 Keep this role active through the shared workflow's **Active role handoff and wake-up** contract;
 finish every coordination turn by arming its native wake-up, or report manual continuation required.
-For fleet state (which clones are free, what's running where, tmux/host occupancy), ask `/pc-conductor` instead — this skill does not scan clones or tmux itself.
-It does *consume* a conductor-supplied occupancy table when the Step 2 handshake succeeds: Step 2 uses it to scope Group A's re-verification, and Step 6 uses it as a readiness filter.
+For fleet state (which clones are free, what's running where, tmux/host occupancy), ask `/pc-orchestrator` instead — this skill does not scan clones or tmux itself.
+It does *consume* a orchestrator-supplied occupancy table when the Step 2 handshake succeeds: Step 2 uses it to scope Group A's re-verification, and Step 6 uses it as a readiness filter.
 
 
 ## Managed automatic planning
@@ -25,7 +25,7 @@ It does *consume* a conductor-supplied occupancy table when the Step 2 handshake
 reads the Issue parent and starts the matching repository-scoped EPIC Agent in tmux.
 Return the requested JSON plan with original goal, constraints, task scopes, Worker briefs,
 dependencies and readiness. Keep existing tasks and delivery evidence in revised plans.
-Conductor allocates fresh configured worktrees and runs up to two independent ready
+Orchestrator allocates fresh configured worktrees and runs up to two independent ready
 Workers concurrently; it returns attributed results for your next professional assessment.
 Blocked dependencies or unknown checkout ownership hold dispatch with durable evidence.
 A delivered plan is stage delivery, not acceptance or permission to close the EPIC.
@@ -34,7 +34,7 @@ A delivered plan is stage delivery, not acceptance or permission to close the EP
 
 This skill is scoped to exactly one EPIC per session. `/pc-epic 369` means EPIC #369 and nothing else. If the invocation does not name an EPIC number, **ask which one before doing anything else** — do not infer it from the repo, the most recently updated EPIC, or what the fleet is running.
 
-- **A file collision is not EPIC membership.** Do not adopt an out-of-scope issue because it collides with an in-scope one; report the collision to the conductor and leave it.
+- **A file collision is not EPIC membership.** Do not adopt an out-of-scope issue because it collides with an in-scope one; report the collision to the orchestrator and leave it.
 - **Interesting is not in-scope.** A real defect belonging to another programme gets filed and parked, not pursued.
 - If work already in flight turns out to be outside the boundary, say so and hand it back; preserving WIP to a branch beats both discarding it and finishing it out of scope.
 
@@ -44,8 +44,8 @@ The epic session does strategy, not fleet ops:
 - Reads and interprets EPIC/issue/PR content on GitHub
 - Composes and prunes EPIC bodies
 - Flags dependency-direction conflicts and file-overlap collisions between open issues, before either gets spawned — by the time branches exist the cost of a collision is already sunk
-- Decides an issue is ready and drafts the spawn brief, but does not spawn it — that goes to `/pc-conductor` as intent, not action
-- Returns attributed planning, findings and substantive questions through the conductor,
+- Decides an issue is ready and drafts the spawn brief, but does not spawn it — that goes to `/pc-orchestrator` as intent, not action
+- Returns attributed planning, findings and substantive questions through the orchestrator,
   the primary user conversation. Preserve supporting evidence and professional judgment.
 - Never writes code, creates branches, or spawns tmux windows for numbered issues itself
 
@@ -56,7 +56,7 @@ The epic session does strategy, not fleet ops:
   Never bare `#N`.
 - First mention in bullet lists: full URL inline.
 
-Tmux window naming, reboot recovery, and the live-worker `SendMessage` mechanics are `/pc-conductor` concerns — see that skill's Conventions section.
+Tmux window naming, reboot recovery, and the live-worker `SendMessage` mechanics are `/pc-orchestrator` concerns — see that skill's Conventions section.
 
 ### Message economy
 
@@ -68,16 +68,16 @@ Cross-session messages are nudges, not transcripts: lead with the decision or th
 - **Run a skeptic subagent on your own artifacts**: before claiming a question answered, and before filing an issue you wrote yourself.
 - **Before repeating who found something**, check the attribution against the log or the PR; it is the part of a claim nobody tests.
 - **Before escalating a question to the user, ask whether its answers lead to different actions.** If they do not, do not escalate. If the options share a first step within the authorized scope, take that step now and ask only about the point where the actions diverge; keep work that depends on the answer pending.
-  Return a specific question with evidence to the conductor, park only the dependent item, and keep independent planning moving.
+  Return a specific question with evidence to the orchestrator, park only the dependent item, and keep independent planning moving.
 
 ## Configuration
 
-Reads `.epic-config.json` from the repo root — the same file `/pc-conductor` uses, so the two roles never disagree about where things live.
+Reads `.epic-config.json` from the repo root — the same file `/pc-orchestrator` uses, so the two roles never disagree about where things live.
 The epic role only needs two fields out of it:
 - **github_repo**: `org/repo` for `gh` commands
 - **clone_root**: to locate the shared `$CLONE_ROOT/.spawn-prompts/` directory (see below)
 
-**If the file does not exist**, don't create it here — run `/pc-conductor` first.
+**If the file does not exist**, don't create it here — run `/pc-orchestrator` first.
 It owns the clone/worktree layout questions (clone mode vs. worktree mode, clone names, shared filesystem) that the rest of the file's fields are about.
 
 ## Workflow
@@ -100,15 +100,15 @@ git ls-files | /usr/bin/grep -E '(CLAUDE|AGENTS)\.md$'
 
 Use `git ls-files`, not `find`: vendored copies and stale nested clones also contain files named `CLAUDE.md`. Before claiming a measured number is new, grep the experiment's own README for it.
 
-**Register this EPIC** using the shared workflow's **Multi-EPIC registration and scheduling** contract. Verify the assigned EPIC and refresh only `$CLONE_ROOT/.epic-sessions/<N>.json`; preserve other EPICs' records. Reconcile its active/paused state, pending findings and conductor decisions before planning. Finish with a verified registration or a specific identity/delivery blocker.
+**Register this EPIC** using the shared workflow's **Multi-EPIC registration and scheduling** contract. Verify the assigned EPIC and refresh only `$CLONE_ROOT/.epic-sessions/<N>.json`; preserve other EPICs' records. Reconcile its active/paused state, pending findings and orchestrator decisions before planning. Finish with a verified registration or a specific identity/delivery blocker.
 
 ### Step 2: Fan out scanners
 
-**Handshake with the conductor before dispatching Group A.**
+**Handshake with the orchestrator before dispatching Group A.**
 
-- Resolve `CLONE_ROOT`, read `$CLONE_ROOT/.conductor-session` for the conductor's self-registered address, and `SendMessage` it a request for its current slot→issue occupancy table (with each slot's **phase**) and its negative list (decisions already taken against an action — see `/pc-conductor`'s Step 5).
+- Resolve `CLONE_ROOT`, read `$CLONE_ROOT/.orchestrator-session` for the orchestrator's self-registered address, and `SendMessage` it a request for its current slot→issue occupancy table (with each slot's **phase**) and its negative list (decisions already taken against an action — see `/pc-orchestrator`'s Step 5).
 - **Scope**: Group A may skip its per-item `gh issue view` confirmation only for items on a slot in an in-progress phase (`coding`, `exploring`, `testing`, `awaiting-results`, `quality-gate`). Always confirm `completed`/`needs-human` slots and anything the table doesn't cover — a slot can finish and its issue close before the slot is cleaned up.
-- **Fallback**: if `.conductor-session` is absent or the send fails, dispatch Group A unscoped. Do not block waiting for a conductor that may never exist.
+- **Fallback**: if `.orchestrator-session` is absent or the send fails, dispatch Group A unscoped. Do not block waiting for a orchestrator that may never exist.
   Missing runtime messaging leaves occupancy unknown and blocks placement, not the independent issue analysis.
 
 This narrows Group A's redundant re-verification, not its judgment: occupancy and dependency reasoning are different questions.
@@ -132,11 +132,11 @@ Brief:
 > 1. `gh issue view <N> --json title,body,updatedAt`.
 > 2. Parse the Status dashboard and Key findings.
 >    (Older EPIC bodies may still carry a legacy clone-assignment table from before the fleet/topic split — that's fleet state that shouldn't have been authored here; note it as a `surprise` for cleanup, don't treat it as current truth.)
-> 3. For each open item the dashboard lists, run `gh issue view <child-N> --json state,stateReason` to confirm it is still open — **except** items the conductor's occupancy table shows holding a slot in an **in-progress** phase (`coding`, `exploring`, `testing`, `awaiting-results`, `quality-gate`). Still confirm for `completed`/`needs-human` slots, and for anything the table doesn't cover.
+> 3. For each open item the dashboard lists, run `gh issue view <child-N> --json state,stateReason` to confirm it is still open — **except** items the orchestrator's occupancy table shows holding a slot in an **in-progress** phase (`coding`, `exploring`, `testing`, `awaiting-results`, `quality-gate`). Still confirm for `completed`/`needs-human` slots, and for anything the table doesn't cover.
 >
 > Return under 400 words:
 > - `changes_since_baseline`: completed items, new findings, items newly opened
-> - `active_items`: open work with brief status (which clone is running it is `/pc-conductor`'s dashboard, not this report)
+> - `active_items`: open work with brief status (which clone is running it is `/pc-orchestrator`'s dashboard, not this report)
 > - `action_candidates`: items the EPIC marks ready but unassigned
 > - `surprises`: contradictions, legacy clone-assignment tables found in the body, `RECOMMEND DEEPER LOOK` flags
 
@@ -161,7 +161,7 @@ Brief:
 
 **Group B does not cover the backlog.** `--limit 20` reaches back only as far as the last 20 touched issues, a couple of days on an active repo. Coverage is Group A's job plus a periodic audit for issues no EPIC references (see `matsengrp/phyz`#2093); Group B only answers "what moved lately".
 
-**Resolve observable status yourself.** This EPIC supplies internal order and constraints; the conductor schedules shared resources under the user's priorities. Return unresolved substantive judgments and proposed priority changes through the conductor under the shared scheduling contract.
+**Resolve observable status yourself.** This EPIC supplies internal order and constraints; the orchestrator schedules shared resources under the user's priorities. Return unresolved substantive judgments and proposed priority changes through the orchestrator under the shared scheduling contract.
 
 ### Step 3: Reconcile
 
@@ -196,7 +196,7 @@ A distinct analysis from 4a: extract file paths from issue bodies and build an o
 Resolve paths against the actual repo before recording an overlap or its absence — a filename with no directory component is unresolved, and per-experiment `scripts/` copies share filenames. When naming a file in a brief or message, include the directory.
 
 **Scope:**
-- **4b covers filed issues only.** A live worker's branch is usually unpushed and lives in its clone, so report the verdict as "collisions among the filed issues" and hand live-branch intersection to the conductor, which runs `pc fleet collisions`.
+- **4b covers filed issues only.** A live worker's branch is usually unpushed and lives in its clone, so report the verdict as "collisions among the filed issues" and hand live-branch intersection to the orchestrator, which runs `pc fleet collisions`.
 - **Once a branch exists, its diff supersedes the issue body:** `git diff --name-only origin/main...<branch>`.
 - **Shared symbols:** an issue that edits a shared definition (a constant, a params list, a fixture path) has a footprint equal to its consumer set. Run `git grep -ln <SYMBOL> -- <subtree>`, report code hits and prose hits separately, with the commit, and tell the worker to re-run it at branch time. The grep does not see files that import the defining module without naming the symbol.
 - **Meaning collisions have no detector.** For any issue that regenerates or replaces a committed artifact, ask: does anything cite this artifact as evidence, and is its value that it is current or that it is the historical record of what a landed result was computed from?
@@ -207,7 +207,7 @@ Resolve paths against the actual repo before recording an overlap or its absence
 **Report a 4b finding in 4b's vocabulary.**
 A collision governs *sequencing*: "these two cannot be in flight at once."
 A dependency governs *eligibility*: "this one cannot start."
-Never hand a 4b finding to the conductor, or write one into a brief, as "queues behind" or "blocked on"; that is 4a's phrasing and it reads as ineligibility.
+Never hand a 4b finding to the orchestrator, or write one into a brief, as "queues behind" or "blocked on"; that is 4a's phrasing and it reads as ineligibility.
 
 ### Step 5: Prune and update the EPIC body
 
@@ -219,71 +219,71 @@ Do this whenever findings come in, items complete, or new work starts — not on
 **Before writing a correction, a retraction, or a unification of two findings**, apply the checks in `EVIDENCE-DISCIPLINE.md` ("Before writing a correction or a unification").
 
 **Identified work needs an issue number, or it is not tracked.**
-Every mechanism downstream keys on issue numbers: Group A resolves dashboard items with `gh issue view <N>`, spawn intent files are named `<N>.md`, the conductor maps slots to issues.
+Every mechanism downstream keys on issue numbers: Group A resolves dashboard items with `gh issue view <N>`, spawn intent files are named `<N>.md`, the orchestrator maps slots to issues.
 File it, and if that has to wait, put it in the Open work checklist as an explicit `**UNFILED**` bullet.
 
-**Type every collision claim as VERIFIED (resolved against a landed diff) or FORECAST (about where an unwritten edit will land) when you send it.** Same-file reasoning is a weak signal; the conductor can resolve it at spawn time.
+**Type every collision claim as VERIFIED (resolved against a landed diff) or FORECAST (about where an unwritten edit will land) when you send it.** Same-file reasoning is a weak signal; the orchestrator can resolve it at spawn time.
 
-**Re-derive any load-bearing number that arrived from a conductor, a worker, or your own earlier round, and quote the command.**
+**Re-derive any load-bearing number that arrived from a orchestrator, a worker, or your own earlier round, and quote the command.**
 
 **Fleet state is derived, never authored — don't let it back into the body.**
-Which clone holds which issue, which slots are free, which tmux windows are live: recompute this from `git`/`tmux`/`gh` (that's `/pc-conductor`'s Step 5 dashboard) whenever you need it, and never write it into an EPIC body or a continuation doc.
-The rule is about the claim, not the artifact: a present-continuous claim about what a slot, host, PR, or target is doing *right now* is fleet state, whoever it is addressed to. Ask the conductor or run the command — including when you are only reporting the state, not acting on it.
-Fleet *policy* (who lands PRs, whether CI exists, what a spawn prompt standardly instructs) is stable: ask the conductor once and keep it.
+Which clone holds which issue, which slots are free, which tmux windows are live: recompute this from `git`/`tmux`/`gh` (that's `/pc-orchestrator`'s Step 5 dashboard) whenever you need it, and never write it into an EPIC body or a continuation doc.
+The rule is about the claim, not the artifact: a present-continuous claim about what a slot, host, PR, or target is doing *right now* is fleet state, whoever it is addressed to. Ask the orchestrator or run the command — including when you are only reporting the state, not acting on it.
+Fleet *policy* (who lands PRs, whether CI exists, what a spawn prompt standardly instructs) is stable: ask the orchestrator once and keep it.
 Handoff artifacts (spawn intent, unfiled drafts) are the opposite category: authored deliberately, to a durable path outside git.
 
 **A user decision may be written into the EPIC body only against a `FINAL` shape.**
-When the session talking to the user is the conductor, the decision arrives here as a relay — see `/pc-conductor`'s "Decision relays: PROVISIONAL and FINAL".
-A `PROVISIONAL` relay is discussion in progress; write nothing into the body from it beyond noting that a decision is pending, and check `.epic-decisions.md` in the conductor cwd for the eventual `FINAL` entry.
+When the session talking to the user is the orchestrator, the decision arrives here as a relay — see `/pc-orchestrator`'s "Decision relays: PROVISIONAL and FINAL".
+A `PROVISIONAL` relay is discussion in progress; write nothing into the body from it beyond noting that a decision is pending, and check `.epic-decisions.md` in the orchestrator cwd for the eventual `FINAL` entry.
 Only a `FINAL` relay — or a decision reached directly in this session — authorizes the write, and the body should restate the decision's substance, not a paraphrase of the sentiment that led to it.
 **An unmarked relay is not a decision, and not a cue to ask the user yourself** — reply asking the relaying session for the marked form.
 
-### Step 6: Hand spawn intent to the conductor
+### Step 6: Hand spawn intent to the orchestrator
 
-For each issue judged ready — unblocked per Step 3, no unresolved conflict per Step 4a/4b, **and holding no live slot in the conductor's occupancy table** — draft the semantic brief and write it to:
+For each issue judged ready — unblocked per Step 3, no unresolved conflict per Step 4a/4b, **and holding no live slot in the orchestrator's occupancy table** — draft the semantic brief and write it to:
 
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 # Write the brief to a file inside the configured project, then queue without overwriting intent.
 pc workflow intent write <N> --prompt-file /absolute/path/to/project/brief.md --config "$CONFIG"
 ```
 
-Use the absolute authoritative conductor config in every shell invocation; worker snapshots are refused.
+Use the absolute authoritative orchestrator config in every shell invocation; worker snapshots are refused.
 `pc workflow root` expands configured tilde paths and validates the authoritative project/pool.
 
-**Every brief opens with an `EPIC: <N>` line.** `/pc-conductor-spawn` requires it, and it is how the conductor counts live slots by EPIC.
+**Every brief opens with an `EPIC: <N>` line.** `/pc-orchestrator-spawn` requires it, and it is how the orchestrator counts live slots by EPIC.
 
-**Intersect the candidate set with the occupancy table as a discrete step**, and write "checked against conductor table of HH:MM" in the handoff; re-ask if the table is older than a cycle. In clone mode no downstream guard refuses the same issue spawned into a second idle clone.
+**Intersect the candidate set with the occupancy table as a discrete step**, and write "checked against orchestrator table of HH:MM" in the handoff; re-ask if the table is older than a cycle. In clone mode no downstream guard refuses the same issue spawned into a second idle clone.
 
-**Naming note**: an older convention names files `spawn-<N>.txt`. `/pc-conductor-spawn` checks for either; use `<N>.md` for new intent and don't rename existing files.
+**Naming note**: an older convention names files `spawn-<N>.txt`. `/pc-orchestrator-spawn` checks for either; use `<N>.md` for new intent and don't rename existing files.
 
-This directory lives outside every clone's git and is the handoff point to `/pc-conductor-spawn`, which reads it, checks it against live fleet state, appends the fleet facts only it can see, and launches through the selected runner after the applicable authorization and occupancy gates.
+This directory lives outside every clone's git and is the handoff point to `/pc-orchestrator-spawn`, which reads it, checks it against live fleet state, appends the fleet facts only it can see, and launches through the selected runner after the applicable authorization and occupancy gates.
 Without verified startup, report prepared and keep intent queued.
 
 **What a brief contains:**
 
 - The reminder and resolved instruction paths required by [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch). Apply the same contract to delegated scans and specialist tasks.
-- **Scheduling constraints:** internal order, dependencies, readiness/holds and resource needs; the conductor combines these with user priorities under the shared scheduling contract.
+- **Scheduling constraints:** internal order, dependencies, readiness/holds and resource needs; the orchestrator combines these with user priorities under the shared scheduling contract.
 - **Only what the issue does not say.** Point at the issue's scope sections rather than restating them — open the issue before writing a brief, every time.
-- **Its own issue's footprint, and no parallel-safety verdict**: "this issue touches A, B, C; ask the conductor whether that intersects live work."
+- **Its own issue's footprint, and no parallel-safety verdict**: "this issue touches A, B, C; ask the orchestrator whether that intersects live work."
 - **Collision constraints in 4b's vocabulary** ("cannot run concurrently with `iN`, because both edit X"). Never another issue's gate, hold, or queue status.
 - **Only what has stopped moving.** If the motivation cites a result still in review, wait for the merge.
 - **The host class for anything with real compute**: "run the sweep on an orca, not on `pax`."
 - **Attributions you have checked yourself.** When briefing a subagent, separate a claim from its attribution; the subagent will re-emit your framing as a finding.
 
-**Do not spawn or touch tmux/clones yourself** — that's the conductor's job.
+**Do not spawn or touch tmux/clones yourself** — that's the orchestrator's job.
 
-**Check the conductor's self-registered address before announcing a handoff** — read
-`$CLONE_ROOT/.conductor-session` and use the selected runtime's supported messaging API.
+**Check the orchestrator's self-registered address before announcing a handoff** — read
+`$CLONE_ROOT/.orchestrator-session` and use the selected runtime's supported messaging API.
 
-- **Conductor addressable**: always send the queued issue/EPIC and absolute brief path to its
-  self-registered address. Report `queued; conductor handling unconfirmed` until its receipt
+- **Orchestrator addressable**: always send the queued issue/EPIC and absolute brief path to its
+  self-registered address. Report `queued; orchestrator handling unconfirmed` until its receipt
   or verified startup/consumption is observed. On wake, read the receipt and handle any topic
   blocker; acknowledgement alone needs no reply. Follow the shared wake-up contract before yielding.
-- **No conductor addressable**: retain queued intent and report delivery pending with the conductor continuation instruction. Resume through the conductor after its registration is verified.
+- **No orchestrator addressable**: retain queued intent and report delivery pending with the orchestrator continuation instruction. Resume through the orchestrator after its registration is verified.
 
-On subsequent wakes, retain the bound EPIC number and reconcile conductor receipts,
+On subsequent wakes, retain the bound EPIC number and reconcile orchestrator receipts,
 worker/PR transitions and the existing dashboard before filing follow-up issues. A timer
 continues this scoped session; it is not a fresh invocation with an unspecified EPIC.
 
@@ -299,23 +299,23 @@ Write your expectation down before the data exists; do not send it to the arm th
 
 ### Step 7: Correcting a live worker — the judgment half
 
-When a live worker's scope needs correcting *before* its next natural stopping point, the epic — not the conductor — makes the call: is this change durable (it changes what the worker will produce: scope, target, artifact, gate criterion) or transient (host load, a peer's timing, a dependency that just landed)?
+When a live worker's scope needs correcting *before* its next natural stopping point, the epic — not the orchestrator — makes the call: is this change durable (it changes what the worker will produce: scope, target, artifact, gate criterion) or transient (host load, a peer's timing, a dependency that just landed)?
 
-- **Durable**: draft the one-line correction and ask the conductor to deliver it — the conductor `SendMessage`s the worker directly and appends a timestamped, attributed entry to `.epic-worklog.md` in the same step (never edits `lead_guidance` — see `/pc-conductor`'s Conventions section).
-  Route it through the conductor even though `SendMessage` would reach the worker from here too: a single delivery path keeps the message and the worklog append from diverging.
-- **Transient**: message-only is fine; still routes through the conductor.
+- **Durable**: draft the one-line correction and ask the orchestrator to deliver it — the orchestrator `SendMessage`s the worker directly and appends a timestamped, attributed entry to `.epic-worklog.md` in the same step (never edits `lead_guidance` — see `/pc-orchestrator`'s Conventions section).
+  Route it through the orchestrator even though `SendMessage` would reach the worker from here too: a single delivery path keeps the message and the worklog append from diverging.
+- **Transient**: message-only is fine; still routes through the orchestrator.
 
-A worker correction is often more time-sensitive than spawn intent. If the conductor is addressable, `SendMessage` it directly to request immediate delivery.
+A worker correction is often more time-sensitive than spawn intent. If the orchestrator is addressable, `SendMessage` it directly to request immediate delivery.
 
-**Editing an issue a live worker holds is a Step 7 correction.** The worker read the issue once at spawn and will not re-read it, so the body edit is the record and the relayed delta is the delivery. Before editing an issue, ask the conductor whether a slot is live on it. If a worker reports something you already fixed, the relay did not happen: tell it, and check what else failed to reach it.
+**Editing an issue a live worker holds is a Step 7 correction.** The worker read the issue once at spawn and will not re-read it, so the body edit is the record and the relayed delta is the delivery. Before editing an issue, ask the orchestrator whether a slot is live on it. If a worker reports something you already fixed, the relay did not happen: tell it, and check what else failed to reach it.
 
-### Step 8: Confirm the PR head for the conductor
+### Step 8: Confirm the PR head for the orchestrator
 
 For every owned PR and every PR affecting this EPIC, including maintenance and docs, inspect scope and claims after
 applicable worker completion and review findings. Post a `🤖`-prefixed PR comment
 identifying this EPIC, full head SHA, judgment, evidence and any required revision.
 State that this is EPIC confirmation, distinct from code review and user merge approval.
-Notify the conductor with the comment pointer; it collects confirmations and asks the
+Notify the orchestrator with the comment pointer; it collects confirmations and asks the
 user. A changed head requires renewed applicable confirmation under the shared contract.
 Done when the current-head confirmation or specific blocker is durable and routed.
 
@@ -399,7 +399,7 @@ Key sections to maintain:
 
 - **No EPIC issues found**: Report and offer to create one
 - **gh not authenticated**: Suggest `gh auth login`
-- **`.epic-config.json` missing**: Run `/pc-conductor` first — it owns setup
+- **`.epic-config.json` missing**: Run `/pc-orchestrator` first — it owns setup
 
 ## Layout config (issue #149)
 
@@ -411,12 +411,12 @@ EPIC orchestration still reads `.epic-config.json` for now.
 
 Managed `pc workflow orchestrator issue` automatically lands delivered children and
 collects EPIC judgment against the original goal, acceptance evidence and blockers.
-Child Issue closure alone is insufficient. Conductor presents one EPIC closure
+Child Issue closure alone is insufficient. Orchestrator presents one EPIC closure
 request. Keep the EPIC open on silence or refusal. After the human explicitly
 confirms the target, record their exact words with
 `pc workflow orchestrator close-epic <number> --config <file> --repository <owner/name> --human-confirmation <text>`.
-Only the human-facing Conductor may supply that flag from actual human input;
+Only the human-facing Orchestrator may supply that flag from actual human input;
 Worker, EPIC and Landing output never counts as human confirmation. Confirmation
 continues closure and durable archival without further approval.
 
-Before final human EPIC closure, read [post-merge finalization](../pc-conductor/finalization.md). Confirm specialist applicability and reassess the original goal after verified receipts; managed closure enforces these gates.
+Before final human EPIC closure, read [post-merge finalization](../pc-orchestrator/finalization.md). Confirm specialist applicability and reassess the original goal after verified receipts; managed closure enforces these gates.

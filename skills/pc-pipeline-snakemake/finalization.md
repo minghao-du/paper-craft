@@ -1,6 +1,6 @@
 # EPIC finalization audit
 
-Use this branch when Conductor dispatches a post-merge EPIC audit; other creation,
+Use this branch when Orchestrator dispatches a post-merge EPIC audit; other creation,
 optimization and review uses retain their own workflow.
 
 1. Read the verified integrated SHA, actual per-PR changes, Worker results and evidence.
@@ -18,7 +18,7 @@ optimization and review uses retain their own workflow.
    **Done:** Required checks have commands and evidence, or blocking explanations of why
    they could not run. No full production DAG is required merely to check unrelated work.
 3. Return a structured receipt using the contract in
-   [Conductor finalization](../pc-conductor/finalization.md). Include evaluated PR/SHA
+   [Orchestrator finalization](../pc-orchestrator/finalization.md). Include evaluated PR/SHA
    identities, scope reasons, commands, artifacts, blocking defects, nonblocking advice
    and unperformed checks in the appropriate fields. Include the named code roots,
    affected directory/script mapping, callers and dependent stages in that scope

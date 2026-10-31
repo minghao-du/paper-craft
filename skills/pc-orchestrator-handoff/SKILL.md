@@ -1,11 +1,11 @@
 ---
-name: pc-conductor-handoff
-description: Report independent follow-up or successor work to the conductor for EPIC planning and scheduling
+name: pc-orchestrator-handoff
+description: Report independent follow-up or successor work to the orchestrator for EPIC planning and scheduling
 ---
 
-# /pc-conductor-handoff
+# /pc-orchestrator-handoff
 
-Workers use this skill to return independent work to the conductor. Task-local
+Workers use this skill to return independent work to the orchestrator. Task-local
 implementation, diagnostic, review and issue-lead helpers remain worker-controlled.
 Read [the shared workflow contract](../lib/workflow.md) for durable handoff evidence.
 
@@ -14,10 +14,10 @@ Read [the shared workflow contract](../lib/workflow.md) for durable handoff evid
 2. If a follow-up lacks an issue, use `/pc-issue-next` to file a scoped proposal;
    retain a draft when its direction still requires EPIC or user judgment. Record
    evidence, dependencies and the proposed owner without deciding another EPIC's scope.
-3. Append a successor request to the worklog and notify the registered conductor
-   with the issue/draft and absolute evidence pointers. The conductor obtains EPIC
+3. Append a successor request to the worklog and notify the registered orchestrator
+   with the issue/draft and absolute evidence pointers. The orchestrator obtains EPIC
    planning and allocates resources; the worker selects no slot and launches no successor.
-4. Record the request as pending until the conductor's durable receipt names the
+4. Record the request as pending until the orchestrator's durable receipt names the
    handling outcome. A sent message alone is not handoff completion. Preserve the
    current checkout until its explicit release and separately verified cleanup gates.
 

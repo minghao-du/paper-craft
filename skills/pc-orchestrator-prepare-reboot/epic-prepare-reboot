@@ -1,5 +1,5 @@
 #!/bin/sh
-helper="$(dirname "$0")/../pc-conductor-recover/epic-recover"
+helper="$(dirname "$0")/../pc-orchestrator-recover/epic-recover"
 case "${1-}" in
   --dry-run) shift; exec "$helper" status "$@" ;;
   '') exec "$helper" save ;;

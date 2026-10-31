@@ -353,15 +353,24 @@ describe('installed shared resources', () => {
       execFileSync('bash', [join(repo, 'scripts/link-skills.sh'), '--dest', dest], {
         encoding: 'utf8',
       });
+    mkdirSync(dest, { recursive: true });
+    const retired = 'pc-' + 'con' + 'ductor';
+    symlinkSync(join(repo, 'skills', retired), join(dest, retired));
     install();
     install();
+    expect(readdirSync(dest)).not.toContain(retired);
+    for (const suffix of ['', '-handoff', '-prepare-reboot', '-recover', '-spawn', '-tuckin']) {
+      const name = 'pc-orchestrator' + suffix;
+      expect(realpathSync(join(dest, name))).toBe(join(repo, 'skills', name));
+      expect(readFileSync(join(dest, name, 'SKILL.md'), 'utf8')).toContain('name: ' + name);
+    }
     expect(realpathSync(join(dest, 'lib', 'workflow.md'))).toBe(
       join(repo, 'skills/lib/workflow.md'),
     );
-    expect(readFileSync(join(dest, 'pc-conductor', 'SKILL.md'), 'utf8')).toContain(
+    expect(readFileSync(join(dest, 'pc-orchestrator', 'SKILL.md'), 'utf8')).toContain(
       '../lib/workflow.md',
     );
-    const linkedReference = resolve(join(dest, 'pc-conductor'), '../lib/workflow.md');
+    const linkedReference = resolve(join(dest, 'pc-orchestrator'), '../lib/workflow.md');
     expect(existsSync(linkedReference)).toBe(true);
   });
 

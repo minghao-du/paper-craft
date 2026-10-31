@@ -1,6 +1,6 @@
 # Subagent scan pattern for pc skills
 
-Many cold-start and poll skills (`/pc-ms`, `/pc-ms-poll`, `/pc-epic`, `/pc-conductor`, `/pc-ms-audit`) scan many independent sources — every tracked EPIC, every active clone, every recently merged PR. Reading those bodies directly into the primary agent burns context: a single `/pc-ms` invocation can spend 85K tokens loading EPIC bodies and PR descriptions that the primary doesn't need verbatim.
+Many cold-start and poll skills (`/pc-ms`, `/pc-ms-poll`, `/pc-epic`, `/pc-orchestrator`, `/pc-ms-audit`) scan many independent sources — every tracked EPIC, every active clone, every recently merged PR. Reading those bodies directly into the primary agent burns context: a single `/pc-ms` invocation can spend 85K tokens loading EPIC bodies and PR descriptions that the primary doesn't need verbatim.
 
 This file is the shared pattern for offloading that scan work to subagents. Reference it from a skill; do not restate its rules inline.
 

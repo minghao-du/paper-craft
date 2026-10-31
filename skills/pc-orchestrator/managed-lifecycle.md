@@ -16,7 +16,7 @@ Use `--replace` only when the provider independently verifies the prior Orchestr
 
 ## Concurrent Run ownership
 
-Use the Run-qualified Orchestrator identity and driver lock, never the legacy Fleet-wide conductor for a new Run. `dispatchStage` reserves the repository/Issue owner and physically canonical configured checkout before launch. A conflicting subject must use `referenceRunSubject` to record the consuming Run; that reference does not authorize another Worker. Distinct Fleets use the same atomic `.pc-execution-owner` marker in the physical checkout, so aliases cannot conceal another owner. Unknown or malformed ownership remains occupied.
+Use the Run-qualified Orchestrator identity and driver lock, never the legacy Fleet-wide orchestrator for a new Run. `dispatchStage` reserves the repository/Issue owner and physically canonical configured checkout before launch. A conflicting subject must use `referenceRunSubject` to record the consuming Run; that reference does not authorize another Worker. Distinct Fleets use the same atomic `.pc-execution-owner` marker in the physical checkout, so aliases cannot conceal another owner. Unknown or malformed ownership remains occupied.
 
 Inspect `subjects` and `resources` in the authoritative registry/read-only projection. Only `releaseRunCheckout` may release a checkout after independently verified termination of its recorded executions; completed output or an elapsed timeout is not termination. Failed launch reservations stay held for reconciliation. The marker can precede registry publication after an interrupted write; preserve it until ownership is independently reconciled rather than deleting it to retry.
 
@@ -24,7 +24,7 @@ Select `codex`, `agy`, or `claude` with `pc workflow orchestrator start <issue> 
 
 ## Child-only intake and overlapping Runs
 
-A child request authorizes only that Issue. Read native open dependencies and retain parent context; unresolved metadata or open blockers stops dispatch, without starting siblings or closing the parent. The compatible `conductor issue` entry and `driveEpicIssue` use this scoped delivery path.
+A child request authorizes only that Issue. Read native open dependencies and retain parent context; unresolved metadata or open blockers stops dispatch, without starting siblings or closing the parent. The compatible `orchestrator issue` entry and `driveEpicIssue` use this scoped delivery path.
 
 Before allocating each EPIC child, reference its repository/Issue subject in the Fleet registry. Existing ownership wins in either intake order. A child request against EPIC-owned work reconnects to that owner; resume the owning Run rather than dispatching another child driver. Provider conflict blocks reconnect and never switches the active provider. An EPIC consuming standalone delivery must obtain its own explicit professional acceptance against its objective and scoped brief before counting that result. Pending or rejected referenced delivery blocks that dependency, without inheriting parent-finalization authorization.
 

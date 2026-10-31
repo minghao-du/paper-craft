@@ -7,8 +7,8 @@ MVP decisions recorded and synthesized into the companion specification at the u
 - Preserve broad useful observation coverage with minimal depth in the first release, rather than limiting it to an intervention inbox.
 - Serve a single person initially, with local access and SSH tunneling for remote access; shared multi-user access is outside the initial scope.
 - A read-only dashboard may be a complete delivery. Control actions are a possible later direction, not a committed milestone; do not require their infrastructure in the initial design.
-- Initial features include overview and intervention items; Conductor, EPIC and Worker lists/details including tasks without an EPIC; checkout/Git/collision/hold evidence; terminal/runner/process evidence and collection diagnostics; GitHub Issue/PR/CI/review information; worklogs, search/filtering and changes observed after recording begins.
-- Aggregate multiple Fleets without changing the existing one-EPIC-agent-per-Conductor relationship. Preserve Project's existing meaning as a research project grouping related repositories.
+- Initial features include overview and intervention items; Orchestrator, EPIC and Worker lists/details including tasks without an EPIC; checkout/Git/collision/hold evidence; terminal/runner/process evidence and collection diagnostics; GitHub Issue/PR/CI/review information; worklogs, search/filtering and changes observed after recording begins.
+- Aggregate multiple Fleets without changing the existing one-EPIC-agent-per-Orchestrator relationship. Preserve Project's existing meaning as a research project grouping related repositories.
 - Existing records may not distinguish execution attempts. Display this uncertainty; do not require new Worker identity records or reconstruct unsupported execution history. Collector observations are not execution identities.
 - Include configured remote hosts and explicitly associated compute tasks. Do not discover task ownership by scanning arbitrary remote processes.
 - Register Fleets explicitly by authoritative configuration path and remember them. Project association is optional; retain invalid registrations with actionable diagnostics.
@@ -23,7 +23,7 @@ MVP decisions recorded and synthesized into the companion specification at the u
 - Organize the UI around a global overview, Fleet filtering and drill-down details. The overview highlights active work, blockers, intervention items and collection failures. Search/filtering spans registered Fleets and identifies each result's Fleet. No graph editor initially.
 - The first delivery is a simple MVP: preserve observation breadth with minimal depth. Use one overview and expandable details rather than six fully developed pages. Include Fleet registration/selection/aggregation, task tables, evidence and intervention items, Git/PR/CI/remote details, bounded logs, basic search/filtering and a recent-change list.
 - Exclude DAGs, historical replay, trend charts, push notifications, browser configuration editing and scheduling actions. Retain the 30-day observed-change history as a simple list.
-- Use React + Vite and a Hono local service. Share only the aggregation logic actually needed by CLI and Web, respecting the existing Core/host dependency direction. Use cached polling and local file-based change records. Do not add a database service, SSE, generic plugin framework, Command Gateway, ConductorBridge or control modules.
+- Use React + Vite and a Hono local service. Share only the aggregation logic actually needed by CLI and Web, respecting the existing Core/host dependency direction. Use cached polling and local file-based change records. Do not add a database service, SSE, generic plugin framework, Command Gateway, OrchestratorBridge or control modules.
 
 ## MVP acceptance
 

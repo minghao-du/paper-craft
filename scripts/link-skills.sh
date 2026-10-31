@@ -65,6 +65,17 @@ for DEST in "${DESTS[@]}"; do
 
   mkdir -p "$DEST"
 
+  # Remove retired links owned by this checkout, preserving other installations.
+  for target in "$DEST"/*; do
+    [ -L "$target" ] || continue
+    source="$(readlink "$target")"
+    case "$source" in
+      "$REPO"/skills/*)
+        [ -e "$source" ] || rm "$target"
+        ;;
+    esac
+  done
+
   for i in "${!names[@]}"; do
     name="${names[$i]}"
     src="${srcs[$i]}"

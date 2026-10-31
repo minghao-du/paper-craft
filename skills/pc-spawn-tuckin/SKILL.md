@@ -8,8 +8,8 @@ description: Persist a plain (non-EPIC) spawn session's state before context res
 Flush an assigned worker's state to durable storage before a context reset or session end.
 Run this when context is getting long or before stopping.
 
-This is the write-side counterpart to `/pc-spawn-resume` (which reads what this writes) and the single-slot, non-EPIC counterpart to `/pc-conductor-tuckin` (which persists the fleet's view across many slots).
-EPIC workers already have their own persistence built into `/pc-conductor-spawn`'s STOPPING POINTS protocol (`.epic-status.json` + `.epic-worklog.md` + issue-lead invocation) — if `.epic-status.json` exists in this worktree/clone, this is an EPIC slot: stop and use that protocol instead of this skill.
+This is the write-side counterpart to `/pc-spawn-resume` (which reads what this writes) and the single-slot, non-EPIC counterpart to `/pc-orchestrator-tuckin` (which persists the fleet's view across many slots).
+EPIC workers already have their own persistence built into `/pc-orchestrator-spawn`'s STOPPING POINTS protocol (`.epic-status.json` + `.epic-worklog.md` + issue-lead invocation) — if `.epic-status.json` exists in this worktree/clone, this is an EPIC slot: stop and use that protocol instead of this skill.
 
 ## Usage
 
@@ -17,18 +17,18 @@ EPIC workers already have their own persistence built into `/pc-conductor-spawn`
 /pc-spawn-tuckin
 ```
 
-Run from inside the slot's worktree/clone, on its branch. Before any mutation, verify current ownership under [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases). A worker that released its checkout records continuation through the conductor; it waits for verified transfer before committing, pushing or editing state. Persist coordinated task evidence under **Lifecycle recovery**, preserving all pending landing phases.
+Run from inside the slot's worktree/clone, on its branch. Before any mutation, verify current ownership under [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases). A worker that released its checkout records continuation through the orchestrator; it waits for verified transfer before committing, pushing or editing state. Persist coordinated task evidence under **Lifecycle recovery**, preserving all pending landing phases.
 
 ## Workflow
 
 ### Step 0: Confirm this isn't an EPIC slot
 
 ```bash
-test -f .epic-status.json && echo "EPIC slot — use pc-conductor-spawn's STOPPING POINTS protocol instead"
+test -f .epic-status.json && echo "EPIC slot — use pc-orchestrator-spawn's STOPPING POINTS protocol instead"
 ```
 
 If it exists, this is an EPIC slot.
-If a ralph-loop/issue-lead cycle is actually running, use pc-conductor-spawn's STOPPING POINTS protocol.
+If a ralph-loop/issue-lead cycle is actually running, use pc-orchestrator-spawn's STOPPING POINTS protocol.
 If you're just manually pausing a conversational EPIC slot (no active autonomous loop), the lightweight version is enough: update .epic-status.json/.epic-worklog.md in place and post the relevant PR/issue comments yourself — no need to spawn an issue-lead for a simple pause.
 
 ### Step 1: Commit local work
@@ -63,7 +63,7 @@ If a PR is open, make sure its body reflects where things actually stand right n
 Two cases:
 
 - **Session reached a real stopping point (done, or blocked on the user)** — rewrite the body to read as current state (premise, results, interpretation), not as a log of how it got there.
-  Same discipline as the quality-gate loop in `/pc-conductor-spawn`: no growing "History" section.
+  Same discipline as the quality-gate loop in `/pc-orchestrator-spawn`: no growing "History" section.
 - **Session is pausing mid-work, PR body would go stale if rewritten as "done"** — leave the body alone and instead add a PR comment describing what's done, what's left, and any open question, so `/pc-spawn-resume`'s "PR open" branch (which reads comments) picks it up.
   Don't describe unfinished work in body prose as if it were complete.
 

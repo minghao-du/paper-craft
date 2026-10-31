@@ -14,7 +14,7 @@ import {
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const helper = resolve('skills/pc-conductor-recover/scripts/tmux-recovery.ts');
+const helper = resolve('skills/pc-orchestrator-recover/scripts/tmux-recovery.ts');
 const plugins = join(homedir(), '.tmux/plugins');
 const skip =
   !existsSync(join(plugins, 'tmux-resurrect')) || !existsSync(join(plugins, 'tmux-continuum'))

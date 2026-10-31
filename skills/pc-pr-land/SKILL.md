@@ -1,12 +1,12 @@
 ---
 name: pc-pr-land
-description: Execute a conductor-dispatched PR merge or post-records preservation and cleanup.
+description: Execute a orchestrator-dispatched PR merge or post-records preservation and cleanup.
 ---
 
 # /pc-pr-land
 
 Read [the shared workflow contract](../lib/workflow.md), including **Checkout ownership and landing phases**, before mutation.
-The conductor dispatch names one phase: `merge` or `cleanup`, the repository/PR,
+The orchestrator dispatch names one phase: `merge` or `cleanup`, the repository/PR,
 full evaluated head, checkout, authoritative config and durable evidence paths.
 Workers remain available for remediation and final records while releasing checkout ownership.
 
@@ -19,7 +19,7 @@ The driver retains PR results and original execution receipts under configured r
 
 ## Merge phase
 
-1. **Accept ownership.** Read the conductor's transfer record and worker release.
+1. **Accept ownership.** Read the orchestrator's transfer record and worker release.
    Reconcile recorded ownership with supported runtime/process evidence, tmux pane paths
    and jobs using the directory. Unknown or overlapping ownership blocks mutation.
    Record acceptance in the coordination ledger and worker worklog.
@@ -29,7 +29,7 @@ The driver retains PR results and original execution receipts under configured r
    evaluated SHA, applicable completion/review outcomes and every required EPIC confirmation.
    Use `gh pr view <N> --json url,state,headRefOid,baseRefName,closingIssuesReferences`.
    Match repository, PR, local HEAD and live head to that SHA. Inspect `git status --porcelain`.
-   Dirty or untracked work requires worker accounting through the conductor; preserve it
+   Dirty or untracked work requires worker accounting through the orchestrator; preserve it
    in place rather than committing, moving or stashing it during landing.
    Missing/stale evidence or a closed PR blocks merge; an already merged PR moves to
    outcome reconciliation, never another merge attempt.
@@ -38,11 +38,11 @@ The driver retains PR results and original execution receipts under configured r
    A conflict stops the operation: report the precise blocker, preserve the worktree
    (including any rebase state), and release ownership before worker remediation.
    If a successful rebase changes HEAD, push with `--force-with-lease`, report the new
-   SHA and release. The conductor repeats applicable checks, EPIC confirmations and
+   SHA and release. The orchestrator repeats applicable checks, EPIC confirmations and
    professional confirmation before another merge dispatch.
    With unchanged HEAD, verify current-base ancestry and required checks using
    `gh pr checks <N> --required`; inspect installed `gh pr checks --help` for supported
-   output fields. Pending checks remain pending; failures return to the conductor.
+   output fields. Pending checks remain pending; failures return to the orchestrator.
    No configured required checks is acceptable only with the applicable local findings.
 
 4. **Merge the evaluated head.** Check GitHub's `closingIssuesReferences` against the
@@ -68,18 +68,18 @@ The driver retains PR results and original execution receipts under configured r
    reconciled against GitHub. A queued or auto-merge request is still pending; retain
    the checkout and revalidate evidence before reporting success. Report `merged; final records pending; cleanup pending`
    on success. Keep status, worklog, branch and directory intact, record release, and
-   return to the conductor. The worker next owns final evaluation and records.
+   return to the orchestrator. The worker next owns final evaluation and records.
 
 ## Cleanup phase
 
-Read this phase only after the conductor verifies merge success, final worker records
+Read this phase only after the orchestrator verifies merge success, final worker records
 and a new worker release. A merge result alone does not dispatch cleanup.
 
 1. **Verify prerequisites.** Accept exclusive checkout ownership using the shared transfer
    contract. Verify merged PR, all linked issues closed, terminal issue-lead comment and
    final worklog/status evidence. Account for follow-ups, local changes, unmerged commits,
    pending input, background jobs, external readers and holds. Missing records return to
-   the worker through the conductor; unknown occupancy leaves cleanup pending.
+   the worker through the orchestrator; unknown occupancy leaves cleanup pending.
    Run `pc fleet reclaim-check --dir <slot> --config <authoritative-config>` for fleet slots.
    It currently returns `eligible: false`, exit 2; retain the slot while that check cannot
    establish eligibility. Do not treat portable read-only checks as deletion authority.
@@ -106,18 +106,18 @@ and a new worker release. A merge result alone does not dispatch cleanup.
 
 4. **Record actual results.** Verify retained/deleted paths, local/remote branch state,
    primary synchronization and final checkout status. Report preservation and cleanup
-   independently from merge success. Release ownership and notify the conductor; only
+   independently from merge success. Release ownership and notify the orchestrator; only
    verified cleanup releases a fleet resource for another task.
 
 The managed `workflow orchestrator issue` and `land` paths continue after merge:
 Worker final assessment and records, verified task-Issue closure, Landing evidence,
-verified state archive and Git bundle, checkout release, then Conductor reporting.
+verified state archive and Git bundle, checkout release, then Orchestrator reporting.
 Unknown execution occupancy or unaccounted checkout files retain the checkout.
 A blocked completion resumes its persisted stages; inspect the original execution
 before retrying a missing receipt. EPIC closure remains a separate user decision.
 
 ## Managed completion
 
-For Run-owned work, use [the shared managed lifecycle](../pc-conductor/managed-lifecycle.md) for correlated results and acceptance. Receipt publication is not delivery acceptance and does not authorize another top-level dispatch or checkout reuse.
+For Run-owned work, use [the shared managed lifecycle](../pc-orchestrator/managed-lifecycle.md) for correlated results and acceptance. Receipt publication is not delivery acceptance and does not authorize another top-level dispatch or checkout reuse.
 
-Post-merge completion follows the [shared lifecycle](../pc-conductor/managed-lifecycle.md#post-merge-delivery): accept Worker final records and independently verified termination before preservation/cleanup. A merged PR remains pending delivery until the archive and actual resource release are verified.
+Post-merge completion follows the [shared lifecycle](../pc-orchestrator/managed-lifecycle.md#post-merge-delivery): accept Worker final records and independently verified termination before preservation/cleanup. A merged PR remains pending delivery until the archive and actual resource release are verified.

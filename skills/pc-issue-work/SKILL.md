@@ -129,7 +129,7 @@ Apply this protocol to local and remote computation, training, experiments and l
 5. Persist each check's result, estimate, next check time and rationale in
    `.epic-worklog.md` (or the standalone task's durable worklog). In fleet mode set
    `phase: awaiting-results` and populate `awaiting` using the
-   [status fields](../pc-conductor/SKILL.md#epic-statusjson-specification). Keep `started_at` as
+   [status fields](../pc-orchestrator/SKILL.md#epic-statusjson-specification). Keep `started_at` as
    the wait's original timestamp; `timeout_hours` measures that total wait, including
    queue time; keep this overall waiting bound separate from runtime estimates.
    Diagnose expiry; ordinary queueing does not consume the expected execution duration.
@@ -211,10 +211,10 @@ If the work involved experiments or benchmarks, include key results (tables, num
 Don't just point at branch files — the PR body is the permanent record.
 When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed (such as a preserved path or ephemeral directory) alongside their reproduction command, environment specifications, and reproduction duration or cost.
 
-### Step 8: Report to the conductor
+### Step 8: Report to the orchestrator
 
 Before execution, verify an explicit owning EPIC and its brief under the shared workflow contract.
-After creating the PR, report the full head SHA and current completion/check evidence to the Orchestrator for exact-head EPIC confirmation and automatic guarded PR-Land merge. Retain status and worklog; workers release ownership only through the landing handoff. Independent follow-up work uses `/pc-conductor-handoff`.
+After creating the PR, report the full head SHA and current completion/check evidence to the Orchestrator for exact-head EPIC confirmation and automatic guarded PR-Land merge. Retain status and worklog; workers release ownership only through the landing handoff. Independent follow-up work uses `/pc-orchestrator-handoff`.
 Provide a concise summary that highlights things the user needs to **judge**:
 
 - **Underlying bugs or tech debt** discovered during the work (even if worked around)
@@ -228,15 +228,15 @@ Either way, do not list follow-ups in this summary — the PR body is the source
 ### Step 9: Landing handoff and final records
 
 Follow [Checkout ownership and landing phases](../lib/workflow.md#checkout-ownership-and-landing-phases)
-when the conductor requests release. Stop edits, record explicit release and wait for
+when the orchestrator requests release. Stop edits, record explicit release and wait for
 ownership to return before remediation or final records. After verified merge, invoke
 `/pc-issue-lead` independently at the retained checkout for its full terminal protocol.
 Record the final assessment, follow-up outcomes and terminal comment path in the worklog;
-notify the conductor and release again for preservation/cleanup. Missing or failed
+notify the orchestrator and release again for preservation/cleanup. Missing or failed
 records remain pending and keep the checkout intact.
 
 ## Managed completion
 
-When dispatched inside a Run, publish correlated results through [the shared managed lifecycle](../pc-conductor/managed-lifecycle.md). Include immutable evidence and input revision; wait for acceptance or explicit correction feedback. Do not dispatch the next top-level role yourself.
+When dispatched inside a Run, publish correlated results through [the shared managed lifecycle](../pc-orchestrator/managed-lifecycle.md). Include immutable evidence and input revision; wait for acceptance or explicit correction feedback. Do not dispatch the next top-level role yourself.
 
-For child-only intake, retain parent constraints and verified open dependencies. Never start siblings or parent finalization. Follow the [shared overlap contract](../pc-conductor/managed-lifecycle.md#child-only-intake-and-overlapping-runs): reconnect to an existing execution owner and let consuming EPICs independently accept delivered evidence.
+For child-only intake, retain parent constraints and verified open dependencies. Never start siblings or parent finalization. Follow the [shared overlap contract](../pc-orchestrator/managed-lifecycle.md#child-only-intake-and-overlapping-runs): reconnect to an existing execution owner and let consuming EPICs independently accept delivered evidence.

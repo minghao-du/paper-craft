@@ -10,12 +10,12 @@ Pick up where the last session's `/pc-tuckin` left off, from the role-keyed prom
 
 ## Steps
 
-1. **Determine the role** from the explicit assignment or task markers; when native role registration is supported, cross-check its exact address (`ListAgents` in the Claude branch) against `$CLONE_ROOT/.epic-sessions/<N>.json` / `.conductor-session`.
-   Read `_ignore/CONTINUE-<role>.md` — for an epic, `_ignore/CONTINUE-epic-<N>.md`, keyed by EPIC number. For landing, read `CONTINUE-landing-<PR>.md` at the absolute path supplied by the conductor; reconcile its assignment before using the checkout.
+1. **Determine the role** from the explicit assignment or task markers; when native role registration is supported, cross-check its exact address (`ListAgents` in the Claude branch) against `$CLONE_ROOT/.epic-sessions/<N>.json` / `.orchestrator-session`.
+   Read `_ignore/CONTINUE-<role>.md` — for an epic, `_ignore/CONTINUE-epic-<N>.md`, keyed by EPIC number. For landing, read `CONTINUE-landing-<PR>.md` at the absolute path supplied by the orchestrator; reconcile its assignment before using the checkout.
    If several `CONTINUE-*.md` exist and the role or EPIC is unknown, list them and ask.
-   If none exists, say so and stop; if a marker file makes the type obvious, offer the matching cold-start instead (`/pc-ms`, `/pc-spawn-resume`, `/pc-conductor`, or `/pc-epic`).
+   If none exists, say so and stop; if a marker file makes the type obvious, offer the matching cold-start instead (`/pc-ms`, `/pc-spawn-resume`, `/pc-orchestrator`, or `/pc-epic`).
 2. **Report staleness**: the file's written-at stamp against `git log -1` and the newest PR/issue activity. If the world moved since it was written, the checks below matter more.
-3. **Reconcile lifecycle state** through [Lifecycle recovery](../lib/workflow.md#lifecycle-recovery) for conductor, EPIC and assigned worker/landing roles before dispatch or edits. A resumed conversation does not acquire a released checkout.
+3. **Reconcile lifecycle state** through [Lifecycle recovery](../lib/workflow.md#lifecycle-recovery) for orchestrator, EPIC and assigned worker/landing roles before dispatch or edits. A resumed conversation does not acquire a released checkout.
 
    **Follow the prompt**: `cd` where it says, invoke the named skill or read its text, register role addresses only when supported, and read the durable state it points at.
    Take that skill's orientation but not its "stop and ask what next": the file's in-flight items are the user's direction, written before the `/clear`.

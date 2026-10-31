@@ -15,9 +15,9 @@ The ideas, workflow design and orchestration patterns originate from Erick Matse
 | Manuscripts | `pc-ms`, `pc-ms-poll`, `pc-ms-sweep`, `pc-ms-audit` |
 | Literature and research | `pc-lit`, `pc-lit-import`, `pc-research-ideas`, `pc-research-plan`, `pc-research-state` |
 | Issues | `pc-issue-file`, `pc-issue-check`, `pc-issue-next`, `pc-issue-iterate` |
-| Agent orchestration | `pc-epic`, `pc-conductor`, `pc-conductor-spawn`, `pc-subagent` |
+| Agent orchestration | `pc-epic`, `pc-orchestrator`, `pc-orchestrator-spawn`, `pc-subagent` |
 | Review and landing | `pc-pr-check`, `pc-pr-review`, `pc-pr-land` |
-| Operations | `pc-dashboard`, `pc-scout`, `pc-compute-config`, `pc-conductor-recover` |
+| Operations | `pc-dashboard`, `pc-scout`, `pc-compute-config`, `pc-orchestrator-recover` |
 
 Skills remain English-only. See the [skill directory](skills/) for the complete execution guidance.
 

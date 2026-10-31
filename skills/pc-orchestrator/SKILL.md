@@ -1,14 +1,14 @@
 ---
-name: pc-conductor
-description: Fleet conductor cold-start dashboard — full scan of clones, tmux, and host state for EPIC-based multi-clone orchestration
+name: pc-orchestrator
+description: Fleet orchestrator cold-start dashboard — full scan of clones, tmux, and host state for EPIC-based multi-clone orchestration
 ---
 
-# /pc-conductor
+# /pc-orchestrator
 
 Read [the shared runtime and workflow contract](../lib/workflow.md) before using helper commands or runtime-specific tools.
 Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
 
-The conductor is the user's primary conversation and the top-level scheduler.
+The orchestrator is the user's primary conversation and the top-level scheduler.
 Managed Runs use [the managed lifecycle](managed-lifecycle.md) for role ownership, automatic guarded PR merge, and explicit final EPIC closure confirmation.
 Legacy execution follows its recorded scheduling and approval policy.
 Use this skill at cold start and every reconciliation to inventory clones, tmux and
@@ -27,13 +27,13 @@ not a live execution probe. The automatic dispatch loop is supplied by the subse
 
 ## Intake and planning
 
-1. Load the authoritative config and register this conductor's verified runtime address
-   in `$CLONE_ROOT/.conductor-session`; unavailable messaging uses durable files.
+1. Load the authoritative config and register this orchestrator's verified runtime address
+   in `$CLONE_ROOT/.orchestrator-session`; unavailable messaging uses durable files.
 2. Read the Issue's repository and EPIC parent. For standalone work, use
    `pc workflow orchestrator issue <number> --config <authoritative-config>` while the
-   managed Conductor is available. This command automatically resumes Conductor,
+   managed Orchestrator is available. This command automatically resumes Orchestrator,
    allocates a new configured local worktree, dispatches Worker stages and returns
-   their results until Conductor reports those stages delivered. Keep it running
+   their results until Orchestrator reports those stages delivered. Keep it running
    to drive the turns. Existing checkouts retain unknown ownership and are refused.
    It preserves each brief, receipt, result and attempt under the configured state
    directory; repeated completed intake does not replay execution. Worker briefs
@@ -44,7 +44,7 @@ not a live execution probe. The automatic dispatch loop is supplied by the subse
 
 3. Obtain each active EPIC's scoped task briefs, order, dependencies, readiness and blockers.
    Record user priorities and apply the shared scheduling contract to the measured resource
-   inventory below; dispatch eligible work with `/pc-conductor-spawn`.
+   inventory below; dispatch eligible work with `/pc-orchestrator-spawn`.
    A worker may delegate helpers within that task; independent work returns as intent.
 4. Collect completion and review findings and all required EPIC confirmations at the current PR head,
    then dispatch automatic guarded PR-Land merge under the shared managed lifecycle. Route
@@ -55,7 +55,7 @@ not a live execution probe. The automatic dispatch loop is supplied by the subse
 
 Relay domain findings and decisions through this conversation with expert attribution
 and supporting pointers. Route substantive conflicts to the owning EPIC and unresolved
-user judgments to the user; mechanical placement remains the conductor's responsibility.
+user judgments to the user; mechanical placement remains the orchestrator's responsibility.
 
 ## EPIC finalization
 
@@ -65,7 +65,7 @@ Verify actual closure before scheduling Pipeline applicability, Worker maintenan
 ## Conventions
 
 Use full issue/PR URLs on first mention and `iN`/`pN` thereafter. Worker tmux windows
-are named `NNN-slot`. The conductor stays on `main` and performs orchestration,
+are named `NNN-slot`. The orchestrator stays on `main` and performs orchestration,
 not implementation or completion assessment. Native messaging is optional: each role
 self-registers its own verified address and missing delivery leaves a durable pending
 handoff. Never guess a replacement session from a similar name.
@@ -74,14 +74,14 @@ Corrections that change worker scope or gates are appended to its worklog before
 notification. Preserve sender attribution; the issue-lead's `lead_guidance` is its own.
 Log decisions beside the authoritative config in append-only `.epic-decisions.md`.
 When paging the user, consolidate pending decisions, notify once, and keep independent
-work moving. For planned shutdown use `/pc-conductor-prepare-reboot` to verify pane identities and save immediately.
-Use `/pc-conductor-recover` for periodic tmux saves and workspace/conversation restoration, loading only the relevant runner reference.
+work moving. For planned shutdown use `/pc-orchestrator-prepare-reboot` to verify pane identities and save immediately.
+Use `/pc-orchestrator-recover` for periodic tmux saves and workspace/conversation restoration, loading only the relevant runner reference.
 Apply recovery setup to every independently configured tmux server.
 
 ## Configuration
 
-The conductor skill reads `.epic-config.json` from the repo root — the same file `/pc-epic` reads.
-This file is gitignored and must exist before either skill can operate; the conductor owns creating it.
+The orchestrator skill reads `.epic-config.json` from the repo root — the same file `/pc-epic` reads.
+This file is gitignored and must exist before either skill can operate; the orchestrator owns creating it.
 
 **Clone mode** (remote compute or pre-existing clones):
 ```json
@@ -90,7 +90,7 @@ This file is gitignored and must exist before either skill can operate; the cond
   "clone_names": ["alpha", "beta", "gamma"],
   "new_clone_names": ["delta", "epsilon", "zeta"],
   "github_repo": "org/repo",
-  "conductor": "alpha",
+  "orchestrator": "alpha",
   "max_lead_iterations": 8
 }
 ```
@@ -115,9 +115,9 @@ Fields:
 - **new_clone_names**: (clone mode only) Names available for creating new clones
 - **local_worktrees**: (worktree mode) If `true`, use `git worktree` for local slots named `issue-N`
 - **github_repo**: `org/repo` for `gh` commands
-- **conductor**: (clone mode only) Which clone is the orchestrator (stays on main)
+- **orchestrator**: (clone mode only) Which clone is the orchestrator (stays on main)
 - **max_lead_iterations**: Max issue-lead evaluations before escalating to `needs-human` (default: 8)
-- **shared_filesystem**: (optional, default `false`) Set to `true` when the conductor and all compute nodes share an NFS filesystem. This describes file visibility; `.paper-craft/compute.md` and its selected platform skill determine transfer and execution procedures, passed to workers by `/pc-conductor-spawn`.
+- **shared_filesystem**: (optional, default `false`) Set to `true` when the orchestrator and all compute nodes share an NFS filesystem. This describes file visibility; `.paper-craft/compute.md` and its selected platform skill determine transfer and execution procedures, passed to workers by `/pc-orchestrator-spawn`.
   Each machine sets this flag for itself.
 
 ## Workflow
@@ -133,21 +133,21 @@ cat .epic-config.json
 2. Where should slots live?
    (e.g. `~/re/pz-workers` for worktrees, or `~/re/pz` for clones)
 3. (Clone mode only) What are the clone directory names?
-   Which is the conductor?
+   Which is the orchestrator?
 4. What is the GitHub repo (`org/repo`)?
 5. Are compute nodes on a shared NFS filesystem?
    (sets `shared_filesystem`)
 
-**Note (worktree mode)**: The skill is run from the main repo itself, which acts as the conductor.
-There is no separate conductor clone — `clone_root` is just where worktrees are placed.
+**Note (worktree mode)**: The skill is run from the main repo itself, which acts as the orchestrator.
+There is no separate orchestrator clone — `clone_root` is just where worktrees are placed.
 
 Then create `.epic-config.json` with their answers and proceed.
 
 All subsequent steps use values from this config — never hardcode paths or clone names.
 
-**Self-register for completion pushes**: resolve `CLONE_ROOT` and write this session's own `ListAgents` name (the "This session is ..." row) as the sole line of `$CLONE_ROOT/.conductor-session`.
+**Self-register for completion pushes**: resolve `CLONE_ROOT` and write this session's own `ListAgents` name (the "This session is ..." row) as the sole line of `$CLONE_ROOT/.orchestrator-session`.
 
-**Read every tracked subdirectory `CLAUDE.md` or `AGENTS.md` in the project repo** — only the root one is auto-loaded, and the conductor reads artifacts by path from the root. Enumerate with `git ls-files | /usr/bin/grep -E '(CLAUDE|AGENTS)\.md$'`, not `find`.
+**Read every tracked subdirectory `CLAUDE.md` or `AGENTS.md` in the project repo** — only the root one is auto-loaded, and the orchestrator reads artifacts by path from the root. Enumerate with `git ls-files | /usr/bin/grep -E '(CLAUDE|AGENTS)\.md$'`, not `find`.
 
 ### Step 2: Pull main
 
@@ -164,23 +164,23 @@ Cold start only.
 `/pc-issue-file` moves a draft to `_ignore/` the moment it successfully files it, so anything still sitting loose as `ISSUE-*.md` directly in a clone root **is** unfiled (an `update` reuses the file in place, so a draft mid-revision on an existing issue is expected here too).
 
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 find "$CLONE_ROOT" -maxdepth 2 -name 'ISSUE-*.md' -not -path '*/_ignore/*'
 ```
 
-Use the absolute authoritative conductor config in every shell invocation; worker snapshots are refused.
+Use the absolute authoritative orchestrator config in every shell invocation; worker snapshots are refused.
 
 **Never auto-delete or auto-file these.** Flag what you found (path, clone, first line) so the user can decide.
 
-The conductor clone sits outside `clone_root`, so its own drafts (and the epic's) are not swept, deliberately: the epic owns its draft list and tells the conductor, and the conductor reports what it is told. Do not widen the `find`.
+The orchestrator clone sits outside `clone_root`, so its own drafts (and the epic's) are not swept, deliberately: the epic owns its draft list and tells the orchestrator, and the orchestrator reports what it is told. Do not widen the `find`.
 
 ### Step 4: Scan clones and tmux
 
-No subagent: this is a handful of shell calls, run from the conductor clone.
+No subagent: this is a handful of shell calls, run from the orchestrator clone.
 
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 pc fleet currency --config "$CONFIG" --fetch     # per slot: branch, dirty, relation, head
 pc fleet collisions --config "$CONFIG" --fetch   # conservative Git/file overlap; occupancy is separate
@@ -204,13 +204,13 @@ Also note phase migrations (`blocked`/`pr-review`), missing status files, and co
 
 **Hold a slot** when something outside it still depends on its contents: another live slot reads files inside the clone, or remote jobs run from it. Write the reason to `$CLONE_ROOT/.holds/<slot>` (`mkdir -p "$CLONE_ROOT/.holds" && echo "<reason>" > "$CLONE_ROOT/.holds/<slot>"`), and delete that file when the dependency ends. It lives outside the clone, so reclaim leaves it and a clean-tree check never sees it. While it exists, `pc fleet currency` reports `held: true` and spawn selection must skip it; a launcher cannot override the ownership requirement.
 
-**Clean is not current.** Run `pc fleet currency` from the conductor clone before every spawn. Use `--fetch` to refresh base refs in the conductor and slots; read the JSON `scope`, per-slot `relation`, `dirty` and `held` fields.
+**Clean is not current.** Run `pc fleet currency` from the orchestrator clone before every spawn. Use `--fetch` to refresh base refs in the orchestrator and slots; read the JSON `scope`, per-slot `relation`, `dirty` and `held` fields.
 Unmanaged directories are outside the configured denominator, and missing/unreadable slots remain unknown.
 Fast-forward a behind slot only after confirming exclusive ownership.
 
 A behind-count does not tell you whether a **finished result** is stale. For that, take the build commit recorded in the artifact and run the tree form: `git diff <build-commit> <tip> -- <source paths>`.
 
-If work will run on remote hosts, also check `/pc-scout` for host occupancy (live builds, warm caches, other sessions' remote jobs) — the annotation step in `/pc-conductor-spawn` depends on it.
+If work will run on remote hosts, also check `/pc-scout` for host occupancy (live builds, warm caches, other sessions' remote jobs) — the annotation step in `/pc-orchestrator-spawn` depends on it.
 
 ### Step 5: Build status display
 
@@ -235,7 +235,7 @@ EPIC #369: 5 slots    EPIC #402: 2 slots    unresolved legacy owner: 1 slot
 This is the one category of fleet fact nobody can re-derive from `git`/`tmux`/`gh`.
 Read `.epic-decisions.md` for prior entries and append any new one in the same step you surface it.
 
-**Not everything you know is a fleet fact.** Slot occupancy, host load, build state, file collisions, who landed what: fleet facts. A synthesis across arms, a prediction about what an arm will find, or a mechanism one arm inferred that another is independently testing: **never** goes in a prompt, a fleet-facts block, or a nudge. The epic decides what is embargoed; the conductor is the delivery path.
+**Not everything you know is a fleet fact.** Slot occupancy, host load, build state, file collisions, who landed what: fleet facts. A synthesis across arms, a prediction about what an arm will find, or a mechanism one arm inferred that another is independently testing: **never** goes in a prompt, a fleet-facts block, or a nudge. The epic decides what is embargoed; the orchestrator is the delivery path.
 
 ### Preflight, indexed by action
 
@@ -263,7 +263,7 @@ A README is a claim about what the data means: when a defect lands, `grep -rl` t
 ### Run `pc fleet collisions` before every spawn
 
 ```bash
-pc fleet collisions --config /absolute/path/to/conductor/.epic-config.json --fetch   # exit 0 = clear, 1 = found, 2 = could not check
+pc fleet collisions --config /absolute/path/to/orchestrator/.epic-config.json --fetch   # exit 0 = clear, 1 = found, 2 = could not check
 ```
 
 Both checks use the authoritative config and return JSON; read `scope` and the exit code directly, without a pipeline.
@@ -304,7 +304,7 @@ Verify the current evidence and release before dispatching each role:
 - Missing records, unknown occupancy, failed preservation or blocked reclaim → retain
   resources and report cleanup pending. A merged PR never makes its slot available.
 
-The conductor verifies recorded outcomes and schedules the next role; independent
+The orchestrator verifies recorded outcomes and schedules the next role; independent
 completion judgment stays with issue-lead. Inspect the landing skill for preservation
 and reclaim prerequisites rather than duplicating its cleanup procedure here.
 
@@ -321,11 +321,11 @@ If a worklog seems lost:
 
 **After reclaiming**, spawn pending intent:
 
-> "Pending intent: `i302` (retry logic) and `i315` (scoring refactor), 2 clones available. Spawning via `/pc-conductor-spawn`."
+> "Pending intent: `i302` (retry logic) and `i315` (scoring refactor), 2 clones available. Spawning via `/pc-orchestrator-spawn`."
 
 Keep it at that altitude: which intent is pending, which slots are free, any ordering constraint from the epic's Step 4b. If the user asks "why this one?", relay the owning EPIC's reasoning with attribution.
 
-Run `/pc-conductor-spawn` for checked tmux placement and the selected runner's supported invocation; retain its preflight and startup checks. Scout, place, spawn, and report after — the proposal is a report, not a gate.
+Run `/pc-orchestrator-spawn` for checked tmux placement and the selected runner's supported invocation; retain its preflight and startup checks. Scout, place, spawn, and report after — the proposal is a report, not a gate.
 Deciding *which other* open issues should be spawned isn't this skill's call — that's `/pc-epic`.
 
 - **Spawn ready, in-scope, unblocked briefs freely while capacity exists.** The gate is topic and objective, not count.
@@ -333,22 +333,22 @@ Deciding *which other* open issues should be spawned isn't this skill's call —
 - Match worker count to the shape of the work: one issue whose result informs the others → spawn it alone; N independent ready issues → spawn N.
 - **Before a spawn, and on every event that frees a slot, ask the epic: "what is the next thing that moves this EPIC's top line, and is this it?"** A brief's readiness was established when it was written. The epic answers; a stated hold is a complete answer.
 
-If a live worker's scope needs correcting before its next stopping point: the epic decides whether it's durable and drafts the line, and the conductor delivers it (see "Correcting a live worker").
+If a live worker's scope needs correcting before its next stopping point: the epic decides whether it's durable and drafts the line, and the orchestrator delivers it (see "Correcting a live worker").
 
 ### Step 7: Observe slots and arm the next reconciliation
 
 After the dashboard is built and spawns are confirmed, arrange observation of every slot's `.epic-status.json` and PR state.
 The portable CLI does not yet supply `pc fleet watch`; do not report a monitor as started merely because this step was reached.
 Until a supported monitor exists, re-run the scan and read status/worklog files at each reconciliation, recording observed transitions in `.epic-notifications.log` as timestamped JSONL.
-If using an available external watcher, keep exactly one per conductor and track its returned process/pane identity; stop only that identity, not a process-name pattern.
+If using an available external watcher, keep exactly one per orchestrator and track its returned process/pane identity; stop only that identity, not a process-name pattern.
 For NFS/sshfs use polling rather than relying on local filesystem events.
-The log survives watcher restarts and conductor compaction.
+The log survives watcher restarts and orchestrator compaction.
 
 A supported watcher must emit one event per phase transition (default filter: `needs-human`, `completed`, `awaiting-results`, `quality-gate`). A transition into a phase that is not one of the seven legal values always emits, so any phase filter must list legal phases.
 
 It is not liveness detection. It is silent when:
 - a slot never transitions — only the staleness checks in the spec below catch that;
-- a slot was already in its phase when the watcher first read it. Restarting the watcher re-baselines the whole fleet, so re-run `/pc-conductor` after a restart; a clone added to `clone_names` after launch is never enumerated;
+- a slot was already in its phase when the watcher first read it. Restarting the watcher re-baselines the whole fleet, so re-run `/pc-orchestrator` after a restart; a clone added to `clone_names` after launch is never enumerated;
 - **a slot lands**: file-only observation may miss the final phase or a later removal.
   Independently check `gh pr list --state merged`; observing PR state is required even when a status file is absent.
 
@@ -358,7 +358,7 @@ checks pending intent as well as slot/PR transitions, then runs Steps 4–6 as n
 Record and send each brief's handling receipt as specified there; preserve deferred intent.
 
 When a worker phase changes or its PR lands, react immediately: read current status and PR
-evidence, record the transition, refresh `$CLONE_ROOT/.conductor-session`, then notify the
+evidence, record the transition, refresh `$CLONE_ROOT/.orchestrator-session`, then notify the
 owning and relevant affected EPICs through keyed registrations with the issue, phase/PR
 outcome and evidence path. Include `quality-gate`
 and `awaiting-results`, not just terminal phases. Missing messaging leaves the durable
@@ -395,7 +395,7 @@ When inspecting slot occupancy or liveness, read [the process inspection procedu
 }
 ```
 
-- Must be `.gitignored`, along with `.epic-worklog.md`, `.epic-decisions.md`, and `.epic-notifications.log`. Any file this skill writes to the **conductor cwd** needs a `.gitignore` entry in the consuming repo; files at `$CLONE_ROOT` (`.epic-sessions/`, `.conductor-session`, `.spawn-prompts/`, `.preserved/`) do not, since that path is outside every clone's git tree.
+- Must be `.gitignored`, along with `.epic-worklog.md`, `.epic-decisions.md`, and `.epic-notifications.log`. Any file this skill writes to the **orchestrator cwd** needs a `.gitignore` entry in the consuming repo; files at `$CLONE_ROOT` (`.epic-sessions/`, `.orchestrator-session`, `.spawn-prompts/`, `.preserved/`) do not, since that path is outside every clone's git tree.
 - **Staleness checks:**
   - *No tmux window, status file older than 30 minutes* → suspected abandoned slot, a recovery candidate (Step 6); occupancy stays unknown until verified.
   - *Window blocked on a permission modal* → frozen and potentially unable to receive messages.
@@ -464,6 +464,6 @@ For managed execution, public runtime `waitAttempt` records bounded wait timeout
 
 ## Subject-scoped Run intake
 
-For a requested Issue/EPIC, use `pc workflow orchestrator start <issue> --provider <codex|agy|claude> --config <authoritative-config>`. Inspect with `pc workflow orchestrator status --config <authoritative-config>`. Intake is complete when the registry links the requested subject, fixed provider, immutable brief and acknowledged Orchestrator attempt. A reserved or blocked Run is pending, not a successful startup. Repeated intake reconnects it; never remove reservations to force a replacement. Each Run has its own Orchestrator reservation; unrelated Runs may progress concurrently. Shared physical checkout ownership remains exclusive. Existing `workflow conductor` operations remain available for legacy callers; missing legacy Run identity stays unknown. The shared launch/evidence contract is implemented by Managed Runtime; role procedures must not infer acceptance from tmux presence.
+For a requested Issue/EPIC, use `pc workflow orchestrator start <issue> --provider <codex|agy|claude> --config <authoritative-config>`. Inspect with `pc workflow orchestrator status --config <authoritative-config>`. Intake is complete when the registry links the requested subject, fixed provider, immutable brief and acknowledged Orchestrator attempt. A reserved or blocked Run is pending, not a successful startup. Repeated intake reconnects it; never remove reservations to force a replacement. Each Run has its own Orchestrator reservation; unrelated Runs may progress concurrently. Shared physical checkout ownership remains exclusive. Existing `workflow orchestrator` operations remain available for legacy callers; missing legacy Run identity stays unknown. The shared launch/evidence contract is implemented by Managed Runtime; role procedures must not infer acceptance from tmux presence.
 
 For stage dispatch, durable reporting and acceptance, follow [the shared managed lifecycle](managed-lifecycle.md). A reported result is pending until independently accepted; only accepted prerequisites permit dependent dispatch.

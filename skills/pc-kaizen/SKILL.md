@@ -82,7 +82,7 @@ Then state one of these explicitly in your proposal:
 Then list **every other file that restates the rule**, and update all of them or say why not. A fix that lands in one of two copies is worse than no fix: the un-updated copy is now authoritative-looking and stale.
 
 A failure this exists to prevent, measured 2026-09-01:
-- A generalized gitignore rule in `pc-conductor` never reached the concrete checklist in `pc-conductor-spawn`, so the checklist kept omitting a file that "has bitten a real fleet twice".
+- A generalized gitignore rule in `pc-orchestrator` never reached the concrete checklist in `pc-orchestrator-spawn`, so the checklist kept omitting a file that "has bitten a real fleet twice".
 
 **Budget discipline.** If you are adding a rule and deleting nothing, the question is not how many lines — it is **what does this supersede?** Answer it in the proposal, or say explicitly that nothing does and why the fact is new. That question, not any ratio, is what catches a rule being re-litigated in a second file.
 
@@ -183,7 +183,7 @@ gh pr create --title "kaizen: <description>" --body "..."
 - **Respect existing structure**: Follow the conventions already in CLAUDE.md and skill files
 - **Paper-craft repo awareness**: Skills live in `skills/` under the resolved `PAPER_CRAFT_ROOT`.
   The repo is `minghao-du/paper-craft` on GitHub
-- **Spend emphasis like it is scarce, because it is.** <!-- emphasis-budget-exempt --> ⭐ ⛔ ⚠ ➡ and ALL-CAPS BOLD are a shared budget across the file, not a per-paragraph decision. **The mechanism a budget only caps: each kaizen reaches for a louder marker than the last one it sees, so the escalation is driven by the file's current state rather than by the new passage's importance — which is why it compounds and why no author notices their own step.** The numbers: `skills/pc-conductor/SKILL.md` carried **0** such markers on 2026-09-05, 13 on 09-14, 148 on 09-18, and 214 on 09-20 — one per 5.7 lines — while the file grew 2.1x in lines over the same window. `EVIDENCE-DISCIPLINE.md` went 0 → 201 across those same two dates. A marker every few lines marks nothing. Before adding one, count what is already there and decide whether your passage outranks them:
+- **Spend emphasis like it is scarce, because it is.** <!-- emphasis-budget-exempt --> ⭐ ⛔ ⚠ ➡ and ALL-CAPS BOLD are a shared budget across the file, not a per-paragraph decision. **The mechanism a budget only caps: each kaizen reaches for a louder marker than the last one it sees, so the escalation is driven by the file's current state rather than by the new passage's importance — which is why it compounds and why no author notices their own step.** The numbers: `skills/pc-orchestrator/SKILL.md` carried **0** such markers on 2026-09-05, 13 on 09-14, 148 on 09-18, and 214 on 09-20 — one per 5.7 lines — while the file grew 2.1x in lines over the same window. `EVIDENCE-DISCIPLINE.md` went 0 → 201 across those same two dates. A marker every few lines marks nothing. Before adding one, count what is already there and decide whether your passage outranks them:
 
   ```bash
   # Skips this rule's own glyphs, which are mentions, not uses. <!-- emphasis-budget-exempt -->

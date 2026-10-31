@@ -8,7 +8,7 @@ description: Persist topic-side EPIC state before context reset
 Flush topic state — EPIC bodies, findings, decisions — to durable storage before a context reset or session end.
 Run this when context is getting long or before stopping.
 
-Fleet-side state (clone/slot status, `.epic-status.json`, pending spawn intent) is `/pc-conductor-tuckin`'s job, not this skill's — run that separately if the conductor session is also resetting.
+Fleet-side state (clone/slot status, `.epic-status.json`, pending spawn intent) is `/pc-orchestrator-tuckin`'s job, not this skill's — run that separately if the orchestrator session is also resetting.
 
 ## Usage
 
@@ -61,7 +61,7 @@ Only what survives both gates gets a destination:
 Its path, its under-a-page shape, and the rule that every action item carries its falsifier inline are [the continuation contract](../lib/continuation.md); the next session loads it with `/pc-continue`.
 On top of that, the EPIC prompt adds the `/pc-epic <N>` invocation, a one-line pointer to `CONTINUATION-<N>.md` (the long file above), and **the two or three traps that would cost the most if rediscovered** — put those in the prompt itself, not only in the file, since they are what a fresh session gets wrong before it has read anything.
 
-Retain the current-head EPIC confirmation pointer and pending conductor receipts under the shared **Lifecycle recovery** contract. EPIC confirmation and explicit user approval remain separate evidence.
+Retain the current-head EPIC confirmation pointer and pending orchestrator receipts under the shared **Lifecycle recovery** contract. EPIC confirmation and explicit user approval remain separate evidence.
 
 ### Step 3: Report
 
@@ -75,5 +75,5 @@ Print a summary:
 - Continuation: CONTINUATION-<N>.md (long) + _ignore/CONTINUE-epic-<N>.md (prompt) written; prompt printed below
 
 Safe to reset context. Fleet-side state (clones, slots) is unaffected
-by this — run /pc-conductor-tuckin if that session is resetting too.
+by this — run /pc-orchestrator-tuckin if that session is resetting too.
 ```
