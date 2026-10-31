@@ -171,8 +171,6 @@ export async function startRun(
         throw new Error('Existing Run provider or scope conflict');
       return existing;
     }
-    if (inspectConductor(config))
-      throw new Error('Fleet occupied; inspect existing Run or legacy Conductor before intake');
     const id = randomUUID();
     const directory = join(home(config), 'runs', id);
     mkdirSync(directory, { recursive: true });
@@ -886,7 +884,7 @@ export function subjectOrchestrator(
         r.subject.number === number &&
         r.lifecycle !== 'completed'),
   );
-  return run ? run.orchestrator : inspectConductor(config);
+  return run?.orchestrator;
 }
 /** Record a consuming Run reference without granting another execution owner. */
 export function referenceRunSubject(config: FleetConfig, runId: string, subject: string): string {

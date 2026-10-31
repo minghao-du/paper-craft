@@ -20,12 +20,7 @@ import {
   writeIntent,
 } from '@paper-craft/core/workflow/handoff';
 import { checkFleet, checkReclaim } from '@paper-craft/core/workflow/fleet';
-import {
-  CodexRunner,
-  managedRunner,
-  inspectConductor,
-  startConductor,
-} from '@paper-craft/core/workflow/runtime';
+import { CodexRunner, managedRunner } from '@paper-craft/core/workflow/runtime';
 import { driveEpic, inspectEpicRun } from '@paper-craft/core/workflow/epic-driver';
 import { driveIssue, readIssue } from '@paper-craft/core/workflow/issue-driver';
 import { GitHubPullRequests } from '@paper-craft/core/workflow/pr-driver';
@@ -177,37 +172,6 @@ export function registerWorkflowCommands(program: Command, opts: { human: () => 
       process.exitCode = 2;
     }
   });
-  configured(
-    conductor.command('status').description('Read durable Conductor identity and occupancy'),
-  ).action((options: Options) =>
-    run(() => {
-      output(
-        inspectConductor(loadFleetConfig(options.config)) ?? { status: 'absent' },
-        opts.human(),
-      );
-    }),
-  );
-  configured(
-    conductor
-      .command('start')
-      .description('Launch Codex in tmux; require actual Runner acknowledgement'),
-  )
-    .requiredOption('--prompt-file <file>', 'UTF-8 Conductor instructions')
-    .action(async (options: Options & { promptFile: string }) => {
-      try {
-        const result = await startConductor(
-          loadFleetConfig(options.config),
-          new CodexRunner(),
-          readFileSync(options.promptFile, 'utf8'),
-        );
-        output(result, opts.human());
-        if (result.status !== 'running') process.exitCode = 2;
-      } catch (error) {
-        run(() => {
-          throw error;
-        });
-      }
-    });
   configured(
     conductor
       .command('finalize-epic <number>')

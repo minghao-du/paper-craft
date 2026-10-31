@@ -32,10 +32,10 @@ test('startup requires runner evidence and isolates fleets, retaining a failed b
     },
   };
   try {
-    const first = await startConductor(a, runner, 'read AGENTS.md');
+    const first = await startConductor(a, runner, 'read AGENTS.md', 'run-a');
     expect(first.status).toBe('running');
-    expect(inspectConductor(a)?.conversation).toBe(first.id);
-    await expect(startConductor(a, runner, 'duplicate')).rejects.toThrow(/occupied/);
+    expect(inspectConductor(a, 'run-a')?.conversation).toBe(first.id);
+    await expect(startConductor(a, runner, 'duplicate', 'run-a')).rejects.toThrow(/occupied/);
     const failed = await startConductor(
       b,
       {
@@ -45,9 +45,10 @@ test('startup requires runner evidence and isolates fleets, retaining a failed b
         },
       },
       'keep this brief',
+      'run-b',
     );
     expect(failed.status).toBe('unknown');
-    expect(inspectConductor(b)).toMatchObject({
+    expect(inspectConductor(b, 'run-b')).toMatchObject({
       brief: 'keep this brief',
       error: 'no runner acknowledgement',
     });
@@ -77,10 +78,12 @@ test('missing capabilities refuse launch; an empty receipt cannot report success
     },
   };
   try {
-    await expect(startConductor(config, runner, 'brief')).rejects.toThrow(
+    // @ts-expect-error Exercise the JavaScript boundary without a Run id.
+    await expect(startConductor(config, runner, 'brief')).rejects.toThrow('Run id');
+    await expect(startConductor(config, runner, 'brief', 'run-a')).rejects.toThrow(
       'missing input capability',
     );
-    expect(inspectConductor(config)).toBeUndefined();
+    expect(inspectConductor(config, 'run-a')).toBeUndefined();
     const result = await startConductor(
       config,
       {
@@ -91,6 +94,7 @@ test('missing capabilities refuse launch; an empty receipt cannot report success
         },
       },
       'retained',
+      'run-a',
     );
     expect(result).toMatchObject({ status: 'unknown', brief: 'retained' });
     expect(result.error).toContain('startup evidence');

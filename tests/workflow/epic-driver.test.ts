@@ -1,9 +1,14 @@
+import {
+  startRun,
+  referenceRunSubject,
+  inspectRuns,
+} from '../../packages/core/src/workflow/run-driver.js';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { test, expect } from 'vitest';
-import { startConductor, type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
+import { type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
 import { driveEpic } from '../../packages/core/src/workflow/epic-driver.js';
 
 test('EPIC planning dispatches independent work concurrently, then dependencies, with attributed feedback', async () => {
@@ -11,6 +16,7 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
   mkdirSync(join(project, 'pool'));
   const git = (...args: string[]) => execFileSync('git', args, { cwd: project });
   git('init', '-q');
+  writeFileSync(join(project, '.git', 'info', 'exclude'), '.pc-execution-owner\n');
   git(
     '-c',
     'user.name=Test',
@@ -54,10 +60,17 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
     },
   ];
   const runner = {
-    name: 'controlled',
+    name: 'codex',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start(a: ManagedAttempt) {
-      return { conversation: a.conversation ?? a.id, address: 'tmux:test', evidence: 'received' };
+      return {
+        conversation: a.role === 'epic' ? 'epic-session' : (a.conversation ?? a.id),
+        address: 'tmux:test',
+        evidence: 'received',
+      };
     },
     async collect(a: ManagedAttempt) {
       if (a.role === 'epic') {
@@ -82,7 +95,7 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
         }
         if (n !== 9) {
           writeFileSync(join(a.checkout, `api-${n}`), `API ${n}`);
-          execFileSync('git', ['add', '.'], { cwd: a.checkout });
+          execFileSync('git', ['add', `api-${n}`], { cwd: a.checkout });
           execFileSync(
             'git',
             [
@@ -98,13 +111,23 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
           );
         }
         delivered.push(n);
-        return `result ${n}`;
+        return JSON.stringify({
+          status: 'completed',
+          repository: 'owner/repo',
+          issue: n,
+          evidence: `result ${n}`,
+        });
       }
       return 'feedback received';
     },
   };
   try {
-    await startConductor(config, runner, 'coordinate');
+    await startRun(
+      config,
+      runner,
+      { repository: 'owner/repo', number: 35, kind: 'epic', title: 'goal', body: 'deliver all' },
+      'codex',
+    );
     await expect(
       driveEpic(
         config,
@@ -128,6 +151,7 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
       run.turns.filter((t) => t.role === 'worker').every((t) => t.brief.includes('AGENTS.md')),
     ).toBe(true);
     epicConversation = undefined;
+    referenceRunSubject(config, inspectRuns(config).runs[0].id, 'owner/other#36');
     await expect(
       driveEpic(
         config,
@@ -166,11 +190,18 @@ test('blocked EPIC work retains scope without dispatch and separates repository 
   };
   const started: ManagedAttempt[] = [];
   const runner = {
-    name: 'controlled',
+    name: 'codex',
+    async stopped() {
+      return true;
+    },
     async preflight() {},
     async start(a: ManagedAttempt) {
       started.push(a);
-      return { conversation: a.conversation ?? a.id, address: 'tmux:test', evidence: 'received' };
+      return {
+        conversation: a.role === 'epic' ? 'epic-session' : (a.conversation ?? a.id),
+        address: 'tmux:test',
+        evidence: 'received',
+      };
     },
     async collect(a: ManagedAttempt) {
       return a.role === 'epic'
@@ -192,7 +223,12 @@ test('blocked EPIC work retains scope without dispatch and separates repository 
     },
   };
   try {
-    await startConductor(config, runner, 'coordinate');
+    await startRun(
+      config,
+      runner,
+      { repository: 'owner/one', number: 35, kind: 'epic', title: 'goal', body: 'goal' },
+      'codex',
+    );
     const epic = { repository: 'owner/one', number: 35, title: 'goal', body: 'goal' };
     await expect(driveEpic(config, runner, epic)).rejects.toThrow('readiness blockers');
     expect(started.filter((t) => t.role === 'worker')).toHaveLength(0);
