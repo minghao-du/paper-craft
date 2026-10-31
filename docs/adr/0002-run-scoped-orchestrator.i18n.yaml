@@ -1,0 +1,18 @@
+/run-scoped-orchestrator-replaces-conductor:
+  en: 92bbef242d8c4f84
+  zh: 7b92993846a90ccc
+/run-scoped-orchestrator-replaces-conductor/authority:
+  en: b99962f34e5d6cb3
+  zh: dfcd1b759ba6387d
+/run-scoped-orchestrator-replaces-conductor/hard-cut:
+  en: 1be183ef9702d8ce
+  zh: 280426dd4ca7613f
+/run-scoped-orchestrator-replaces-conductor/rejected-alternatives:
+  en: 6d7769f2f070271a
+  zh: 3dce3e0f8c8a9fb1
+/run-scoped-orchestrator-replaces-conductor/vocabulary-guard:
+  en: 005355275d254465
+  zh: 724cc8e69e019014
+/run-scoped-orchestrator-replaces-conductor/operator-cutover-checklist:
+  en: 0c4994e0b318a8a9
+  zh: d6f3e798a2a86fac
