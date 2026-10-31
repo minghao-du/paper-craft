@@ -22,7 +22,7 @@ Preserve the agreed breadth with minimal depth: no six-page management console, 
 6. As a sole operator, I want to inspect multiple Fleets together or select one, so that I can move between a global view and focused investigation.
 7. As a sole operator, I want every result to identify its Fleet and any known Project association, so that similarly named tasks are not confused.
 8. As a sole operator, I want Fleets without a Project association to work, so that research metadata is not a prerequisite for monitoring.
-9. As a sole operator, I want an overview of Conductor, EPIC Agent and Worker evidence, so that I can see who is associated with current work.
+9. As a sole operator, I want an overview of Orchestrator, EPIC Agent and Worker evidence, so that I can see who is associated with current work.
 10. As a sole operator, I want tasks without an EPIC displayed, so that directly requested work remains visible.
 11. As a sole operator, I want task phase, summary, blockers and next required decisions together, so that I can identify intervention needs.
 12. As a sole operator, I want work stage, runtime evidence and ownership constraints distinguished, so that a stopped process is not mistaken for a reusable slot.
@@ -57,7 +57,7 @@ Preserve the agreed breadth with minimal depth: no six-page management console, 
 ## Implementation Decisions
 
 - **Product boundary:** one overview with Fleet filtering and expandable details; basic tables, search/filtering and a recent-change list. Keep broad observation coverage with minimal presentation depth.
-- **Domain language:** Project retains its existing meaning as a research project grouping related repositories. Fleet is an independently configured workflow unit containing a Conductor, its configured EPIC Agent and a working-directory pool. Do not expand the existing one-EPIC-agent-per-Conductor relationship; user-originated work can lack an EPIC.
+- **Domain language:** Project retains its existing meaning as a research project grouping related repositories. Fleet is an independently configured workflow unit containing a Orchestrator, its configured EPIC Agent and a working-directory pool. Do not expand the existing one-EPIC-agent-per-Orchestrator relationship; user-originated work can lack an EPIC.
 - **Architecture:** React + Vite front end and a Hono local service in the existing TypeScript workspace. CLI and server depend on Core's public interfaces; Core does not depend on React, Hono or concrete Runner integrations. Extract only aggregation logic actually shared by CLI and Web, rather than building a general monitoring framework.
 - **Entry points:** provide the locally launched Dashboard command and a JSON status command using the same aggregation semantics. Launch the browser using startup access protection. The service keeps collecting until explicitly stopped, with no default boot startup.
 - **Registration:** persist explicit authoritative configuration registrations in pc-owned local configuration/data storage. Project association is optional. Reuse existing authoritative configuration resolution and physical-path checks; reject Worker-local snapshots as authority. Invalid registrations remain visible with diagnostics. Registration is local setup, not an arbitrary workflow-write HTTP endpoint.
@@ -90,8 +90,8 @@ The user confirmed the following test boundary before publication.
 
 - Implementation as part of this spec-writing/publishing task. Publishing an issue does not authorize starting it.
 - Dispatch, pause/resume, retry, slot reclaim, process termination, merge actions, approval submission or terminal input.
-- Command queues, Command Gateway, ConductorBridge, future control-policy scaffolding or a committed control-plane milestone.
-- Changes to Conductor/EPIC/Worker responsibilities, ownership gates, approval policy or one-EPIC-agent-per-Conductor behavior.
+- Command queues, Command Gateway, OrchestratorBridge, future control-policy scaffolding or a committed control-plane milestone.
+- Changes to Orchestrator/EPIC/Worker responsibilities, ownership gates, approval policy or one-EPIC-agent-per-Orchestrator behavior.
 - New mandatory Worker execution-identity records, reconstructed complete retry history, inferred process ownership or authoritative audit claims from observed changes.
 - Multi-user accounts, team permissions, public hosting, mandatory cloud services or default boot startup.
 - Six fully developed management pages, DAG editing/visualization, historical replay, trend charts, push notifications or browser configuration editing.

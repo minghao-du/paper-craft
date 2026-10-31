@@ -3,7 +3,7 @@ name: pc-dashboard
 description: Launch the read-only local Fleet Dashboard or inspect Fleet evidence as JSON.
 ---
 
-Register an authoritative Conductor configuration with `pc dashboard serve --config /absolute/path/.epic-config.json`.
+Register an authoritative Orchestrator configuration with `pc dashboard serve --config /absolute/path/.epic-config.json`.
 Registrations persist under `~/.config/pc/dashboard`; use `--data-dir` to select a separate Dashboard store.
 Worker-local configuration snapshots are refused as authority and invalid registrations remain visible with diagnostics.
 

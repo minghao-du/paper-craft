@@ -1,0 +1,134 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`publishes orchestrator close-epic help 1`] = `
+"Usage: pc workflow orchestrator close-epic [options] <number>
+
+Record explicit human confirmation, close and archive an accepted EPIC
+
+Options:
+  --repository <owner/name>    Target repository
+  --human-confirmation <text>  Exact explicit human closure confirmation
+  --config <file>              Authoritative Fleet configuration (default:
+                               ".epic-config.json")
+  -h, --help                   display help for command
+"
+`;
+
+exports[`publishes orchestrator finalize-epic help 1`] = `
+"Usage: pc workflow orchestrator finalize-epic [options] <number>
+
+Assess EPIC delivery; finalize specialists only after confirmed closure
+
+Options:
+  --repository <owner/name>  Target repository
+  --retry                    Start a fresh finalization round only after
+                             verified specialist termination
+  --config <file>            Authoritative Fleet configuration (default:
+                             ".epic-config.json")
+  -h, --help                 display help for command
+"
+`;
+
+exports[`publishes orchestrator group help 1`] = `
+"Usage: pc workflow orchestrator [options] [command]
+
+Create or inspect a subject-scoped managed Run
+
+Options:
+  -h, --help                        display help for command
+
+Commands:
+  status [options]                  Read Fleet Run and Orchestrator ownership
+  start [options] <issue>           Create or reconnect a Run from configured
+                                    repository context
+  recover [options] <run>           Reconcile durable results and startup
+                                    identity; preserve unknown occupancy
+  recover-all [options]             Reconcile each incomplete Run; report
+                                    unowned work as blocked
+  finalize-epic [options] <number>  Assess EPIC delivery; finalize specialists
+                                    only after confirmed closure
+  close-epic [options] <number>     Record explicit human confirmation, close
+                                    and archive an accepted EPIC
+  issue [options] <number>          Deliver only the requested Issue, retaining
+                                    parent constraints
+  land [options] <issue>            Merge, record, preserve and clean delivered
+                                    PR stages automatically
+  help [command]                    display help for command
+"
+`;
+
+exports[`publishes orchestrator issue help 1`] = `
+"Usage: pc workflow orchestrator issue [options] <number>
+
+Deliver only the requested Issue, retaining parent constraints
+
+Options:
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  -h, --help       display help for command
+"
+`;
+
+exports[`publishes orchestrator land help 1`] = `
+"Usage: pc workflow orchestrator land [options] <issue>
+
+Merge, record, preserve and clean delivered PR stages automatically
+
+Options:
+  --config <file>             Authoritative Fleet configuration (default:
+                              ".epic-config.json")
+  --confirmation-file <file>  EPIC professional confirmation JSON: epic, head,
+                              evidence
+  -h, --help                  display help for command
+"
+`;
+
+exports[`publishes orchestrator recover help 1`] = `
+"Usage: pc workflow orchestrator recover [options] <run>
+
+Reconcile durable results and startup identity; preserve unknown occupancy
+
+Options:
+  --replace        Replace Orchestrator only after verified termination
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  -h, --help       display help for command
+"
+`;
+
+exports[`publishes orchestrator recover-all help 1`] = `
+"Usage: pc workflow orchestrator recover-all [options]
+
+Reconcile each incomplete Run; report unowned work as blocked
+
+Options:
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  -h, --help       display help for command
+"
+`;
+
+exports[`publishes orchestrator start help 1`] = `
+"Usage: pc workflow orchestrator start [options] <issue>
+
+Create or reconnect a Run from configured repository context
+
+Options:
+  --provider <provider>  Managed provider: codex, agy, or claude
+  --config <file>        Authoritative Fleet configuration (default:
+                         ".epic-config.json")
+  -h, --help             display help for command
+"
+`;
+
+exports[`publishes orchestrator status help 1`] = `
+"Usage: pc workflow orchestrator status [options]
+
+Read Fleet Run and Orchestrator ownership
+
+Options:
+  --config <file>  Authoritative Fleet configuration (default:
+                   ".epic-config.json")
+  -h, --help       display help for command
+"
+`;

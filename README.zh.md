@@ -15,9 +15,9 @@ paper-craft 将研究想法与实现连接起来：手稿会话将发现转化�
 | 手稿 | `pc-ms`, `pc-ms-poll`, `pc-ms-sweep`, `pc-ms-audit` |
 | 文献与研究 | `pc-lit`, `pc-lit-import`, `pc-research-ideas`, `pc-research-plan`, `pc-research-state` |
 | Issue | `pc-issue-file`, `pc-issue-check`, `pc-issue-next`, `pc-issue-iterate` |
-| 智能体编排 | `pc-epic`, `pc-conductor`, `pc-conductor-spawn`, `pc-subagent` |
+| 智能体编排 | `pc-epic`, `pc-orchestrator`, `pc-orchestrator-spawn`, `pc-subagent` |
 | 审查与合入 | `pc-pr-check`, `pc-pr-review`, `pc-pr-land` |
-| 运维 | `pc-dashboard`, `pc-scout`, `pc-compute-config`, `pc-conductor-recover` |
+| 运维 | `pc-dashboard`, `pc-scout`, `pc-compute-config`, `pc-orchestrator-recover` |
 
 技能仅使用英文。完整的执行指引见[技能目录](skills/)。
 

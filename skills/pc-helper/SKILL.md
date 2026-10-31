@@ -43,7 +43,7 @@ The home, ownership, result, record and cleanup rules below apply to both modes.
   A `--bg` helper has no tmux window, so the hold is the only thing that marks the clone as in use.
 - **A worker in a pooled slot does not start helpers.**
   Its helper's checkouts would hang off the slot's repo, and the portable reclaim check cannot retire them, so they would outlive the slot.
-  Ask the epic or the conductor to start one instead.
+  Ask the epic or the orchestrator to start one instead.
 - **Delete with `find <path> -delete`, never `rm`.**
   A `$` in the same command as `rm` trips Claude Code's destructive-removal guard, which bypass mode does not suppress.
 - **Kill only by the recorded short id**, never `pgrep`/`pkill`, a name, or argv: a spawn prompt is argv, so a pattern can match your own shell.
@@ -78,16 +78,16 @@ HELPERS="/absolute/path/to/configured/project/_ignore/helpers"
      git -C <repo> worktree add --detach "$DIR" origin/main
      ```
      It branches there itself (for example via `/pc-issue-work`), as the checkout's only session.
-   - Gates or builds that need a built environment (a `.pixi` env, a vendored binary), where a fresh worktree would pay a full install first: a conductor or epic session that manages a clone pool can lend it an `available` pooled clone (as `/pc-conductor` Step 5 classifies it), held so spawn selection and every launch path must skip it, `KIND=held-clone`:
+   - Gates or builds that need a built environment (a `.pixi` env, a vendored binary), where a fresh worktree would pay a full install first: a orchestrator or epic session that manages a clone pool can lend it an `available` pooled clone (as `/pc-orchestrator` Step 5 classifies it), held so spawn selection and every launch path must skip it, `KIND=held-clone`:
      ```bash
-     CONFIG=/absolute/path/to/conductor/.epic-config.json
+     CONFIG=/absolute/path/to/orchestrator/.epic-config.json
      CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
      HOLD="$CLONE_ROOT/.holds/<clone>"
      mkdir -p "$CLONE_ROOT/.holds" && echo "helper <primary>-<role>" > "$HOLD"
      DIR="$CLONE_ROOT/<clone>"
      ```
      Run it from your own checkout, where `.epic-config.json` lives.
-     Use the authoritative conductor config; the shared CLI resolves and validates its paths.
+     Use the authoritative orchestrator config; the shared CLI resolves and validates its paths.
      Write the hold before anything else touches the clone, then confirm the clone is still `available`; if it is not, delete the hold and pick another.
 
 3. **Write the brief.**

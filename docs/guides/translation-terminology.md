@@ -6,7 +6,7 @@ Use the [architecture glossary](../../GLOSSARY.md) / [架构术语表](../../GLO
 | --- | --- | --- |
 | Project | 研究项目 | Retain `Project` when distinguishing domain entities / 区分领域实体时保留 `Project`。 |
 | Fleet | 工作流集群 | Retain `Fleet` in configuration and operational references / 配置和操作引用中保留 `Fleet`。 |
-| Conductor | Conductor | Retain the role name / 保留角色名。 |
+| Orchestrator | Orchestrator | Retain the role name / 保留角色名。 |
 | EPIC Agent | EPIC Agent | Retain the role name / 保留角色名。 |
 | nexus | nexus | Retain the storage name / 保留存储名称。 |
 | skill | skill | Keep names and command identifiers unchanged / 名称和命令标识保持不变。 |

@@ -74,7 +74,7 @@ gh issue create --title "<extracted title>" --body-file <file> --assignee <usern
 
 ### Step 6: Move the draft out of the way (CREATE only)
 
-On a successful **create**, the source file has done its job — move it so it stops being mistaken for unfiled work by any fleet-side sweep (e.g. `/pc-conductor`'s cold-start draft check) or confusing a future agent poking around the clone:
+On a successful **create**, the source file has done its job — move it so it stops being mistaken for unfiled work by any fleet-side sweep (e.g. `/pc-orchestrator`'s cold-start draft check) or confusing a future agent poking around the clone:
 
 ```bash
 mkdir -p _ignore && mv <file> _ignore/

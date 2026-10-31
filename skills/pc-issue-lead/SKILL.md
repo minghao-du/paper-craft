@@ -163,7 +163,7 @@ Two rules for writing the status file:
 
 1. **Update `.epic-status.json`**:
    - Set `phase` (if changing) — one of the seven above, no others
-   - Set `stop_reason` to your classification. For clean open PRs awaiting conductor
+   - Set `stop_reason` to your classification. For clean open PRs awaiting orchestrator
      confirmation or user approval, retain `awaiting-human-merge` and phase `quality-gate`;
      put your assessment in `lead_notes`. This never authorizes landing or reclaim.
    - Set `lead_guidance` — clear, actionable instruction for the worker
@@ -222,7 +222,7 @@ gh pr view <N> --json state,mergedAt   # state must be MERGED
 If the work is done and the PR is open, the phase is `quality-gate`. Completion records are a prerequisite for later preservation and cleanup, not reclaim authorization.
 
 **Who calls you.** Workers invoke the evaluator for task-local stopping points and
-again for final evaluation/records after the conductor verifies merge success. Worker
+again for final evaluation/records after the orchestrator verifies merge success. Worker
 self-landing is replaced by the shared workflow's Scheduling and approval contract.
 Read state from the supplied absolute slot path, run git with `git -C <path>` and
 pass `-R <owner/repo>` to `gh`. After merge, use the PR's commits/files rather than
@@ -264,7 +264,7 @@ Otherwise:
    omit both. Post the comment.
 
 3. Set `.epic-status.json#completed_at` to the current ISO 8601
-   timestamp from `date -u`, then return "PHASE: completed". If the file is missing, report missing final records to the conductor and reconstruct them before cleanup.
+   timestamp from `date -u`, then return "PHASE: completed". If the file is missing, report missing final records to the orchestrator and reconstruct them before cleanup.
 
 **Do not file on non-terminal evaluations.** Signals may change as
 the worker addresses feedback; filing only at `completed` means the

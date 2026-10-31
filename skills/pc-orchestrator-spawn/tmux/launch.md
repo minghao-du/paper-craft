@@ -1,6 +1,6 @@
 # Checked tmux launch
 
-Run after the common ownership, input and launch checks in [pc-conductor-spawn](../SKILL.md#step-5-launch-tmux-window).
+Run after the common ownership, input and launch checks in [pc-orchestrator-spawn](../SKILL.md#step-5-launch-tmux-window).
 
 1. Create a tmux window named `<N>-<clone-name>` or `<N>-issue-<N>` in the exact checked directory.
 2. Establish launch arguments and prompt input from the installed runner's help, and deliver the complete brief as one message. Prefer supported prompt-file input, an initial-prompt argument or stdin; first verify that the method enters the required persistent session. Do not assume arguments, redirection and interactive paste are interchangeable.
@@ -12,6 +12,6 @@ Run after the common ownership, input and launch checks in [pc-conductor-spawn](
 ## EPIC specialist windows
 
 For post-merge Pipeline Audit or Research State, use the managed EPIC completion
-specialist entry described in [Conductor finalization](../../pc-conductor/finalization.md).
+specialist entry described in [Orchestrator finalization](../../pc-orchestrator/finalization.md).
 It attributes work to the original EPIC and opens separate windows in the verified
 existing session. This terminal tail does not bypass Worker intake requirements.

@@ -1,9 +1,9 @@
 ---
-name: pc-conductor-spawn
+name: pc-orchestrator-spawn
 description: Spawn an issue worker in a clone or worktree through tmux and the selected agent runner
 ---
 
-# /pc-conductor-spawn
+# /pc-orchestrator-spawn
 
 Read [the shared runtime and workflow contract](../lib/workflow.md) before using helper commands or runtime-specific tools.
 Tmux is shared infrastructure; Claude-specific tool names and examples apply only when that runner provides them, with file-based delivery otherwise.
@@ -11,21 +11,21 @@ Tmux is shared infrastructure; Claude-specific tool names and examples apply onl
 Spawn the selected agent runner in a tmux window to work on a GitHub issue.
 The worker follows the iteration and **issue-lead** stopping-point protocol below; the Ralph plugin is one Claude Code implementation, not a requirement for other runners.
 
-This is fleet-conductor machinery: it executes a spawn, annotating it with live fleet facts the topic side (`/pc-epic`) cannot see.
-See "Where the prompt comes from" below for the epic/conductor split.
+This is fleet-orchestrator machinery: it executes a spawn, annotating it with live fleet facts the topic side (`/pc-epic`) cannot see.
+See "Where the prompt comes from" below for the epic/orchestrator split.
 
 ## Usage
 
 ```
-/pc-conductor-spawn <issue-number> [clone-name]
+/pc-orchestrator-spawn <issue-number> [clone-name]
 ```
 
 If clone-name is omitted, pick the best idle clone automatically.
 
 ## Configuration
 
-Reads `.epic-config.json` from the repo root (see `/pc-conductor` for format).
-**If the file does not exist**, stop and ask the user to configure it via `/pc-conductor` first.
+Reads `.epic-config.json` from the repo root (see `/pc-orchestrator` for format).
+**If the file does not exist**, stop and ask the user to configure it via `/pc-orchestrator` first.
 
 ## Where the prompt comes from
 
@@ -33,7 +33,7 @@ Most of the time `/pc-epic` has already decided an issue is ready and written th
 Check there first, under **either** naming convention live in that directory — `<N>.md` (current) or `spawn-<N>.txt` (older):
 
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 if INTENT=$(pc workflow intent find <N> --config "$CONFIG" --path); then
   cat "$INTENT"
@@ -42,13 +42,13 @@ else
 fi
 ```
 
-Use the absolute authoritative conductor config in every shell invocation; worker snapshots are refused.
+Use the absolute authoritative orchestrator config in every shell invocation; worker snapshots are refused.
 
 - **Intent file present**: it is the base for the `IMPORTANT CONTEXT` section of Step 4's prompt — don't re-derive what it already says.
   Check it against live fleet state (Step 2b) and append fleet facts it structurally couldn't know: which host/clone is actually free, a concurrent worker editing an overlapping file, a build running on a target remote host.
   Mark it consumed after a successful launch (Step 6).
-  An epic-written brief carries an `EPIC:` reference near the top; the conductor counts live slots by it. Match it tolerantly — `grep -iE '^\**EPIC\**:? *#?([0-9]+)'` — since both `EPIC: 369` and `**EPIC**: #369` are in use. If an epic brief lacks one, ask the epic rather than inferring it. Standalone Issue briefs need no EPIC.
-- **No intent file** — compose the prompt from the issue directly. This is a first-class path: a user-originated spawn, a conductor-initiated respawn, routine maintenance. Read verified parent membership; use its EPIC scope/readiness brief when present, otherwise dispatch the standalone Issue. See `/pc-conductor`'s "Intake and planning".
+  An epic-written brief carries an `EPIC:` reference near the top; the orchestrator counts live slots by it. Match it tolerantly — `grep -iE '^\**EPIC\**:? *#?([0-9]+)'` — since both `EPIC: 369` and `**EPIC**: #369` are in use. If an epic brief lacks one, ask the epic rather than inferring it. Standalone Issue briefs need no EPIC.
+- **No intent file** — compose the prompt from the issue directly. This is a first-class path: a user-originated spawn, a orchestrator-initiated respawn, routine maintenance. Read verified parent membership; use its EPIC scope/readiness brief when present, otherwise dispatch the standalone Issue. See `/pc-orchestrator`'s "Intake and planning".
 
 If the intent conflicts with current fleet state, resolve it from measured state and say so in your report — a contended host or a taken clone is a placement decision. Escalate only if either resolution risks an actual problem (see the shared workflow's **Multi-EPIC registration and scheduling** contract).
 
@@ -57,14 +57,14 @@ If the intent conflicts with current fleet state, resolve it from measured state
 ### Prerequisite: Issue number required
 
 Every spawn MUST target an existing GitHub issue.
-If the conductor wants to spawn work that doesn't have an issue yet (reruns, follow-ups, quick experiments), file the issue first:
+If the orchestrator wants to spawn work that doesn't have an issue yet (reruns, follow-ups, quick experiments), file the issue first:
 
 1. Write a minimal issue body (title + 3-sentence motivation + success criteria)
 2. `gh issue create --title "..." --body-file ISSUE-*.md`
 3. Then proceed with the spawn using the new issue number
 
 Never write a spawn prompt with `issue=0` or without `/pc-issue-work <N>`.
-Issueless spawns break EPIC tracking, PR linking, and conductor tracking.
+Issueless spawns break EPIC tracking, PR linking, and orchestrator tracking.
 
 ### Step 1: Select or create slot
 
@@ -74,7 +74,7 @@ Read `clone_root` and `local_worktrees` from `.epic-config.json`.
 
 If clone-name not specified, find an idle clone: on `main`, clean, no live tmux pane in its directory, no `.epic-status.json`, no hold:
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 OCCUPIED=$(tmux list-panes -a -F '#{pane_current_path}') || { echo "Cannot inspect tmux occupancy" >&2; exit 2; }
 for name in $(jq -r '.clone_names[]' .epic-config.json); do
@@ -86,7 +86,7 @@ for name in $(jq -r '.clone_names[]' .epic-config.json); do
   [ -z "$st" ] || continue
   echo "$OCCUPIED" | grep -qxF "$dir" && continue   # live tmux pane here → owned
   [ -f "$dir/.epic-status.json" ] && continue         # a worker claimed it, unfinished
-  [ -f "$CLONE_ROOT/.holds/$name" ] && continue       # a conductor hold (pc-conductor Step 4)
+  [ -f "$CLONE_ROOT/.holds/$name" ] && continue       # a orchestrator hold (pc-orchestrator Step 4)
   echo "$name"
 done
 ```
@@ -105,7 +105,7 @@ Branch name is `<N>-<slug>` where `<slug>` is the first 4 words of the issue tit
 
 Check if slot already exists:
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 SLOT="$CLONE_ROOT/issue-<N>"
 if [ -d "$SLOT" ]; then
@@ -124,7 +124,7 @@ else
     echo "Existing branches need ownership and unmerged-work checks before reuse" >&2
     exit 2
   fi
-  # Create worktree from the main repo (conductor's working directory)
+  # Create worktree from the main repo (orchestrator's working directory)
   git worktree add "$SLOT" -b <N>-<slug>
 fi
 ```
@@ -132,14 +132,14 @@ fi
 ### Step 2: Prepare slot and clean stale state
 
 Preserve the prior assignment's state and verify its archive before clearing stale status/worklog files for a confirmed fresh assignment.
-Ownership and terminal gates from `/pc-conductor` must already be satisfied; unknown occupancy blocks checkout changes and deletion.
+Ownership and terminal gates from `/pc-orchestrator` must already be satisfied; unknown occupancy blocks checkout changes and deletion.
 The CLI preserves originals; inspect the returned manifest and compare the archived files before any separately authorized cleanup.
 In the Claude Code + Ralph branch only, also retire its verified inactive `.claude/ralph-loop.local.md` and follow that harness's deletion constraints.
 Use absolute paths or set cwd in each shell invocation.
 
 **Clone mode**:
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 cd "$CLONE_ROOT/<clone>"
 if [ -f .epic-status.json ]; then
@@ -154,12 +154,12 @@ fi
 find "$CLONE_ROOT/<clone>/zig-out/bin" -maxdepth 1 -name 'phyz' -delete 2>/dev/null
 ```
 
-**Fetch inside each clone, never once in the conductor.** Each clone has its own `origin/main`, so a conductor-level fetch followed by `git -C <clone> reset --hard origin/main` bases the worker on that clone's stale ref. Don't collapse the `cd` in a batch-spawn loop.
+**Fetch inside each clone, never once in the orchestrator.** Each clone has its own `origin/main`, so a orchestrator-level fetch followed by `git -C <clone> reset --hard origin/main` bases the worker on that clone's stale ref. Don't collapse the `cd` in a batch-spawn loop.
 
 **Worktree mode**: resolve `CLONE_ROOT` *before* `cd "$SLOT"`, in the same command — `.epic-config.json` is not inside a linked worktree, and resolving after the `cd` yields an empty root silently:
 
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 cd "$SLOT"
 if [ -f "$SLOT/.epic-status.json" ]; then
@@ -215,7 +215,7 @@ If an intent file exists, this is a cross-check against the live issue body, not
 The prompt has two parts: (1) work instructions delivered through the selected runner's supported input method, and (2) the iteration/stopping-point protocol.
 For Claude Code with Ralph installed, its loop reminder stays SHORT; other runners execute the same gates through their supported continuation mechanism.
 
-The `IMPORTANT CONTEXT` section at the bottom is where the two sources combine: start from the epic's intent file when one exists, correct it per Step 2b, then append fleet facts only the conductor can see.
+The `IMPORTANT CONTEXT` section at the bottom is where the two sources combine: start from the epic's intent file when one exists, correct it per Step 2b, then append fleet facts only the orchestrator can see.
 Spend the measurement here rather than in later corrections, which race the worker: hash the inputs the issue names, resolve every bare path against the real tree, locate the tools the work needs and report their versions.
 Put a fact that invalidates an instruction *inside* that instruction (claim, why it's wrong, file:line), not in a separate warnings list.
 
@@ -224,9 +224,9 @@ Re-read every issue-specific *sentence* when reusing a previous prompt, not just
 Fill in two lines in COMPLETION every time:
 
 - **`EPIC:`** — owning EPIC when applicable, with the brief and semantic constraints; omit for standalone Issues.
-- **Approval protocol** — follow the shared workflow's Scheduling and approval contract; the worker reports a clean PR to the conductor and retains its state for landing-agent handoff.
+- **Approval protocol** — follow the shared workflow's Scheduling and approval contract; the worker reports a clean PR to the orchestrator and retains its state for landing-agent handoff.
 
-For an EPIC-reserved artifact, report additions and alterations to the conductor as evidence for EPIC confirmation under the shared approval contract. Compare with a three-dot diff to isolate the branch’s edits:
+For an EPIC-reserved artifact, report additions and alterations to the orchestrator as evidence for EPIC confirmation under the shared approval contract. Compare with a three-dot diff to isolate the branch’s edits:
 
 ```bash
 git diff origin/main...HEAD -- <the owned files>
@@ -238,7 +238,7 @@ Supply the selected runner’s concrete pause instruction in every brief. Resolv
 
 Apply [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) when resolving the instruction path in the prompt below.
 
-**Prompt file** (written by conductor to /tmp/spawn-N.txt):
+**Prompt file** (written by orchestrator to /tmp/spawn-N.txt):
 ````
 You are working on GitHub issue #N TITLE.
 
@@ -302,7 +302,7 @@ prompt would make you do MORE than the issue asks, or LESS:
 - A prompt constraint that SUBTRACTS ("do not touch X", "this phase only",
   "defer Y until Z lands") wins; it rests on fleet state the issue cannot see.
 - A prompt instruction that ADDS a deliverable the issue lacks is stale; the
-  issue wins. Tell the conductor.
+  issue wins. Tell the orchestrator.
 - The prompt's gate lines (test targets, SHA rules, approvals) win outright.
 Do not quietly reconcile a contradiction in either direction.
 
@@ -354,17 +354,17 @@ Gitignored outputs on a remote host live only in a pooled clone that is reset af
 Before you request landing, copy anything a follow-up might need to `$CLONE_ROOT/.preserved/<slug>/` with a README (what it is, source host and path, which issue), and say in the PR body where it went, or state explicitly that it is regenerable and at what cost.
 
 PUSH NOTIFICATION — on the EVENT, not a file write. When you finish, stand
-down, hand off, or get blocked, `SendMessage` the conductor a one-line
+down, hand off, or get blocked, `SendMessage` the orchestrator a one-line
 notification (issue number, state, one-line summary), while retaining
 .epic-status.json and the worklog for the coordinated landing handoff. Read the address from
-`$CLONE_ROOT/.conductor-session` (resolve CLONE_ROOT from .epic-config.json).
+`$CLONE_ROOT/.orchestrator-session` (resolve CLONE_ROOT from .epic-config.json).
 Do NOT `ListAgents` and pick a plausible row: workers sharing a clone root
 share a name prefix. If the file is missing or the send fails, do not retry
 and do not guess — record the failure in your FINAL RECAP. Send at the
 point you report readiness for approval, and again after any change.
 
 DO NOT EDIT THE EPIC ISSUE'S BODY. If you find it stale or contradicted by
-your work, report that to the conductor and let the epic session fix it:
+your work, report that to the orchestrator and let the epic session fix it:
 the epic's push path guards against concurrent edits and yours does not.
 
 SUBAGENTS: do not delegate a permission-gated action (rm, force-push, a
@@ -416,12 +416,12 @@ COMPLETION: When done (or when lead says completed):
    read as the current state (premise, results, interpretation), not as a
    log of how it got there.
 5. When quality checks pass, report the PR URL, full current head SHA,
-   completion evaluation, check outcomes and unresolved findings to the conductor.
+   completion evaluation, check outcomes and unresolved findings to the orchestrator.
    Keep phase quality-gate and stop_reason awaiting-landing; retain status/worklog.
    Invoke issue-lead for this stopping point; if it requests correction, continue.
-   The conductor obtains applicable current-head EPIC professional confirmation and dispatches Landing automatically.
+   The orchestrator obtains applicable current-head EPIC professional confirmation and dispatches Landing automatically.
    Explicit human confirmation applies only to closing the whole EPIC. Do not land this PR yourself.
-   Report independent follow-up or successor work with /pc-conductor-handoff.
+   Report independent follow-up or successor work with /pc-orchestrator-handoff.
    On resumption, revalidate current head and record a live phase before edits.
    Print the final recap and ISSUE WORK COMPLETE as the stopping-point report,
    not evidence that the PR merged or cleanup completed.
@@ -488,7 +488,7 @@ REVIEW TRIAGE — For each /pc-pr-review finding, apply the DEFERRAL RULE above:
     These become fodder for follow-up issues.
 
 FINAL RECAP — Print this summary just before outputting the completion
-promise so the conductor (and user) can see the full story at a glance.
+promise so the orchestrator (and user) can see the full story at a glance.
 After step 5a, the final lead invocation has set phase to `completed`
 and posted a PR comment listing any follow-ups it filed. After step 5b
 the PR is still open, the phase is `quality-gate`, and that ceremony
@@ -532,7 +532,7 @@ main, report the shape, and let the epic rule.
 The lead's PR comment is the source of truth for filed follow-ups;
 the recap doesn't duplicate it. Get the PR URL from
 `gh pr view --json url -q .url`. This recap MUST appear in the
-worker's output — it is the primary artifact the conductor reads
+worker's output — it is the primary artifact the orchestrator reads
 after the session ends.
 
 **Do NOT invent follow-up ideas here.** The lead owns follow-up
@@ -660,17 +660,17 @@ Never bypass these ownership, input and confirmation checks by improvising an un
 If launch succeeded and an intent file (`$INTENT` from Step 3) was used, mark it consumed now — don't delete it, and verify the move, since an unmoved brief reads as pending forever:
 
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 pc workflow intent consume <N> --config "$CONFIG"
 # Require exit 0 and verify the returned JSON path; archives use unique subdirectories.
 ```
 
-The directory lives outside every clone's git, so deletion there is unrecoverable; moving it aside lets `/pc-conductor-tuckin` report it as consumed.
+The directory lives outside every clone's git, so deletion there is unrecoverable; moving it aside lets `/pc-orchestrator-tuckin` report it as consumed.
 
 An epic can append to `.spawn-prompts/<N>.md` after you consumed it, recreating a fragment in the live queue. Tell a delta from a re-brief by content — a brief opens with an `EPIC:` header, a delta does not:
 
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 N=123   # replace with the assigned issue number
 CONSUMED=$(find "$CLONE_ROOT/.spawn-prompts/consumed" -type f \( -name "$N.md" -o -name "spawn-$N.txt" \) -print -quit)
@@ -694,15 +694,15 @@ Report to the user:
 - Any phasing or gate criteria
 
 Record the handling receipt and notify the EPIC under the shared workflow's **Active role
-handoff and wake-up** contract. After a nested spawn, return to the conductor's Step 7 to
-re-arm its wake-up; a standalone spawn does not create a second conductor polling loop.
+handoff and wake-up** contract. After a nested spawn, return to the orchestrator's Step 7 to
+re-arm its wake-up; a standalone spawn does not create a second orchestrator polling loop.
 Report automatic observation only with a verified monitor or native wake-up identity.
 
 ## Creating new slots
 
 **Clone mode** — create a new clone and register it:
 ```bash
-CONFIG=/absolute/path/to/conductor/.epic-config.json
+CONFIG=/absolute/path/to/orchestrator/.epic-config.json
 CLONE_ROOT=$(pc workflow root --config "$CONFIG" --path) || exit 2
 [ -n "$CLONE_ROOT" ] && [ -d "$CLONE_ROOT" ] || { echo "FATAL: clone_root '$CLONE_ROOT' missing" >&2; exit 1; }
 REPO=$(jq -r .github_repo .epic-config.json)
@@ -713,9 +713,9 @@ git clone "git@github.com:$REPO.git" <new-name>
 
 Then all of:
 
-1. **Add the name to `clone_names` in the authoritative `.epic-config.json`.** Step 1 and the conductor's scans use it; an unregistered clone is invisible.
+1. **Add the name to `clone_names` in the authoritative `.epic-config.json`.** Step 1 and the orchestrator's scans use it; an unregistered clone is invisible.
 2. **Verify the selected runner can use the directory before spawning into it.** For Claude Code in a fresh clone, follow [the folder-trust check](claude-code/folder-trust.md).
-3. **Refresh slot observation.** Re-run `/pc-conductor`'s scan after registration.
+3. **Refresh slot observation.** Re-run `/pc-orchestrator`'s scan after registration.
    If a supported external monitor enumerates only at startup, restart only its recorded owned identity and verify the new slot is covered; this CLI does not yet implement `pc fleet watch`.
 
 **Worktree mode** — no registration needed; worktrees are created on demand in Step 1 and named `issue-<N>`.
@@ -724,12 +724,12 @@ Then all of:
 
 **Clone mode** — if a clone is on a non-main branch:
 1. Check if there's an open PR: `gh pr list --head <branch>`
-2. If merged/closed: run `pc fleet reclaim-check --dir <slot> --config <authoritative-config>` and all `/pc-conductor` terminal, ownership and preservation gates before any separately authorized checkout change.
+2. If merged/closed: run `pc fleet reclaim-check --dir <slot> --config <authoritative-config>` and all `/pc-orchestrator` terminal, ownership and preservation gates before any separately authorized checkout change.
 3. If open: warn user — they may want to resume
 
 **Worktree mode** — when an issue's PR is merged:
 ```sh
-pc fleet reclaim-check --dir /absolute/path/to/pool/issue-<N> --config /absolute/path/to/conductor/.epic-config.json
+pc fleet reclaim-check --dir /absolute/path/to/pool/issue-<N> --config /absolute/path/to/orchestrator/.epic-config.json
 ```
 Leave the worktree intact while this read-only check is blocked.
 Before separately authorized removal, verify the PR is merged, preserve state, confirm all owners/jobs released and account for all uncommitted and unmerged work.
@@ -746,7 +746,7 @@ Target project repos should gitignore these files (add to `.gitignore`):
 ```
 
 `.epic-status.json` and `.epic-worklog.md` live in each clone/worktree.
-`.epic-notifications.log` and `.epic-decisions.md` live in the conductor cwd (written by a supported observer and by the conductor itself).
+`.epic-notifications.log` and `.epic-decisions.md` live in the orchestrator cwd (written by a supported observer and by the orchestrator itself).
 None should be checked in.
 
 ## Conventions

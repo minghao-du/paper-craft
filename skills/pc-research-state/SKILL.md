@@ -11,7 +11,7 @@ The calling session owns scientific judgments and research direction; this skill
 checks supporting materials and edits the record. It does not become the research
 coordinator or authorize experiments. Use the project's language.
 
-For Conductor-dispatched EPIC finalization, first read
+For Orchestrator-dispatched EPIC finalization, first read
 [the finalization writing contract](finalization.md).
 
 ## 1. Resolve the writing brief

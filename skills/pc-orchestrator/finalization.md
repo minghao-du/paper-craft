@@ -7,7 +7,7 @@ standalone Issues do not acquire these steps.
 
 ## 1. Establish scope and ownership
 
-Conductor supplies actual merged PRs, per-PR base/head and merge SHAs, changed paths,
+Orchestrator supplies actual merged PRs, per-PR base/head and merge SHAs, changed paths,
 Worker results and evidence. Bind each round to an integrated SHA and a safe detached
 checkout. The EPIC Agent confirms the evidence-based applicability of each specialist;
 uncertainty remains blocked. Infrastructure delivery alone is not research progress.
@@ -42,7 +42,7 @@ Managed completion retains context, applicability, results and turns in its exis
 `completion.json`; Runner directories retain briefs, logs and result files. Structured
 specialist receipts contain `head`, `status` (`completed` or `blocked`), `evidence`,
 `blockers`, `scope`, `checks`, `artifacts`, and `limitations`. Explain checks not run.
-Conductor records research-only confirmed skips with their reasons. Preserve old rounds and attempts.
+Orchestrator records research-only confirmed skips with their reasons. Preserve old rounds and attempts.
 Use `pc workflow orchestrator recover <run>` with the authoritative config to reconcile original receipts
 and collect results; inspect that command's help for continuation options.
 

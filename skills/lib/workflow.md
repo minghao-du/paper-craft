@@ -7,7 +7,7 @@ Use the same protocol from Codex, Claude Code, Antigravity or any other harness 
 
 ## Configuration and scope
 
-Use the conductor's authoritative `.epic-config.json`, passing its absolute path with `--config` when working elsewhere.
+Use the orchestrator's authoritative `.epic-config.json`, passing its absolute path with `--config` when working elsewhere.
 Worker copies whose `main_checkout` points elsewhere are refused.
 Relative paths resolve beside the config file; `~` expands to the home directory.
 
@@ -63,7 +63,7 @@ Check exit codes directly, without piping the command into another program.
 
 ## Project instructions in every dispatch
 
-Every dispatch brief must explicitly tell the recipient to read and follow the assigned project's root `AGENTS.md` before beginning work, plus applicable directory-specific instructions. This applies to all roles and task sizes, including Conductor, EPIC, Worker, PR review/repair/landing, issue-lead, specialists, helpers and read-only subagents; it also applies to resumed sessions and nested delegation. Inherited context or automatic instruction loading does not replace the reminder.
+Every dispatch brief must explicitly tell the recipient to read and follow the assigned project's root `AGENTS.md` before beginning work, plus applicable directory-specific instructions. This applies to all roles and task sizes, including Orchestrator, EPIC, Worker, PR review/repair/landing, issue-lead, specialists, helpers and read-only subagents; it also applies to resumed sessions and nested delegation. Inherited context or automatic instruction loading does not replace the reminder.
 
 The sender resolves the actual assigned checkout or worktree root and includes the absolute `AGENTS.md` path in the brief. For a scratch working directory, identify the project checkout separately; for multiple projects, supply each root's instructions. If a root file is absent, record that fact rather than inventing instructions. The recipient reads the named files before task operations and reports unreadable required instructions as a blocker. Apply this contract when composing generated Runner briefs as well as manual prompts.
 
@@ -101,7 +101,7 @@ A tmux pane identifies a terminal, not a live agent: the runner may have exited 
 Use `$CLONE_ROOT/.epic-sessions/<N>.json` for each EPIC's registration. Each record
 identifies the repository, authoritative config path, EPIC number, role, runtime address
 (or null), working directory, active/paused state and verification timestamp. The assigned
-EPIC agent refreshes only its own record after verifying its role; the conductor records
+EPIC agent refreshes only its own record after verifying its role; the orchestrator records
 start, pause, resume and handover decisions in `.epic-decisions.md`. Keep scope, briefs,
 constraints and outstanding findings linked there. A paused EPIC retains its identity and
 work; resume verifies the same assignment and live address before dispatching. Pause
@@ -119,11 +119,11 @@ user priority; among equal priorities use readiness time and measured available 
 A task that cannot fit stays queued with its constraint; another eligible task may proceed.
 Resource contention is mechanical. Semantic dependencies, scope and cross-EPIC effects go
 to the relevant EPIC agents; retain their attributed answers and route unresolved judgments
-or priority changes to the user through the conductor.
+or priority changes to the user through the orchestrator.
 
 Route every handoff and receipt by repository, EPIC and issue/PR, using the matching keyed
 registration. Include sender, receiver, evidence path/hash and evaluated SHA for PR findings.
-The owner identifies affected EPICs, with conductor collision evidence referred to those
+The owner identifies affected EPICs, with orchestrator collision evidence referred to those
 agents to establish impact. Record the required confirmer set and obtain every member's
 current-head finding before merge. Disputed impact holds that PR's
 merge, while unrelated ready work continues. Task briefs, PR records and worker
@@ -131,18 +131,18 @@ worklogs retain the owning EPIC so a reply cannot be adopted by a similarly name
 
 ## Scheduling and approval contract
 
-The conductor is the primary user conversation and sole scheduler of persistent EPIC
+The orchestrator is the primary user conversation and sole scheduler of persistent EPIC
 agents, task workers and landing agents. Each EPIC agent owns exactly one EPIC's
 scope, task order, dependencies, readiness and professional judgments. Workers own
 implementation and task-local implementation, diagnosis, review and issue-lead helpers.
-Independent issues and successor workers return to the conductor as requests.
+Independent issues and successor workers return to the orchestrator as requests.
 
 Resolve the Issue repository and actual parent before dispatch. Standalone Issues need
 no EPIC. For an EPIC task, retain its attributed goal, constraints, dependency/readiness
 plan and Worker brief. Ask only about ambiguity that configuration and GitHub cannot resolve.
-The conductor routes scope and semantic conflicts to the EPIC; it decides resource
+The orchestrator routes scope and semantic conflicts to the EPIC; it decides resource
 placement from measured fleet facts. Relay expert findings with attribution and evidence
-through the conductor, which asks the user about unresolved substantive decisions.
+through the orchestrator, which asks the user about unresolved substantive decisions.
 
 Keep coordination evidence beside the authoritative config in `.epic-decisions.md`,
 with task-specific entries also in the worker worklog. Entries identify repository,
@@ -152,7 +152,7 @@ acting. These are file-based agent records, not new CLI flags or validated statu
 Keep `.epic-status.json` phases within the existing supported values.
 
 For each PR, the worker reports completion and quality outcomes at the live head SHA.
-The conductor obtains applicable EPIC professional confirmation for that SHA; standalone
+The orchestrator obtains applicable EPIC professional confirmation for that SHA; standalone
 issues require none. Automatically create, check, repair and merge PRs through Landing.
 Changed heads invalidate checks and applicable professional confirmations: repeat them.
 The only user approval is explicit confirmation to close the entire completed EPIC.
@@ -169,7 +169,7 @@ mean merged or cleaned up; retain state and checkout ownership evidence for land
 
 ## Checkout ownership and landing phases
 
-The conductor records each transfer beside the authoritative config and in the task
+The orchestrator records each transfer beside the authoritative config and in the task
 worklog: checkout, task/PR, prior and next role/session, timestamp, explicit release,
 acceptance and supporting runtime evidence. Persistent agent existence is distinct
 from checkout ownership. Unknown or overlapping ownership blocks mutation.
@@ -178,7 +178,7 @@ messages alone do not transfer ownership. Reconcile durable and live evidence fi
 
 After current findings and applicable EPIC confirmations are verified, transfer
 worker → landing agent for `/pc-pr-land`'s merge phase. On blockers, the landing agent
-records details and release before conductor transfers back to the worker. The worker
+records details and release before orchestrator transfers back to the worker. The worker
 resolves content, conflicts or failed checks, repeating the bounded evaluation loop
 and required quality and professional confirmation gates. Preserve interrupted operation state.
 
@@ -201,12 +201,12 @@ required confirmer set and each finding, EPIC closure confirmation source, merge
 final records and preservation manifest/cleanup outcome. A continuation points to these
 records with a live `FIRST CHECK`; it does not replace them or turn a request into a result.
 
-A fresh conductor reconciles in this order:
+A fresh orchestrator reconciles in this order:
 
 1. Resolve authoritative config/roots and each keyed EPIC assignment; verify live runtime
    identity and ownership separately. Reconcile legacy singleton records and live workers
    against their briefs, issues and recorded releases. Preserve ambiguous records; route
-   unclear scope/ownership through the conductor rather than choosing by session recency.
+   unclear scope/ownership through the orchestrator rather than choosing by session recency.
 2. Match intent hashes, consumed archives, startup evidence and receiver receipts to live
    workers/PRs before retrying. A sent-but-unhandled message, missing session or absent
    file is unknown: investigate or report the blocker. Never dispatch a duplicate worker
@@ -225,27 +225,27 @@ A fresh conductor reconciles in this order:
 Done when every pending item has a verified next role/action or a concrete blocker,
 and each route, ownership transfer and approval still agrees with current evidence.
 Resume independent eligible work; consolidate unresolved user judgments through the
-conductor. Restore or re-arm only the assigned role's verified wake-up mechanism.
+orchestrator. Restore or re-arm only the assigned role's verified wake-up mechanism.
 
 ## Active role handoff and wake-up
 
-Apply this contract to the conductor and each keyed EPIC session while coordinating work.
+Apply this contract to the orchestrator and each keyed EPIC session while coordinating work.
 Files carry the durable handoff; messages prompt an earlier reconciliation.
 `queued` means a brief exists, `sent` means the messaging tool accepted a notification,
 and `handled` requires receiver-side evidence. A successful send proves neither
 processing nor wake-up of another interactive conversation.
 
-1. **Persist, then notify.** After queueing intent, notify the registered conductor with
-   the issue, EPIC and absolute brief path. After a worker/PR transition, the conductor
+1. **Persist, then notify.** After queueing intent, notify the registered orchestrator with
+   the issue, EPIC and absolute brief path. After a worker/PR transition, the orchestrator
    records the observation and notifies the owning and relevant affected EPICs via their keyed registrations with the
    issue and evidence path.
    Use the runtime's supported addresses; absent/failed messaging leaves a pending handoff.
-2. **Reconcile on wake.** Verify current state before acting on a message. The conductor
-   checks queued briefs, slot status/worklogs and linked PRs; the EPIC checks conductor
-   decisions/notifications, consumed briefs and its tracked issues/PRs. The conductor's
+2. **Reconcile on wake.** Verify current state before acting on a message. The orchestrator
+   checks queued briefs, slot status/worklogs and linked PRs; the EPIC checks orchestrator
+   decisions/notifications, consumed briefs and its tracked issues/PRs. The orchestrator's
    `.epic-decisions.md` and `.epic-notifications.log` live beside the authoritative config.
    Run the relevant role steps for changed or unresolved work.
-3. **Acknowledge handling.** The conductor appends a timestamped receipt to its
+3. **Acknowledge handling.** The orchestrator appends a timestamped receipt to its
    `.epic-decisions.md`: issue, brief content hash, and `started`, `deferred` or `launch-failed`,
    with pane/session evidence or the concrete blocker. Notify the EPIC of that receipt.
    Append and send only when the brief hash, outcome or blocker changes; unchanged receipts

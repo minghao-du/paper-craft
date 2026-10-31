@@ -1,5 +1,5 @@
 ---
-name: pc-conductor-recover
+name: pc-orchestrator-recover
 description: Recover tmux workspaces and recorded agent conversations after shutdown or reboot, or set up periodic saving and startup recovery.
 ---
 
@@ -75,6 +75,6 @@ Done when every agent pane has its original conversation open or is explicitly r
 "$HELPER" status
 ```
 
-Report any unresolved pane and the saved workspace location. The automatic save interval is five minutes while continuum's status-line callback is running; an immediate save before shutdown closes that gap. See [prepare reboot](../pc-conductor-prepare-reboot/SKILL.md) for the planned-shutdown workflow.
+Report any unresolved pane and the saved workspace location. The automatic save interval is five minutes while continuum's status-line callback is running; an immediate save before shutdown closes that gap. See [prepare reboot](../pc-orchestrator-prepare-reboot/SKILL.md) for the planned-shutdown workflow.
 
 Done when the snapshot exists and every agent pane's recording status has been checked. Verify changed recovery code using the isolated round trip in [verification](references/verification.md).

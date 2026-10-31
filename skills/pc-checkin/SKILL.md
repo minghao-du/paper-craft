@@ -56,7 +56,7 @@ Use `--all` to disable filtering entirely.
 
 After checkin shows activity, spawn tmux windows for items that need review:
 
-Use `/pc-conductor-spawn` for the issue's brief, placement and checked tmux launch with the selected runner.
+Use `/pc-orchestrator-spawn` for the issue's brief, placement and checked tmux launch with the selected runner.
 The current CLI does not implement `pc spawn`; retain a prepared brief if launch is unavailable.
 
 Each window:

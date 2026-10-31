@@ -8,7 +8,7 @@ Its independence comes from not knowing the intent: an author knows what the tex
 Keep **one** reviewer alive across every commit of a pass, continued by `SendMessage` to its agent id.
 A reviewer that has read three hunks knows the document's conventions, which rules are load-bearing, and which cross-references exist, so it catches "this contradicts something you kept in hunk 2".
 A new `Agent` call starts cold and does not.
-A subagent id is not a session name and does not drift the way one does, but if a send fails, `/pc-conductor`'s Conventions section ("Completion pushes") governs: do not act on a `Did you mean: ...` suggestion.
+A subagent id is not a session name and does not drift the way one does, but if a send fails, `/pc-orchestrator`'s Conventions section ("Completion pushes") governs: do not act on a `Did you mean: ...` suggestion.
 
 Land this file in its own commit, not in a compression commit — a compression commit is strictly subtractive, and a reviewer briefed only on the diff will correctly flag 50 lines of new instructions as a violation.
 

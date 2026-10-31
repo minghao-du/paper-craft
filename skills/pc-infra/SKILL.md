@@ -1,6 +1,6 @@
 ---
 name: pc-infra
-description: Cold-start a long-lived infra session that tracks compute hosts and outages for the whole fleet — verifies outage reports independently, broadcasts status and policy to conductors, answers footprint questions, and keeps the site's stable host facts in its docs. Start it in the repo that holds the site's cluster docs.
+description: Cold-start a long-lived infra session that tracks compute hosts and outages for the whole fleet — verifies outage reports independently, broadcasts status and policy to orchestrators, answers footprint questions, and keeps the site's stable host facts in its docs. Start it in the repo that holds the site's cluster docs.
 ---
 
 # /pc-infra
@@ -31,16 +31,16 @@ Other sessions report outages; confirm each one independently before relaying it
 
 ## Telling the fleet
 
-Broadcast only when the user asks. Send one notice to each conductor — the `ListAgents` sessions named `*-conductor` — with:
+Broadcast only when the user asks. Send one notice to each orchestrator — the `ListAgents` sessions named `*-orchestrator` — with:
 what is down, what is up and how loaded, the policy the user set (e.g. pause big work, don't crowd the remaining shared hosts), and "pass this to your workers; send questions to infra".
 
 Keep a list of who was told and who acknowledged.
-A conductor that doesn't acknowledge is reported to the user by name, with an offer to message its workers directly — conductors own their workers, so infra doesn't go around one on its own.
+A orchestrator that doesn't acknowledge is reported to the user by name, with an offer to message its workers directly — orchestrators own their workers, so infra doesn't go around one on its own.
 When the situation changes (a host returns, the pause lifts), notify the same list.
 
 ## Footprint reports
 
-Conductors report what they run where. Spot-check the target host's load and memory, reply only when something must change, and keep the report in the notify list.
+Orchestrators report what they run where. Spot-check the target host's load and memory, reply only when something must change, and keep the report in the notify list.
 
 ## Rechecking
 

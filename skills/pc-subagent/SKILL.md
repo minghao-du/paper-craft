@@ -1,6 +1,6 @@
 ---
 name: pc-subagent
-description: Delegate temporary read-only or writable tasks from Conductor, EPIC, Worker or Landing, collect results, and request Worker ownership for persistent work.
+description: Delegate temporary read-only or writable tasks from Orchestrator, EPIC, Worker or Landing, collect results, and request Worker ownership for persistent work.
 ---
 
 # Temporary delegation
@@ -13,7 +13,7 @@ Use `pc workflow subagent --help` for the shared queue interface. Every core rol
 2. Queue with `pc workflow subagent create --config <authoritative-config> --input <request.json>`. Retain the returned task and attempt IDs. Fleet and per-parent limits are fixed by the first queue invocation; pass the same `--fleet-limit` and `--parent-limit` subsequently.
 3. Run `pc workflow subagent dispatch --config <authoritative-config>`. This executes queued short tasks directly without tmux. Dispatch conservatively serializes work; limits are upper bounds. The parent drives dispatch and polls `get --id <uuid>` or waits with `wait --id <uuid> --timeout-ms <milliseconds>`; `list` shows the Fleet queue.
 4. Collect with `collect --id <uuid>` and integrate the attributed result. Failure is a terminal result only with termination evidence; unknown execution retains capacity and modification responsibility. Preserve its evidence for reconciliation.
-5. After collection, `cleanup --id <uuid>` removes scratch while retaining the durable result. For independent ownership, cross-session progression or handoff, use `handoff --id <uuid> --issue <number>` and have Conductor read this request and dispatch the Issue through the Worker workflow. A request is not a Worker launch receipt.
+5. After collection, `cleanup --id <uuid>` removes scratch while retaining the durable result. For independent ownership, cross-session progression or handoff, use `handoff --id <uuid> --issue <number>` and have Orchestrator read this request and dispatch the Issue through the Worker workflow. A request is not a Worker launch receipt.
 
 The parent may use writable delegation for code changes. File allocations guide coordination; the Runner sandbox grants checkout access, not per-file enforcement. Keep tasks requiring separate ownership in the Worker lifecycle.
 

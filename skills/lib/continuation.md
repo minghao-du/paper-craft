@@ -9,14 +9,14 @@ with any pending integration handover; keep full scientific analysis in that sta
 
 ## Role and location
 
-Use the explicitly assigned role: `ms`, `spawn`, `epic`, `conductor`, `landing` or `generic`.
+Use the explicitly assigned role: `ms`, `spawn`, `epic`, `orchestrator`, `landing` or `generic`.
 Otherwise inspect task markers: `.ms-config.json` identifies a manuscript and `.epic-status.json` identifies a worker.
 When roles overlap or several continuation files fit, ask which assignment to resume.
 Native session addresses are optional routing information and cannot establish role or ownership.
 
 Write inside the assigned project or slot at `_ignore/CONTINUE-<role>.md`.
 For an epic, use `CONTINUE-epic-<N>.md` to distinguish topics.
-For landing, use `CONTINUE-landing-<PR>.md`; after checkout release, the conductor
+For landing, use `CONTINUE-landing-<PR>.md`; after checkout release, the orchestrator
 writes it in its own project and supplies its absolute path to the resumed agent.
 Keep this path stable so a fresh agent can locate it without the old session's memory.
 

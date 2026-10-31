@@ -293,7 +293,7 @@ function setup() {
   update(
     fragment,
     [
-      '# Managed by pc-conductor-recover setup. Load after other tmux plugins.',
+      '# Managed by pc-orchestrator-recover setup. Load after other tmux plugins.',
       `set -g @resurrect-dir ${quote(join(homedir(), '.local/share/pc/tmux-recovery/snapshots'))}`,
       `set -g @resurrect-default-processes ''`,
       `set -g @resurrect-processes '~tmux-recovery.ts.*restore-pane'`,

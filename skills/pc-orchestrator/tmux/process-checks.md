@@ -1,6 +1,6 @@
 # Tmux fleet process checks
 
-Use during slot occupancy and liveness inspection from [pc-conductor](../SKILL.md). Linux/Claude examples apply only to that runtime.
+Use during slot occupancy and liveness inspection from [pc-orchestrator](../SKILL.md). Linux/Claude examples apply only to that runtime.
 
 A runner may carry its entire spawn prompt in argv, so **never match argv** (`pgrep -f`, `ps | grep`) for a question about processes: it matches every worker whose prompt mentions the string, and the asking shell itself. Enumerate by exact name and attribute by working directory:
 
