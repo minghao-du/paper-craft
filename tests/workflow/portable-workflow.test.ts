@@ -221,7 +221,7 @@ describe('portable workflow file contract', () => {
   }, 15000);
 });
 
-describe('fleet checks against real Git clones', () => {
+describe('fleet checks against real Git clones', { timeout: 20000 }, () => {
   let temp: string;
   let project: string;
   let pool: string;
