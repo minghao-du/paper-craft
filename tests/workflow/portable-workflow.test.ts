@@ -168,11 +168,26 @@ describe('portable workflow file contract', () => {
         cwd: project,
         encoding: 'utf8',
       });
-    for (const removed of ['start', 'status']) {
+    for (const removed of ['start', 'status', 'recover']) {
       const result = cli('workflow', 'conductor', removed);
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain('unknown command');
     }
+    const missingRun = cli('workflow', 'orchestrator', 'recover');
+    expect(missingRun.status).not.toBe(0);
+    expect(missingRun.stderr).toContain('missing required argument');
+    const unknownRun = cli(
+      'workflow',
+      'orchestrator',
+      'recover',
+      'missing',
+      '--config',
+      configFile,
+    );
+    expect(unknownRun.status).toBe(2);
+    const batch = cli('workflow', 'orchestrator', 'recover-all', '--config', configFile);
+    expect(batch.status, batch.stderr).toBe(0);
+    expect(JSON.parse(batch.stdout)).toEqual({ status: 'reconciled', outcomes: [], legacy: [] });
     const root = cli('workflow', 'root', '--path');
     expect(root.status, root.stderr).toBe(0);
     expect(root.stdout.trim()).toBe(pool);

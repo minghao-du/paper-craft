@@ -149,9 +149,80 @@ test('collection failure resumes the original acceptance attempt and preserves e
   }
 });
 
-import { recoverFleet } from '../../packages/core/src/workflow/recovery.js';
-import { writeFileSync, readFileSync } from 'node:fs';
-test('lost startup notification recovers attributed receipt and result without relaunch or resource release', async () => {
+import { recoverAllRuns } from '../../packages/core/src/workflow/recovery.js';
+import { writeFileSync } from 'node:fs';
+import { inspectRuns, recoverRun } from '../../packages/core/src/workflow/run-driver.js';
+test('batch recovery isolates failed providers, preserves unknown ownership and blocks legacy work', async () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-batch-')));
+  mkdirSync(join(project, 'pool'));
+  const config = {
+    file: join(project, 'config'),
+    project,
+    root: join(project, 'pool'),
+    slots: [],
+    worktrees: true,
+    base: 'main',
+  };
+  let receipts = 0;
+  const runner = {
+    name: 'codex',
+    async preflight() {},
+    async start() {
+      throw Error('lost notification');
+    },
+    async recoverReceipt() {
+      receipts++;
+      return undefined;
+    },
+  };
+  try {
+    const first = await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 1, title: 'one', body: 'one', kind: 'issue' },
+      'codex',
+    );
+    const second = await startRun(
+      config,
+      { ...runner, name: 'claude' },
+      { repository: 'o/r', number: 2, title: 'two', body: 'two', kind: 'issue' },
+      'claude',
+    );
+    const legacy = stateDirectory(config, '.runtime', 'legacy');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(
+      join(legacy, 'task.json'),
+      JSON.stringify({ repository: 'o/r', issue: 3, turns: [] }),
+    );
+    writeFileSync(join(legacy, 'conductor.json'), 'invalid ignored global record');
+    const result = await recoverAllRuns(config, (provider) => {
+      if (provider === 'claude') throw Error('provider unavailable');
+      return runner;
+    });
+    expect(result.outcomes.map((o) => o.run)).toEqual([first.id, second.id]);
+    expect(result.outcomes[0].blockers).toContain(
+      'Orchestrator startup pending; unknown occupancy remains reserved',
+    );
+    expect(result.outcomes[1].error).toContain('provider unavailable');
+    expect(result.legacy).toEqual([
+      {
+        file: join(legacy, 'task.json'),
+        status: 'blocked',
+        error: 'Work has no Run ownership; complete or archive it explicitly',
+      },
+    ]);
+    expect(result.status).toBe('unknown');
+    expect(receipts).toBe(1);
+    expect(inspectRuns(config).runs.map((r) => r.orchestratorId)).toEqual([
+      first.orchestratorId,
+      second.orchestratorId,
+    ]);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('Run recovery restores attributed startup evidence without relaunch or touching another Run', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-receipt-')));
   mkdirSync(join(project, 'pool'));
   const config = {
@@ -162,68 +233,46 @@ test('lost startup notification recovers attributed receipt and result without r
     worktrees: true,
     base: 'main',
   };
-  const dir = join(config.root, '.runtime', 'tasks', 'task', 'attempt');
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, 'attempt.json');
-  writeFileSync(
-    file,
-    JSON.stringify({
-      id: 'attempt',
-      fleet: 'fleet',
-      directory: dir,
-      role: 'worker',
-      status: 'starting',
-      brief: 'work',
-      checkout: project,
-      runner: 'controlled',
-      created: 'now',
-    }),
-  );
-  writeFileSync(
-    join(dir, 'events.jsonl'),
-    '{}\n{"type":"thread.started","thread_id":"original-thread"}\n{"type":"turn.started"}\n',
-  );
-  const taskFile = join(dir, 'task.json');
-  writeFileSync(
-    taskFile,
-    JSON.stringify({ repository: 'owner/repo', issue: 12, status: 'blocked', turns: [] }),
-  );
-  let continued = 0;
-  let collected = 0;
+  let launches = 0;
   const runner = {
     name: 'codex',
-    async recoverReceipt() {
-      return {
-        conversation: 'original-thread',
-        address: 'controlled:receipt',
-        evidence: 'received',
-      };
-    },
     async preflight() {},
     async start() {
-      throw Error('must not relaunch');
+      launches++;
+      throw Error('notification lost');
     },
-    async collect(a: { conversation?: string }) {
-      expect(a.conversation).toBe('original-thread');
-      collected++;
-      return 'original result';
+    async recoverReceipt() {
+      return { conversation: 'original', address: 'tmux:original', evidence: 'receipt' };
     },
   };
   try {
-    const recovered = await recoverFleet(config, runner, undefined, async (work) => {
-      expect(work).toEqual({ repository: 'owner/repo', number: 12, epic: false });
-      expect(JSON.parse(readFileSync(file, 'utf8')).result).toBe('original result');
-      continued++;
-      return { status: 'done' };
+    const first = await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 1, title: 'one', body: 'one', kind: 'issue' },
+      'codex',
+    );
+    const other = await startRun(
+      config,
+      runner,
+      { repository: 'o/r', number: 2, title: 'two', body: 'two', kind: 'issue' },
+      'codex',
+    );
+    await expect(recoverRun(config, runner, '')).rejects.toThrow('valid Run id');
+    await expect(recoverRun(config, runner, 'missing')).rejects.toThrow('Unknown Run');
+    expect((await recoverRun(config, runner, first.id)).blockers).toEqual([]);
+    await recoverRun(config, runner, first.id);
+    const denied = await recoverRun(config, runner, first.id, {
+      replaceOrchestrator: true,
+      stopped: async () => false,
     });
-    expect(recovered.ownership).toBe('retained');
-    expect(recovered.continuations).toEqual([
-      { repository: 'owner/repo', number: 12, epic: false, result: { status: 'done' } },
-    ]);
-    expect(continued).toBe(1);
-    await recoverFleet(config, runner);
-    expect(collected).toBe(1);
-    expect(JSON.parse(readFileSync(file, 'utf8')).result).toBe('original result');
+    expect(denied.blockers).toContain(
+      'Orchestrator occupancy unresolved; verify termination before replacement',
+    );
+    expect(launches).toBe(2);
+    const runs = inspectRuns(config).runs;
+    expect(runs.find((r) => r.id === first.id)?.orchestrator?.conversation).toBe('original');
+    expect(runs.find((r) => r.id === other.id)?.orchestrator?.status).toBe('unknown');
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
