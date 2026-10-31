@@ -24,6 +24,8 @@ that shared accepted-disposition contract.
   Every analytical subfolder in `workflow/scripts/<stage>/` must be reflected 1:1 in `results/<stage>/`.
 - **`atomic`**: Dual-environment execution where local repository changes and remote HPC data assets migrate in lockstep.
   Avoid half-migrated states where code expects new paths while compute clusters host old directories.
+- **`native-executor`**: Direct cluster scheduling where Snakemake manages Slurm jobs through its executor profile (`--profile config/profiles/slurm`).
+  Retire external `.sbatch` scripts, wrapper submission loops, and monolithic fat-node allocations into declarative rule resources and executor profiles.
 - **`dry-run`**: Dependency planning via `snakemake -n`, without executing analysis jobs.
   Building the DAG still takes time and queries the filesystem; select checks by the migration risks in Phase 5.
 - **`sanitize`**: Safe environment cleanup of merged Git worktrees, unpartitioned root logs, and obsolete intermediate artifacts.
@@ -50,9 +52,10 @@ Audit for common structural debt:
 4. **Data Hygiene Violations**: Check for unpartitioned datasets in `data/`, plural-versus-singular folder inconsistencies (e.g., `processed/embeddings/` vs `processed/embedding/`), or non-data scratch files in data directories.
 5. **Log Smells**: Locate unpartitioned log files lingering in repository roots or parent `logs/` folders without rule-level and wildcard-level partitioning.
 6. **Dangling Workspaces**: List merged Git worktrees, stale branches, or abandoned scratch directories on remote hosts.
+7. **Cluster Orchestration Debt**: Locate standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local `snakemake -j` execution instead of using native executor profiles.
 
 **Completion Criterion**:
-Every structural debt item across all tiers (`data/`, `processed/`, `results/`, `logs/`, `workflow/`) is cataloged with exact file paths.
+Every structural debt item across all tiers (`data/`, `processed/`, `results/`, `logs/`, `workflow/`, and cluster submission scripts) is cataloged with exact file paths.
 
 ---
 
@@ -66,12 +69,12 @@ The ledger must specify:
 2. **Action Specifications**: Mark each action as `Rename`, `Move`, `Symlink`, or `Delete`.
    Use `Symlink` whenever external pipelines or historical checkpoints rely on legacy paths.
 3. **Dual-Environment Scope**: Indicate whether each path applies to Local, Remote HPC, or both.
-4. **Code Rewiring Matrix**: Enumerate every configuration file (`config/*.yaml`), workflow definition (`Snakefile`, `workflow/rules/*.smk`), script import, and test fixture that requires updated paths.
-5. **Sanitization Plan**: Specify obsolete worktrees, dead directories, and unpartitioned logs scheduled for removal.
+4. **Code and Orchestration Rewiring Matrix**: Enumerate every configuration file (`config/*.yaml`), workflow definition (`Snakefile`, `workflow/rules/*.smk`), script import, test fixture, and legacy `.sbatch` script requiring migration to rule resources (`threads:`, `resources:`) or profile settings.
+5. **Sanitization Plan**: Specify obsolete worktrees, dead directories, unpartitioned logs, and retired `.sbatch` scripts scheduled for removal.
 
 **Completion Criterion**:
 The migration ledger is reviewed and confirmed with the user.
-No file is moved or deleted until the ledger is settled.
+No file is moved, converted, or deleted until the ledger is settled.
 
 ---
 
@@ -87,6 +90,7 @@ Execution steps:
 3. **Script Invocations**: Update script relative paths in rule `script:` directives (e.g., `script: "../scripts/<stage>/<submodule>/<script>.py"`).
 4. **Internal Script References**: Update hardcoded directory defaults or relative output paths within standalone execution scripts.
 5. **Test Fixtures**: Update mock paths and test assertions in `tests/` to reflect new directory structures.
+6. **Cluster Scheduling Extraction**: Extract Slurm directives (`#SBATCH`) from legacy submission scripts into rule `threads:` and `resources:` (e.g., `mem_mb`, `runtime`). Scaffold or update `config/profiles/slurm/config.yaml`. Mark legacy `.sbatch` scripts for deletion in Phase 4.
 
 **Completion Criterion**:
 Zero references to legacy paths remain in `workflow/`, `config/`, and `tests/`.
@@ -110,7 +114,7 @@ Execution sequence:
    - Create backward-compatible symbolic links where the ledger explicitly requires external compatibility.
 3. **Environment Sanitization**:
    - Safely remove merged Git worktrees (`git worktree remove`) after verifying branch merges.
-   - Purge unpartitioned root logs and dead scratch directories identified in the ledger.
+   - Purge unpartitioned root logs, dead scratch directories, and retired `.sbatch` submission scripts identified in the ledger.
    - Consolidate orphan log files into partitioned stage folders under `logs/<stage>/`.
 
 **Completion Criterion**:
@@ -127,6 +131,7 @@ Verification steps:
 1. **Small-Data Tests**:
    - Use the project's small test configuration and representative fixtures to dry-run and execute affected targets. Cover changed imports, includes, input/output paths and dependency edges.
    - Run relevant unit and smoke tests; follow [Snakemake smoke validation](../pc-pipeline-snakemake/references/smoke.md) for fixtures, execution, and artifact checks.
+   - Verify cluster DAG resolution via `uv run snakemake --profile config/profiles/slurm -n` and confirm zero standalone step `.sbatch` scripts remain.
 2. **Production Path Checks**:
    - Verify the ledger's actual local and remote path mappings, input locations and compatibility symlinks; search active code and configuration for stale references.
 3. **Risk-Based Expansion**:
@@ -139,6 +144,6 @@ Verification steps:
    - Push changes to remote repository tracking branch.
 
 **Completion Criterion**:
-Affected-target small-data runs and relevant tests pass, and the ledger's real path mappings are verified.
+Affected-target small-data runs and relevant tests pass, zero standalone step sbatch scripts remain, and the ledger's real path mappings are verified.
 Any production DAG checks required by an identified risk pass; record their results and any production behavior not covered by the verification.
 Local Git working tree is clean and synchronized with upstream.

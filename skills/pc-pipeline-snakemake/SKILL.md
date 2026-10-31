@@ -110,11 +110,13 @@ records needed by the research; Snakemake rules produce the evidence they refere
 
 For cluster execution:
 
-- **Independent Units**: Represent independent samples, replicates, and parameter combinations as separate wildcard jobs with distinct outputs and logs. Submit each through a Snakemake cluster executor/profile; keep dependencies and aggregation in the DAG. Never pack these units into one multi-core allocation running Snakemake's local executor.
+- **Native Executor Orchestration**: Manage cluster execution strictly through Snakemake native executor plugins (e.g., `snakemake-executor-plugin-slurm`) configured via profile (`config/profiles/<profile>/config.yaml`). Rules must declare explicit resource directives (`threads:`, `resources: mem_mb=...`, `runtime=...`), allowing Snakemake to submit individual Slurm jobs directly.
+- **Native Executor over sbatch Scripts**: Never write standalone `.sbatch` scripts, shell loops (`submit_all.sh`), or manual job dependency chains (`--dependency=afterok`) for workflow steps; express all computational steps as Snakemake rules and let the DAG govern dependencies and retries. Never wrap `snakemake` inside a monolithic fat-node allocation running the local executor (`-j N`). If site policy forbids running long-lived controller processes on login nodes, use only the minimal 1-CPU controller daemon script at `config/profiles/slurm/controller.sbatch` (see [Slurm profiles](references/slurm.md)) to launch the native profile executor.
+- **Independent Units**: Represent independent samples, replicates, and parameter combinations as separate wildcard jobs with distinct outputs and logs. Submit each through a Snakemake cluster executor/profile; keep dependencies and aggregation in the DAG.
 - **Single-CPU Default**: Use `threads: 1` for units that fit one CPU and the site's memory limits. Match program workers and numerical-library thread pools to the allocation. Multi-core exceptions require tightly coupled parallel work or a unit's memory needs; record the reason beside the rule or profile override and request the minimum required CPUs.
 - **Site Configuration**: Take partition, account, concurrency, and memory limits from project/site configuration. Run the controller where site policy permits, with resources for orchestration only.
 - **Slurm**: When authoring or auditing Slurm execution, read [Slurm profiles](references/slurm.md).
-- **Configuration Gate**: Check every independent unit's job/output mapping, effective executor/profile and resource overrides, CPU/thread agreement, and each multi-core exception. Report findings and unresolved configuration separately from smoke execution results.
+- **Configuration Gate**: Verify native executor configuration, zero standalone step sbatch scripts or monolithic wrappers, every independent unit's job/output mapping, effective executor/profile and resource overrides, CPU/thread agreement, and each multi-core exception. Report findings and unresolved configuration separately from smoke execution results.
 
 ## Workflows
 
@@ -144,10 +146,10 @@ When generating a new Snakemake workflow or expanding an existing one:
    - Read [script.py](templates/script.py) as a syntax reference for isolated Python scripts with PEP 723 inline dependency metadata.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
    - Author domain logic in `workflow/rules/*.smk` using the **Stage Output Organization** and **Research State** conventions above.
-   - For cluster execution, apply **Independent Cluster Jobs** when choosing job boundaries, rule resources, and the execution profile.
+   - For cluster execution, apply **Independent Cluster Jobs**: declare per-rule `threads:` and `resources:`, configure native Slurm execution via `config/profiles/slurm/config.yaml`, and never author step-level `.sbatch` scripts or monolithic wrappers.
 5. **Verification**: Complete the **Smoke Execution Contract** and run `uv run snakemake --lint` through the project's configured execution route. Hand validated findings to `/pc-research-state` under **Research State**.
 
-**Completion Criterion**: Directory tree conforms to the standard layout; smoke execution and its artifact checks pass; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate also passes. Report any unexecuted checks as pending.
+**Completion Criterion**: Directory tree conforms to the standard layout; smoke execution and its artifact checks pass; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate also passes with zero standalone step sbatch scripts. Report any unexecuted checks as pending.
 
 ### Branch 2: Workflow Audit & Refactoring (Auditing)
 
@@ -155,7 +157,7 @@ When reviewing or optimizing an existing Snakemake pipeline:
 
 1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and research state follows **Research State** outside the DAG. Check Stage Output Organization conventions. For existing `summary/` records, have `/pc-research-state` integrate useful scientific content before retiring duplicate receipts, their rules, and targets; preserve evidence with independent value.
 2. **Check Parameter Validation & Smoke Testing**: Verify startup schema validation and evaluate the **Smoke Execution Contract**, including actual execution and artifact evidence for the affected chain.
-3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, evaluate the **Independent Cluster Jobs** configuration gate.
+3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, audit for orchestration debt: flag any standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local execution, and evaluate the **Independent Cluster Jobs** configuration gate.
    - When fixing a failed stage run, follow **Incremental recovery**. For a read-only audit, explain the failure and any triggered upstream rebuild, and propose the corresponding repair without claiming execution succeeded.
 4. **Check Environment Pinning (Conda & uv)**:
    - For Conda: verify per-rule `conda:` specifications target `workflow/envs/*.yaml` with pinned package versions. Flag any unpinned packages or floating tags. Ensure no loose `requirements.txt` pollute `workflow/envs/`.
@@ -165,4 +167,4 @@ When reviewing or optimizing an existing Snakemake pipeline:
    - Read [rule.smk](templates/rule.smk) and [script.py](templates/script.py) only when generating code replacement blocks to align syntax, directive formatting, and PEP 723 metadata.
    - Categorize findings into: Critical Violations, Architectural Improvements, and Drop-in Refactorings (concrete before/after code blocks).
 
-**Completion Criterion**: All 4 audit categories evaluated against the codebase; all identified defects accompanied by drop-in replacement code blocks. For cluster execution, include configuration-gate findings and unresolved configuration in the audit.
+**Completion Criterion**: All 4 audit categories evaluated against the codebase; all identified defects accompanied by drop-in replacement code blocks. For cluster execution, include configuration-gate findings, unretired sbatch scripts, and unresolved configuration in the audit.
