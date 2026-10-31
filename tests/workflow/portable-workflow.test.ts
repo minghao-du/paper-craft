@@ -141,6 +141,25 @@ describe('portable workflow file contract', () => {
     expect(readdirSync(join(pool, '.preserved'))).toEqual([]);
   });
 
+  it('subject command rejects missing Run with an actionable start command', () => {
+    const noRun = spawnSync(
+      resolve(repo, 'pc'),
+      [
+        'workflow',
+        'orchestrator',
+        'finalize-epic',
+        '7',
+        '--repository',
+        'owner/repo',
+        '--config',
+        configFile,
+      ],
+      { cwd: project, encoding: 'utf8' },
+    );
+    expect(noRun.status).not.toBe(0);
+    expect(noRun.stdout + noRun.stderr).toContain('workflow orchestrator start 7');
+  });
+
   it('exposes actual command exit codes and configured root through the CLI', () => {
     const launcher = join(temp, 'pc');
     symlinkSync(resolve(repo, 'pc'), launcher);

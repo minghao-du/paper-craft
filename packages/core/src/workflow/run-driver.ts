@@ -868,8 +868,8 @@ export async function releaseRunCheckout(
   });
 }
 
-/** Select the dedicated acknowledged Orchestrator for existing public business drivers. */
-export function subjectOrchestrator(
+/** Find subject ownership for existing internal workflow projections. */
+function findSubjectOrchestrator(
   config: FleetConfig,
   repository: string,
   number: number,
@@ -885,6 +885,29 @@ export function subjectOrchestrator(
         r.lifecycle !== 'completed'),
   );
   return run?.orchestrator;
+}
+
+/** Require an active subject Run and its recorded provider before command dispatch. */
+export function subjectOrchestrator(
+  config: FleetConfig,
+  repository: string,
+  number: number,
+): ManagedAttempt {
+  const attempt = findSubjectOrchestrator(config, repository, number);
+  const run = inspectRuns(config).runs.find((r) => r.id === attempt?.run);
+  const next = `pc workflow orchestrator start ${number} --provider <provider> --config ${config.file}`;
+  if (!run) throw new Error(`No Run owns ${repository}#${number}; run ${next}`);
+  if (!['codex', 'agy', 'claude'].includes(run.provider))
+    throw new Error(`Unsupported Run provider: ${String(run.provider)}`);
+  if (!run.orchestrator || run.orchestrator.status !== 'running')
+    throw new Error(
+      `No active Orchestrator for Run ${run.id}; run pc workflow orchestrator recover ${run.id} --config ${config.file}`,
+    );
+  if (run.orchestrator.runner !== run.provider)
+    throw new Error(
+      `Run provider mismatch: expected ${run.provider}, received ${run.orchestrator.runner}`,
+    );
+  return run.orchestrator;
 }
 /** Record a consuming Run reference without granting another execution owner. */
 export function referenceRunSubject(config: FleetConfig, runId: string, subject: string): string {
@@ -913,7 +936,7 @@ export function reserveRunCheckout(
   });
 }
 
-/** Launch a business turn through the owning Run protocol; legacy has no fabricated identity. */
+/** Launch a business turn only through its validated owning Run. */
 export async function startBusinessTurn(
   config: FleetConfig,
   runner: RunnerAdapter,
@@ -922,7 +945,11 @@ export async function startBusinessTurn(
   number: number,
 ): Promise<ManagedAttempt> {
   const owner = subjectOrchestrator(config, repository, number);
-  if (!owner?.run) return Object.assign(attempt, await runner.start(attempt));
+  if (!owner?.run)
+    throw new Error(
+      `No Run owns ${repository}#${number}; run pc workflow orchestrator start ${number} --provider <provider> --config ${config.file}`,
+    );
+  if (owner.runner !== runner.name) throw new Error('Run provider mismatch');
   const dispatch = await dispatchStage(config, runner, {
     runId: owner.run,
     authority: owner.id,

@@ -10,9 +10,9 @@ The conductor dispatch names one phase: `merge` or `cleanup`, the repository/PR,
 full evaluated head, checkout, authoritative config and durable evidence paths.
 Workers remain available for remediation and final records while releasing checkout ownership.
 
-For delivered managed tasks, `pc workflow conductor issue <number> --config <file>`
+For delivered managed tasks, `pc workflow orchestrator issue <number> --config <file>`
 automatically enters the PR check/repair/merge loop. To resume Landing directly, use
-`pc workflow conductor land <issue> --config <file>`. For EPIC tasks, supply
+`pc workflow orchestrator land <issue> --config <file>`. For EPIC tasks, supply
 `--confirmation-file <file>` with professional `{epic, head, evidence}` JSON.
 This confirms scope at the live head; user confirmation is reserved for closing the EPIC.
 The driver retains PR results and original execution receipts under configured runtime state.
@@ -109,7 +109,7 @@ and a new worker release. A merge result alone does not dispatch cleanup.
    independently from merge success. Release ownership and notify the conductor; only
    verified cleanup releases a fleet resource for another task.
 
-The managed `workflow conductor issue` and `land` paths continue after merge:
+The managed `workflow orchestrator issue` and `land` paths continue after merge:
 Worker final assessment and records, verified task-Issue closure, Landing evidence,
 verified state archive and Git bundle, checkout release, then Conductor reporting.
 Unknown execution occupancy or unaccounted checkout files retain the checkout.

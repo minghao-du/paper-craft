@@ -47,7 +47,7 @@ Use `pc workflow conductor recover` with the authoritative config to reconcile o
 and collect results; inspect that command's help for continuation options.
 
 For an explicit fresh round after a resolved failure, use
-`pc workflow conductor finalize-epic <number> --repository <owner/name> --config <file> --retry`.
+`pc workflow orchestrator finalize-epic <number> --repository <owner/name> --config <file> --retry`.
 Without `--retry`, that command resumes the original round. It never supplies human
 closure confirmation. Retry verifies that all prior specialist executions have stopped,
 retains their records, and invalidates prior final acceptance and closure confirmation.

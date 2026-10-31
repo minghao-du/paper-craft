@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
   startRun,
+  subjectOrchestrator,
   referenceRunSubject,
   inspectRuns,
   dispatchStage,
@@ -58,7 +59,26 @@ test('intake reconnects an acknowledged Run and rejects conflicting ownership wi
     );
     mkdirSync(runtime, { recursive: true });
     writeFileSync(join(runtime, 'conductor.json'), JSON.stringify({ status: 'running' }));
+    expect(() => subjectOrchestrator(config, subject.repository, 7)).toThrow(
+      'workflow orchestrator start 7',
+    );
     const first = await startRun(config, runner, subject, 'codex');
+    expect(subjectOrchestrator(config, subject.repository, 7).runner).toBe('codex');
+    updateRunRegistry(config, (registry) => {
+      registry.runs[0].provider = 'unsupported';
+    });
+    expect(() => subjectOrchestrator(config, subject.repository, 7)).toThrow(
+      'Unsupported Run provider',
+    );
+    updateRunRegistry(config, (registry) => {
+      registry.runs[0].provider = 'claude';
+    });
+    expect(() => subjectOrchestrator(config, subject.repository, 7)).toThrow(
+      'Run provider mismatch',
+    );
+    updateRunRegistry(config, (registry) => {
+      registry.runs[0].provider = 'codex';
+    });
     expect(first.orchestrator?.status).toBe('running');
     expect((await startRun(config, runner, subject, 'codex')).id).toBe(first.id);
     const other = await startRun(
