@@ -1,4 +1,4 @@
-/** Run intake and authoritative Fleet relationships; legacy Conductor records remain readable. */
+/** Run intake and authoritative Fleet relationships; managed execution belongs to one Run. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
@@ -15,8 +15,8 @@ import { claimDriver } from './driver-lock.js';
 import { stateDirectory } from './handoff.js';
 import { workflowSource, type FleetConfig } from './fleet-config.js';
 import {
-  inspectConductor,
-  startConductor,
+  inspectOrchestrator,
+  startOrchestrator,
   type ManagedAttempt,
   type RunnerAdapter,
 } from './runtime.js';
@@ -194,7 +194,7 @@ export async function startRun(
     try {
       run.launchStarted = true;
       save(config, registry);
-      run.orchestrator = await startConductor(config, runner, brief, id);
+      run.orchestrator = await startOrchestrator(config, runner, brief, id);
       run.lifecycle = run.orchestrator.status === 'running' ? 'running' : 'blocked';
     } catch (error) {
       run.lifecycle = 'blocked';
@@ -663,13 +663,13 @@ export async function recoverRun(
   const snapshot = inspectRuns(config);
   const run = snapshot.runs.find((r) => r.id === runId);
   if (!run || run.provider !== runner.name) throw new Error('Unknown Run or provider conflict');
-  if (run.launchStarted === false && !run.orchestrator && !inspectConductor(config, runId)) {
+  if (run.launchStarted === false && !run.orchestrator && !inspectOrchestrator(config, runId)) {
     updateRunRegistry(config, (registry) => {
       if (registry.revision !== snapshot.revision)
         throw new Error('Recovery inputs changed; retry');
       registry.runs.find((r) => r.id === runId)!.launchStarted = true;
     });
-    const attempt = await startConductor(
+    const attempt = await startOrchestrator(
       config,
       runner,
       readFileSync(run.brief.path, 'utf8'),
@@ -688,7 +688,7 @@ export async function recoverRun(
     string,
     Awaited<ReturnType<NonNullable<RunnerAdapter['recoverReceipt']>>>
   >();
-  const orchestrator = run.orchestrator ?? inspectConductor(config, runId);
+  const orchestrator = run.orchestrator ?? inspectOrchestrator(config, runId);
   const attempts =
     snapshot.dispatches?.filter((d) => d.runId === runId).flatMap((d) => d.attempts.slice(-1)) ??
     [];
@@ -891,7 +891,7 @@ function findSubjectOrchestrator(
 }
 
 /** Require an active subject Run and its recorded provider before command dispatch. */
-export function subjectOrchestrator(
+export function orchestratorForSubject(
   config: FleetConfig,
   repository: string,
   number: number,
@@ -947,7 +947,7 @@ export async function startBusinessTurn(
   repository: string,
   number: number,
 ): Promise<ManagedAttempt> {
-  const owner = subjectOrchestrator(config, repository, number);
+  const owner = orchestratorForSubject(config, repository, number);
   if (!owner?.run)
     throw new Error(
       `No Run owns ${repository}#${number}; run pc workflow orchestrator start ${number} --provider <provider> --config ${config.file}`,

@@ -14,7 +14,7 @@ import {
   readIssue,
 } from '../../packages/core/src/workflow/issue-driver.js';
 import { type ManagedAttempt } from '../../packages/core/src/workflow/runtime.js';
-test('standalone intake automatically routes two worker results back to conductor without replay', async () => {
+test('standalone intake automatically routes two worker results back to orchestrator without replay', async () => {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'pc-drive-')));
   mkdirSync(join(project, 'pool'));
   const git = (...args: string[]) => execFileSync('git', args, { cwd: project });

@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import {
-  startConductor,
-  inspectConductor,
+  startOrchestrator,
+  inspectOrchestrator,
   type RunnerAdapter,
 } from '../../packages/core/src/workflow/runtime.js';
 
@@ -32,11 +32,12 @@ test('startup requires runner evidence and isolates fleets, retaining a failed b
     },
   };
   try {
-    const first = await startConductor(a, runner, 'read AGENTS.md', 'run-a');
+    const first = await startOrchestrator(a, runner, 'read AGENTS.md', 'run-a');
     expect(first.status).toBe('running');
-    expect(inspectConductor(a, 'run-a')?.conversation).toBe(first.id);
-    await expect(startConductor(a, runner, 'duplicate', 'run-a')).rejects.toThrow(/occupied/);
-    const failed = await startConductor(
+    expect(first.role).toBe('orchestrator');
+    expect(inspectOrchestrator(a, 'run-a')?.conversation).toBe(first.id);
+    await expect(startOrchestrator(a, runner, 'duplicate', 'run-a')).rejects.toThrow(/occupied/);
+    const failed = await startOrchestrator(
       b,
       {
         ...runner,
@@ -48,7 +49,7 @@ test('startup requires runner evidence and isolates fleets, retaining a failed b
       'run-b',
     );
     expect(failed.status).toBe('unknown');
-    expect(inspectConductor(b, 'run-b')).toMatchObject({
+    expect(inspectOrchestrator(b, 'run-b')).toMatchObject({
       brief: 'keep this brief',
       error: 'no runner acknowledgement',
     });
@@ -79,12 +80,12 @@ test('missing capabilities refuse launch; an empty receipt cannot report success
   };
   try {
     // @ts-expect-error Exercise the JavaScript boundary without a Run id.
-    await expect(startConductor(config, runner, 'brief')).rejects.toThrow('Run id');
-    await expect(startConductor(config, runner, 'brief', 'run-a')).rejects.toThrow(
+    await expect(startOrchestrator(config, runner, 'brief')).rejects.toThrow('Run id');
+    await expect(startOrchestrator(config, runner, 'brief', 'run-a')).rejects.toThrow(
       'missing input capability',
     );
-    expect(inspectConductor(config, 'run-a')).toBeUndefined();
-    const result = await startConductor(
+    expect(inspectOrchestrator(config, 'run-a')).toBeUndefined();
+    const result = await startOrchestrator(
       config,
       {
         ...runner,

@@ -18,7 +18,7 @@ import { workflowSource, type FleetConfig } from './fleet-config.js';
 /** Identity of the accountable parent and its logical task. */
 export interface TaskParent {
   id: string;
-  role: 'conductor' | 'epic' | 'worker' | 'landing';
+  role: 'orchestrator' | 'epic' | 'worker' | 'landing';
   task: string;
 }
 /** Requested permission and explicit file allocation for a temporary task. */
@@ -115,7 +115,7 @@ export class Subagents {
       !input.brief.trim() ||
       !input.parent.id ||
       !input.parent.task ||
-      !['conductor', 'epic', 'worker', 'landing'].includes(input.parent.role)
+      !['orchestrator', 'epic', 'worker', 'landing'].includes(input.parent.role)
     )
       throw new Error('Expected parent identity, core role, task and brief');
     if (!['read', 'write'].includes(input.mode))
@@ -272,7 +272,7 @@ export class Subagents {
     if (!task.collected) throw new Error('Collect persisted result before cleanup');
     rmSync(task.directory, { recursive: true, force: true });
   }
-  /** Request durable Worker ownership through Conductor, without launching another lifecycle. */
+  /** Request durable Worker ownership through Orchestrator, without launching another lifecycle. */
   handoff(id: string, issue: number): ShortTask['handoff'] {
     if (!Number.isSafeInteger(issue) || issue < 1) throw new Error('Expected Worker Issue number');
     const task = this.get(id);

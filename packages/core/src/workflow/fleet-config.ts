@@ -13,7 +13,7 @@ const schema = z.object({
   base_branch: z.string().min(1).default('main'),
 });
 
-/** Canonical project and pool paths from an explicit conductor configuration. */
+/** Canonical project and pool paths from an explicit Fleet configuration. */
 export interface FleetConfig {
   file: string;
   project: string;

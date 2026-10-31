@@ -1,5 +1,5 @@
 import {
-  subjectOrchestrator,
+  orchestratorForSubject,
   inspectRuns,
   updateRunRegistry,
   dispatchStage,
@@ -54,7 +54,7 @@ export async function finishDelivery(
     .digest('hex');
   const home = stateDirectory(config, '.runtime', 'completion', key);
   const file = join(home, 'completion.json');
-  const orchestrator = subjectOrchestrator(config, delivery.repository, delivery.issue);
+  const orchestrator = orchestratorForSubject(config, delivery.repository, delivery.issue);
   const save = () => {
     const tmp = file + randomUUID();
     writeFileSync(tmp, JSON.stringify(run, null, 2));
@@ -119,7 +119,7 @@ export async function finishDelivery(
       run.turns.push(attempt);
       save();
       let receipt;
-      if (run.runId && orchestrator && role !== 'conductor') {
+      if (run.runId && orchestrator && role !== 'orchestrator') {
         const dispatch = await dispatchStage(config, runner, {
           runId: run.runId,
           authority: orchestrator.id,
@@ -315,7 +315,7 @@ export async function finishDelivery(
       save();
     }
     await turn(
-      'conductor',
+      'orchestrator',
       `Completion ${delivery.repository} Issue #${delivery.issue}, PR #${pr}: Worker records complete, Issue closed, archive ${run.archive}, checkout released. Report final result.`,
     );
     run.status = 'done';

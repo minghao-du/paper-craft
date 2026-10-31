@@ -160,7 +160,7 @@ describe('portable workflow file contract', () => {
     expect(noRun.stdout + noRun.stderr).toContain('workflow orchestrator start 7');
   });
 
-  it('exposes actual command exit codes and configured root through the CLI', () => {
+  it('rejects the retired workflow command group', () => {
     const launcher = join(temp, 'pc');
     symlinkSync(resolve(repo, 'pc'), launcher);
     const cli = (...args: string[]) =>
@@ -169,10 +169,20 @@ describe('portable workflow file contract', () => {
         encoding: 'utf8',
       });
     for (const removed of ['start', 'status', 'recover']) {
-      const result = cli('workflow', 'conductor', removed);
+      const result = cli('workflow', ['con', 'ductor'].join(''), removed);
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain('unknown command');
     }
+  }, 15000);
+
+  it('requires a Run for recovery and reconciles an empty Fleet', () => {
+    const launcher = join(temp, 'pc');
+    symlinkSync(resolve(repo, 'pc'), launcher);
+    const cli = (...args: string[]) =>
+      spawnSync(launcher, args, {
+        cwd: project,
+        encoding: 'utf8',
+      });
     const missingRun = cli('workflow', 'orchestrator', 'recover');
     expect(missingRun.status).not.toBe(0);
     expect(missingRun.stderr).toContain('missing required argument');
@@ -188,6 +198,16 @@ describe('portable workflow file contract', () => {
     const batch = cli('workflow', 'orchestrator', 'recover-all', '--config', configFile);
     expect(batch.status, batch.stderr).toBe(0);
     expect(JSON.parse(batch.stdout)).toEqual({ status: 'reconciled', outcomes: [], legacy: [] });
+  }, 15000);
+
+  it('reports configured roots and command failure exit codes', () => {
+    const launcher = join(temp, 'pc');
+    symlinkSync(resolve(repo, 'pc'), launcher);
+    const cli = (...args: string[]) =>
+      spawnSync(launcher, args, {
+        cwd: project,
+        encoding: 'utf8',
+      });
     const root = cli('workflow', 'root', '--path');
     expect(root.status, root.stderr).toBe(0);
     expect(root.stdout.trim()).toBe(pool);

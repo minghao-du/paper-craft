@@ -101,7 +101,7 @@ test('landing repairs failed checks and rechecks changed heads without human app
       checkout: project,
     });
     expect(result.status).toBe('merged');
-    expect(roles.filter((r) => r !== 'conductor')).toEqual([
+    expect(roles.filter((r) => r !== 'orchestrator')).toEqual([
       'landing',
       'landing',
       'worker',

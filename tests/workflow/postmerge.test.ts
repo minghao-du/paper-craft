@@ -45,7 +45,7 @@ test('merged delivery records and archives before releasing a real worktree; unk
       return { conversation: a.id, address: 'tmux:test', evidence: 'started' };
     },
     async collect(a: IssueTurn) {
-      if (a.role === 'conductor' && !interrupted) {
+      if (a.role === 'orchestrator' && !interrupted) {
         interrupted = true;
         throw Error('notification lost after cleanup');
       }
@@ -57,7 +57,7 @@ test('merged delivery records and archives before releasing a real worktree; unk
             followups: [],
             releaseEvidence: 'Controlled runner termination independently verified by driver',
           })
-        : 'Conductor received completion';
+        : 'Orchestrator received completion';
     },
     async stopped() {
       return stopped;
@@ -140,7 +140,7 @@ test('merged delivery records and archives before releasing a real worktree; unk
     expect(existsSync(checkout)).toBe(false);
     expect(existsSync(join(done.archive!, '.epic-worklog.md'))).toBe(true);
     expect(closed).toBe(1);
-    expect(roles).toEqual(['worker', 'landing', 'conductor']);
+    expect(roles).toEqual(['worker', 'landing', 'orchestrator']);
     const graph = inspectRuns(config);
     expect(graph.deliveries?.[0]).toMatchObject({
       runId: managed.id,

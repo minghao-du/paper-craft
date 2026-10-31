@@ -98,8 +98,8 @@ function inspectSlot(
   const ref = reference(config);
   if (fetch) git(path, 'fetch', '--quiet', 'origin', `+refs/heads/${config.base}:${ref}`);
   const tip = git(path, 'rev-parse', '--verify', `${ref}^{commit}`);
-  const conductorTip = git(config.project, 'rev-parse', '--verify', `${ref}^{commit}`);
-  if (tip !== conductorTip)
+  const projectTip = git(config.project, 'rev-parse', '--verify', `${ref}^{commit}`);
+  if (tip !== projectTip)
     throw new Error(`Slot ${name} has a different cached base; rerun with --fetch`);
   const head = git(path, 'rev-parse', 'HEAD');
   const branch = git(path, 'branch', '--show-current');

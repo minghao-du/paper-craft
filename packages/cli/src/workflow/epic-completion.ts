@@ -19,7 +19,7 @@ import type { CompletionRunner } from '@paper-craft/core/workflow/postmerge';
 import { driveIssue, readIssue, type IssueTurn } from '@paper-craft/core/workflow/issue-driver';
 import {
   inspectRuns,
-  subjectOrchestrator,
+  orchestratorForSubject,
   referenceRunSubject,
   updateRunRegistry,
 } from '@paper-craft/core/workflow/run-driver';
@@ -294,10 +294,10 @@ export async function finishEpic(
           execFileSync('git', ['status', '--porcelain'], { cwd: checkout, encoding: 'utf8' }).trim()
         )
           throw new Error('Finalization snapshot changed; preserve and reconcile checkout');
-        const conductor = subjectOrchestrator(config, epic.repository, epic.epic);
+        const orchestrator = orchestratorForSubject(config, epic.repository, epic.epic);
         const terminalSession = process.env.TMUX
           ? execFileSync('tmux', ['display-message', '-p', '#S'], { encoding: 'utf8' }).trim()
-          : conductor?.address?.replace(/^tmux:/, '').split(':')[0];
+          : orchestrator?.address?.replace(/^tmux:/, '').split(':')[0];
 
         return {
           head,

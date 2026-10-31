@@ -146,7 +146,7 @@ test('EPIC planning dispatches independent work concurrently, then dependencies,
     expect(run.status).toBe('delivered');
     expect(peak).toBe(2);
     expect(run.goal).toBe('deliver all');
-    expect(run.turns.filter((t) => t.role === 'conductor').at(-1)?.brief).toContain('result 9');
+    expect(run.turns.filter((t) => t.role === 'orchestrator').at(-1)?.brief).toContain('result 9');
     expect(
       run.turns.filter((t) => t.role === 'worker').every((t) => t.brief.includes('AGENTS.md')),
     ).toBe(true);

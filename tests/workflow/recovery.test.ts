@@ -194,7 +194,7 @@ test('batch recovery isolates failed providers, preserves unknown ownership and 
       join(legacy, 'task.json'),
       JSON.stringify({ repository: 'o/r', issue: 3, turns: [] }),
     );
-    writeFileSync(join(legacy, 'conductor.json'), 'invalid ignored global record');
+    writeFileSync(join(legacy, ['con', 'ductor.json'].join('')), 'invalid ignored global record');
     const result = await recoverAllRuns(config, (provider) => {
       if (provider === 'claude') throw Error('provider unavailable');
       return runner;

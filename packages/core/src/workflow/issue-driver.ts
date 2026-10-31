@@ -4,7 +4,7 @@ import {
   acceptValidatedBusinessTurns,
   validateImplementationResult,
 } from './run-driver.js';
-import { subjectOrchestrator, reserveRunCheckout, inspectRuns } from './run-driver.js';
+import { orchestratorForSubject, reserveRunCheckout, inspectRuns } from './run-driver.js';
 import { claimDriver } from './driver-lock.js';
 /** Durable automatic standalone Issue round trips. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -104,7 +104,7 @@ export function inspectIssueRun(
   const file = join(stateDirectory(config, '.runtime', 'tasks', key), 'task.json');
   return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as IssueRun) : undefined;
 }
-/** Run automatic Conductor/Worker turns; persisted receipts prevent duplicate dispatch. */
+/** Run automatic Orchestrator/Worker turns; persisted receipts prevent duplicate dispatch. */
 export async function driveIssue(
   config: FleetConfig,
   runner: RoundRunner,
@@ -120,12 +120,13 @@ export async function driveIssue(
     throw new Error('Child dependencies unresolved; refresh tracker metadata');
   if (issue.blockedBy?.length) throw new Error(`Unmet dependencies: ${issue.blockedBy.join(', ')}`);
   await runner.preflight();
-  const conductor = subjectOrchestrator(config, issue.repository, issue.number);
-  if (conductor?.run && conductor.runner !== runner.name) throw new Error('Run provider conflict');
-  if (!conductor?.conversation || conductor.status !== 'running')
-    throw new Error('Expected acknowledged managed Conductor');
-  if (conductor.run) {
-    const owner = inspectRuns(config).runs.find((r) => r.id === conductor.run);
+  const orchestrator = orchestratorForSubject(config, issue.repository, issue.number);
+  if (orchestrator?.run && orchestrator.runner !== runner.name)
+    throw new Error('Run provider conflict');
+  if (!orchestrator?.conversation || orchestrator.status !== 'running')
+    throw new Error('Expected acknowledged managed Orchestrator');
+  if (orchestrator.run) {
+    const owner = inspectRuns(config).runs.find((r) => r.id === orchestrator.run);
     const finding =
       owner?.epicClosure &&
       owner.pipeline?.findings.find(
@@ -141,7 +142,7 @@ export async function driveIssue(
       throw new Error(`Child execution owned by EPIC Run ${owner.id}; inspect or resume that Run`);
   }
   // Finish its initial turn before resuming the same conversation.
-  await runner.collect(conductor);
+  await runner.collect(orchestrator);
   const key = createHash('sha256')
     .update(`${config.file}:${issue.repository}:${issue.number}`)
     .digest('hex');
@@ -150,7 +151,7 @@ export async function driveIssue(
   const file = join(home, 'task.json');
   const lock = join(
     stateDirectory(config, '.runtime'),
-    `driver-${conductor.run ?? conductor.fleet}.lock`,
+    `driver-${orchestrator.run ?? orchestrator.fleet}.lock`,
   );
   try {
     claimDriver(lock);
@@ -204,9 +205,9 @@ export async function driveIssue(
           save(file, task);
         }
         const completed = task.turns.at(-1);
-        let role: ManagedAttempt['role'] = 'conductor';
+        let role: ManagedAttempt['role'] = 'orchestrator';
         let brief: string;
-        if (completed?.role === 'conductor') {
+        if (completed?.role === 'orchestrator') {
           const decision = JSON.parse(completed.result!);
           if (decision.action === 'done') {
             await acceptValidatedBusinessTurns(
@@ -224,7 +225,7 @@ export async function driveIssue(
             typeof decision.brief !== 'string' ||
             !decision.brief.trim()
           )
-            throw new Error('Expected Conductor action worker with brief, or done');
+            throw new Error('Expected Orchestrator action worker with brief, or done');
           role = 'worker';
           brief = `Read project AGENTS.md at ${join(config.project, 'AGENTS.md')} first and obey all applicable lower directory guidance in your checkout.\nRepository ${issue.repository}, Issue #${issue.number}.\nParent context: ${issue.parent ?? 'none'}; no siblings or parent closure authorized.\nScope: ${issue.body}\n${decision.brief}\nReturn JSON {"status":"completed","repository":"${issue.repository}","issue":${issue.number},"evidence":"implementation and tests"} only after successful scoped implementation. Otherwise return status changes_needed with evidence. Stop after this assigned stage.`;
         } else
@@ -234,7 +235,7 @@ export async function driveIssue(
         mkdirSync(dir, { recursive: true });
         const turn: IssueTurn = {
           id,
-          fleet: conductor.fleet,
+          fleet: orchestrator.fleet,
           role,
           runner: runner.name,
           brief,
@@ -242,13 +243,13 @@ export async function driveIssue(
           created: new Date().toISOString(),
           directory: dir,
           checkout: role === 'worker' ? task.checkout : config.project,
-          conversation: role === 'conductor' ? conductor.conversation : undefined,
+          conversation: role === 'orchestrator' ? orchestrator.conversation : undefined,
         };
         writeFileSync(join(dir, 'brief.md'), brief);
         task.turns.push(turn);
         save(file, task);
-        if (role === 'worker' && conductor.run)
-          reserveRunCheckout(config, conductor.run, conductor.id, task.checkout);
+        if (role === 'worker' && orchestrator.run)
+          reserveRunCheckout(config, orchestrator.run, orchestrator.id, task.checkout);
         const receipt = await startBusinessTurn(
           config,
           runner,

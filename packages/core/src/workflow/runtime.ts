@@ -10,9 +10,9 @@ import type { FleetConfig } from './fleet-config.js';
 export interface ManagedAttempt {
   id: string;
   fleet: string;
-  /** Run identity when launched through additive Run intake. */
+  /** Run ownership recorded at intake. */
   run?: string;
-  role: 'conductor' | 'worker' | 'epic' | 'landing' | 'pipeline-audit' | 'research-state';
+  role: 'orchestrator' | 'worker' | 'epic' | 'landing' | 'pipeline-audit' | 'research-state';
   runner: string;
   brief: string;
   status: 'starting' | 'running' | 'unknown';
@@ -53,27 +53,27 @@ function save(path: string, attempt: ManagedAttempt): void {
   renameSync(temporary, path);
 }
 /** Read durable occupancy, without treating missing runtime evidence as release. */
-export function inspectConductor(config: FleetConfig, run: string): ManagedAttempt | undefined {
+export function inspectOrchestrator(config: FleetConfig, run: string): ManagedAttempt | undefined {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
   const path = join(home(config), `orchestrator-${run}.json`);
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as ManagedAttempt) : undefined;
 }
-/** Exclusively claim the Run conductor, preserving failed/unknown launches for recovery. */
-export async function startConductor(
+/** Exclusively claim the Run orchestrator, preserving failed/unknown launches for recovery. */
+export async function startOrchestrator(
   config: FleetConfig,
   runner: RunnerAdapter,
   brief: string,
   run: string,
 ): Promise<ManagedAttempt> {
   if (!run || !/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Expected a valid Run id');
-  if (!brief.trim()) throw new Error('Expected a non-empty Conductor brief');
+  if (!brief.trim()) throw new Error('Expected a non-empty Orchestrator brief');
   await runner.preflight();
   mkdirSync(home(config), { recursive: true });
   try {
     mkdirSync(join(home(config), `orchestrator-${run}.lock`));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST')
-      throw new Error('Conductor occupied; inspect persisted attempt before recovery', {
+      throw new Error('Orchestrator occupied; inspect persisted attempt before recovery', {
         cause: error,
       });
     throw error;
@@ -85,7 +85,7 @@ export async function startConductor(
     id,
     run,
     fleet: createHash('sha256').update(config.file).digest('hex'),
-    role: 'conductor',
+    role: 'orchestrator',
     runner: runner.name,
     brief,
     status: 'starting',
@@ -234,7 +234,7 @@ export class CodexRunner implements RunnerAdapter {
     const script = join(attempt.directory, 'launch.sh');
     writeFileSync(
       script,
-      `#!/bin/sh\n${attempt.role === 'conductor' ? `tmux set-option -w -t ${shell(session + ':0')} remain-on-exit on\n` : ''}${this.command(attempt)} < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
+      `#!/bin/sh\n${attempt.role === 'orchestrator' ? `tmux set-option -w -t ${shell(session + ':0')} remain-on-exit on\n` : ''}${this.command(attempt)} < ${shell(join(attempt.directory, 'brief.md'))} > ${shell(events)} 2> ${shell(join(attempt.directory, 'stderr.log'))}\nprintf '%s' "$?" > ${shell(join(attempt.directory, 'exit-code'))}\n`,
       { mode: 0o700 },
     );
     if (specialist) execFileSync('tmux', ['has-session', '-t', attempt.terminalSession!]);

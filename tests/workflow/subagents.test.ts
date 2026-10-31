@@ -34,7 +34,7 @@ test('all core parents delegate owned read/write tasks with durable results, que
     },
   };
   try {
-    const tasks = ['conductor', 'epic', 'worker', 'landing'].map((role) =>
+    const tasks = ['orchestrator', 'epic', 'worker', 'landing'].map((role) =>
       manager.create({
         parent: { id: role, role: role as 'worker', task: 'issue-1' },
         checkout: root,

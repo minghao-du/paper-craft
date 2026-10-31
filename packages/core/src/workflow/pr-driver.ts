@@ -1,5 +1,5 @@
 import {
-  subjectOrchestrator,
+  orchestratorForSubject,
   dispatchStage,
   publishStageReceipt,
   acceptStageReceipt,
@@ -69,7 +69,7 @@ export async function drivePullRequest(
     delivery.issue < 1
   )
     throw new Error('Expected repository and positive Issue identity');
-  const owner = subjectOrchestrator(config, delivery.repository, delivery.issue);
+  const owner = orchestratorForSubject(config, delivery.repository, delivery.issue);
   if (owner.runner !== runner.name) throw new Error('Run provider mismatch');
   await runner.preflight();
   const key = createHash('sha256')
@@ -86,7 +86,7 @@ export async function drivePullRequest(
       ? JSON.parse(readFileSync(file, 'utf8'))
       : { pr: await github.ensure(delivery), status: 'running', turns: [] };
     const state = run!;
-    const orchestrator = subjectOrchestrator(config, delivery.repository, delivery.issue);
+    const orchestrator = orchestratorForSubject(config, delivery.repository, delivery.issue);
     if (orchestrator?.run) state.runId = orchestrator.run;
     const record = () => {
       save(file, state);

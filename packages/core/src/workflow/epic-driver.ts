@@ -5,7 +5,7 @@ import {
   validateImplementationResult,
 } from './run-driver.js';
 import {
-  subjectOrchestrator,
+  orchestratorForSubject,
   reserveRunCheckout,
   referenceRunSubject,
   inspectRuns,
@@ -101,10 +101,11 @@ export async function driveEpic(
   )
     throw new Error('Expected repository, positive EPIC number and Worker limit');
   await runner.preflight();
-  const conductor = subjectOrchestrator(config, epic.repository, epic.number);
-  if (conductor?.run && conductor.runner !== runner.name) throw new Error('Run provider conflict');
-  if (!conductor?.conversation || conductor.status !== 'running')
-    throw new Error('Expected acknowledged managed Conductor');
+  const orchestrator = orchestratorForSubject(config, epic.repository, epic.number);
+  if (orchestrator?.run && orchestrator.runner !== runner.name)
+    throw new Error('Run provider conflict');
+  if (!orchestrator?.conversation || orchestrator.status !== 'running')
+    throw new Error('Expected acknowledged managed Orchestrator');
   const home = location(config, epic.repository, epic.number);
   mkdirSync(home, { recursive: true });
   const file = join(home, 'epic.json');
@@ -112,7 +113,7 @@ export async function driveEpic(
   if (previous?.status === 'delivered') return previous;
   const lock = join(
     stateDirectory(config, '.runtime'),
-    `driver-${conductor.run ?? conductor.fleet}.lock`,
+    `driver-${orchestrator.run ?? orchestrator.fleet}.lock`,
   );
   claimDriver(lock);
   const run: EpicRun = previous ?? {
@@ -173,7 +174,7 @@ export async function driveEpic(
     mkdirSync(directory, { recursive: true });
     const t: IssueTurn = {
       id,
-      fleet: conductor!.fleet,
+      fleet: orchestrator!.fleet,
       role,
       runner: runner.name,
       brief,
@@ -184,16 +185,16 @@ export async function driveEpic(
       conversation:
         role === 'epic'
           ? epicConversation
-          : role === 'conductor'
-            ? conductor!.conversation
+          : role === 'orchestrator'
+            ? orchestrator!.conversation
             : undefined,
     };
     run.turns.push(t);
     writeFileSync(join(directory, 'brief.md'), brief);
     save(file, run);
     try {
-      if (role === 'worker' && conductor!.run)
-        reserveRunCheckout(config, conductor!.run, conductor!.id, checkout);
+      if (role === 'worker' && orchestrator!.run)
+        reserveRunCheckout(config, orchestrator!.run, orchestrator!.id, checkout);
       const receipt = await startBusinessTurn(config, runner, t, epic.repository, subjectNumber);
       if (!receipt.conversation || !receipt.address || !receipt.evidence)
         throw new Error('Expected actual Runner receipt');
@@ -260,9 +261,9 @@ export async function driveEpic(
     save(file, run);
   }
   const schema =
-    'Reply only JSON {"goal":"original objective","constraints":[],"tasks":[{"number":1,"title":"task","body":"scope","brief":"bounded stage","blockedBy":[],"ready":true}]}. Include every outstanding task and preserve delivered tasks. Judge semantic dependencies and readiness; Conductor alone allocates checkouts and launches Workers. Do not create Worker sessions yourself.';
+    'Reply only JSON {"goal":"original objective","constraints":[],"tasks":[{"number":1,"title":"task","body":"scope","brief":"bounded stage","blockedBy":[],"ready":true}]}. Include every outstanding task and preserve delivered tasks. Judge semantic dependencies and readiness; Orchestrator alone allocates checkouts and launches Workers. Do not create Worker sessions yourself.';
   try {
-    await runner.collect(conductor);
+    await runner.collect(orchestrator);
     plan(
       await turn(
         'epic',
@@ -294,13 +295,13 @@ export async function driveEpic(
       if (!config.worktrees) throw new Error('Automatic EPIC allocation requires local_worktrees');
       // Claim or reference every child before allocating any execution.
       for (const task of ready) {
-        if (!conductor.run) continue;
+        if (!orchestrator.run) continue;
         const owner = referenceRunSubject(
           config,
-          conductor.run,
+          orchestrator.run,
           `${epic.repository}#${task.number}`,
         );
-        if (owner === conductor.run) continue;
+        if (owner === orchestrator.run) continue;
         const ownerRun = inspectRuns(config).runs.find((r) => r.id === owner)!;
         if (ownerRun.provider !== runner.name)
           throw new Error('Referenced child provider conflict');
@@ -380,7 +381,7 @@ export async function driveEpic(
           'Worker stage failed; retained attempts and checkout ownership require reconciliation',
         );
       await turn(
-        'conductor',
+        'orchestrator',
         `EPIC ${epic.repository}#${epic.number} attributed Worker results: ${JSON.stringify(ready)}. Record results for professional EPIC evaluation. Reply with coordination feedback; do not dispatch duplicate work.`,
       );
       plan(
