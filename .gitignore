@@ -3,7 +3,7 @@ _ignore/
 .agents/
 .beads/
 .last-checkin.json
-AGENTS.md
+/AGENTS.md
 .env
 
 site/
