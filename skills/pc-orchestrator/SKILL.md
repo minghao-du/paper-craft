@@ -31,8 +31,9 @@ Read the GitHub issue, native parent/dependency metadata, and native sub-Issues 
 - **Root Issue intake:** Dispatch the initial planning stage via `pc-issue-plan` (`role: 'planner'`, `stage: 'planning'`) to determine whether the Issue can be delivered directly in a single iteration or must be decomposed into sub-issues.
 
 ```bash
-pc workflow orchestrator start 79 --provider agy --config /absolute/path/.epic-config.json
-pc workflow orchestrator status --config /absolute/path/.epic-config.json
+pc workflow init --repo owner/repo
+pc workflow start 79 --provider agy --config /absolute/path/.pc-workflow.yml
+pc workflow status --config /absolute/path/.pc-workflow.yml
 ```
 
 Supply additional Requirements with `--requirements <text>` or `--requirements-file <file>` (UTF-8), never both. File contents are captured at intake, so later work does not depend on the source file. Requirements become immutable Run context inherited by every role, retry, and replacement; child-specific assignments add scope without replacing those constraints. Repeated start may omit Requirements to reuse them or supply identical text; different text rejects. For Demo rounds, pass `--demo-round <id>` and `--demo-config <file>` (or bind via the generated workflow config) to apply minimal immutable demo run constraints. Retain the returned Run identity.

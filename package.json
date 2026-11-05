@@ -6,8 +6,12 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "pc": "./pc"
+  },
   "scripts": {
-    "lint": "eslint \"scripts/docs/**/*.ts\"",
+    "build": "tsc",
+    "lint": "eslint --no-error-on-unmatched-pattern \"scripts/docs/**/*.ts\" \"packages/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
