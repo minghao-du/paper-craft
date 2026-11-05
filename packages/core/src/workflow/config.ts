@@ -34,6 +34,7 @@ export const DEFAULT_WORKFLOW_DEFINITION: WorkflowDefinition = {
     review: {
       role: 'reviewer',
       guidance: 'Review implementation against acceptance criteria and quality standards',
+      input_artifacts: ['diff', 'test_results'],
       transitions: {
         pass: 'merge',
         rework: 'implementation',
@@ -43,6 +44,7 @@ export const DEFAULT_WORKFLOW_DEFINITION: WorkflowDefinition = {
     merge: {
       role: 'merger',
       guidance: 'Verify PR head matches approved review commit and merge',
+      input_artifacts: ['reviewed_commit'],
       transitions: {
         completed: 'finalization',
         blocked: 'blocked',
@@ -51,6 +53,7 @@ export const DEFAULT_WORKFLOW_DEFINITION: WorkflowDefinition = {
     finalization: {
       role: 'finalizer',
       guidance: 'Record final records, preserve artifacts, and release resources',
+      input_artifacts: ['merged_commit'],
       transitions: {
         completed: 'completed',
         blocked: 'blocked',

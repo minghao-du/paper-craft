@@ -30,6 +30,8 @@ export interface WorkflowStep {
   guidance: string;
   /** Map of permitted role outcome strings to target steps or terminal states. */
   transitions: Record<string, string>;
+  /** Optional input artifact or context references expected for this step. */
+  input_artifacts?: string[];
 }
 
 /**
@@ -207,6 +209,10 @@ export interface StatusActiveTask {
   handle?: ExecutionHandle;
   /** Process/session execution status from provider. */
   execution_status?: ExecutionStatus;
+  /** Exit code if the process exited. */
+  exit_code?: number;
+  /** Diagnostic error or failure message if uncertain or errored. */
+  error?: string;
   /** Business result outcome if submitted. */
   business_outcome?: string;
   /** Submitted task result if available. */
@@ -261,6 +267,46 @@ export interface AgentExecutor {
 }
 
 /**
+ * Prior evidence and review findings carried forward into subsequent steps (e.g. rework).
+ */
+export interface PriorEvidence {
+  /** The specific git commit SHA evaluated during review. */
+  evaluatedCommit?: string;
+  /** Detailed review findings, defect notes, or repair guidance. */
+  findings?: string;
+  /** Task ID that produced this prior evidence. */
+  priorTaskId?: string;
+  /** Step where this prior evidence was generated. */
+  priorStep?: string;
+  /** Role that produced this prior evidence. */
+  priorRole?: string;
+  /** Outcome submitted by the prior task. */
+  priorOutcome?: string;
+  /** Summary of work performed by the prior task. */
+  priorSummary?: string;
+  /** Raw artifacts dictionary from the prior task. */
+  artifacts?: Record<string, unknown>;
+}
+
+/**
+ * Result of computing the next workflow step from a step outcome.
+ */
+export interface StepTransitionResult {
+  /** The next workflow step name, or undefined if terminal or paused. */
+  nextStep?: string;
+  /** Resulting lifecycle status of the Run. */
+  status: RunStatus;
+  /** Whether the transition reached a terminal or paused state (completed, blocked, paused). */
+  isTerminal: boolean;
+  /** Whether this transition represents a rework cycle. */
+  isRework: boolean;
+  /** Current or updated rework count. */
+  reworkCount: number;
+  /** Human-readable explanation of the transition. */
+  reason: string;
+}
+
+/**
  * Complete scheduling context supplied by the Engine to an orchestrator.
  */
 export interface SchedulingContext {
@@ -294,6 +340,12 @@ export interface SchedulingContext {
   activeHandle?: ExecutionHandle;
   /** Latest submitted task result if available. */
   latestResult?: TaskResult;
+  /** Prior evidence and review findings carried forward from preceding steps. */
+  priorEvidence?: PriorEvidence;
+  /** Evaluated commit SHA from review if available. */
+  evaluatedCommit?: string;
+  /** Usable review findings if available. */
+  reviewFindings?: string;
 }
 
 /**
@@ -358,6 +410,14 @@ export interface SubmitResultResponse {
   idempotent?: boolean;
   /** Human-readable status message. */
   message?: string;
+  /** Target step name transitioned to, if any. */
+  nextStep?: string;
+  /** Specialist role assigned to the next step, if any. */
+  nextRole?: string;
+  /** Run status following the step transition. */
+  transitionStatus?: RunStatus;
+  /** Updated rework count. */
+  reworkCount?: number;
 }
 
 /**
