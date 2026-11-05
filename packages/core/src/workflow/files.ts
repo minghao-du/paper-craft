@@ -8,6 +8,40 @@ import * as path from 'node:path';
 import type { RunContext, RunEvent } from './types.js';
 
 /**
+ * Custom error raised when a worktree has a conflicting ownership claim.
+ */
+export class WorkflowOwnershipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowOwnershipError';
+  }
+}
+
+/**
+ * Custom error raised when resource cleanup or preservation verification fails.
+ */
+export class WorkflowCleanupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowCleanupError';
+  }
+}
+
+/**
+ * Result returned by WorkflowFiles after validating ownership and releasing a worktree.
+ */
+export interface ReleaseWorktreeResult {
+  /** Whether the release verification and cleanup completed successfully. */
+  released: boolean;
+  /** Whether the worktree directory existed and was deleted. */
+  worktreeRemoved: boolean;
+  /** Target worktree directory path. */
+  worktreePath: string;
+  /** Error message if cleanup failed or ownership check was violated. */
+  error?: string;
+}
+
+/**
  * Ownership marker recorded in `.pc-execution-owner` to claim worktree authority.
  */
 export interface WorktreeOwnerMarker {
@@ -220,5 +254,103 @@ export class WorkflowFiles {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Validates worktree ownership and safely removes the worktree directory,
+   * while strictly preserving permanent event records in the storage root.
+   *
+   * @param worktreePath Path to the worktree to clean up.
+   * @param expectedRunId Run identifier expected to own the worktree.
+   * @returns Facts describing whether release succeeded and whether the worktree was removed.
+   */
+  async releaseWorktree(worktreePath: string, expectedRunId: string): Promise<ReleaseWorktreeResult> {
+    let worktreeExists: boolean;
+    try {
+      const st = await fs.stat(worktreePath);
+      worktreeExists = st.isDirectory();
+    } catch {
+      worktreeExists = false;
+    }
+
+    if (!worktreeExists) {
+      return {
+        released: true,
+        worktreeRemoved: false,
+        worktreePath,
+      };
+    }
+
+    const ownerMarker = await this.readWorktreeOwner(worktreePath);
+    if (!ownerMarker) {
+      return {
+        released: false,
+        worktreeRemoved: false,
+        worktreePath,
+        error: `Cannot clean up worktree: .pc-execution-owner marker is missing at "${worktreePath}". Refusing to destroy unverified directory.`,
+      };
+    }
+
+    if (ownerMarker.run_id !== expectedRunId) {
+      return {
+        released: false,
+        worktreeRemoved: false,
+        worktreePath,
+        error: `Cannot clean up worktree: ownership mismatch. Worktree belongs to run "${ownerMarker.run_id}", not "${expectedRunId}". Refusing to destroy foreign worktree.`,
+      };
+    }
+
+    try {
+      await fs.rm(worktreePath, { recursive: true, force: true });
+      return {
+        released: true,
+        worktreeRemoved: true,
+        worktreePath,
+      };
+    } catch (err) {
+      return {
+        released: false,
+        worktreeRemoved: false,
+        worktreePath,
+        error: `Failed to remove worktree at "${worktreePath}": ${(err as Error).message}.`,
+      };
+    }
+  }
+
+  /**
+   * Releases run resources for a specific run. Validates worktree ownership and removes the worktree
+   * while preserving permanent run archive records in storageRoot/runs/<run_id>/events.jsonl.
+   *
+   * @param runId Run identifier.
+   * @param worktreePath Worktree directory path.
+   */
+  async releaseRunResources(runId: string, worktreePath: string): Promise<ReleaseWorktreeResult> {
+    return this.releaseWorktree(worktreePath, runId);
+  }
+
+  /**
+   * Reads an external text file (such as a shared requirements document).
+   *
+   * @param filePath Absolute path to file to read.
+   */
+  async readFile(filePath: string): Promise<string> {
+    return fs.readFile(filePath, 'utf8');
+  }
+
+  /**
+   * Ensures a directory exists and is writable.
+   *
+   * @param dirPath Directory path to verify.
+   */
+  async ensureDirectoryWritable(dirPath: string): Promise<void> {
+    await fs.mkdir(dirPath, { recursive: true });
+    await fs.access(dirPath, fs.constants.W_OK);
+  }
+
+  /**
+   * Ensures the storage root exists and is writable.
+   */
+  async ensureStorageUsable(): Promise<void> {
+    await this.ensureDirectoryWritable(this.storageRoot);
   }
 }

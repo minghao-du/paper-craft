@@ -8,6 +8,7 @@ import type {
   DispatchResult,
   ExecutionHandle,
   ExecutionInspection,
+  ExecutionStatus,
   ExecutionStopResult,
   PriorEvidence,
   RoleContract,
@@ -17,6 +18,56 @@ import type {
   WorkflowStep,
 } from './types.js';
 import type { WorkflowFiles, WorktreeOwnerMarker } from './files.js';
+
+/**
+ * Result returned by TaskExecution after stopping active executions.
+ */
+export interface ExecutionTeardownResult {
+  /** Whether all target executions were stopped successfully. */
+  stopped: boolean;
+  /** True if execution termination status was uncertain. */
+  uncertain?: boolean;
+  /** Handles that were successfully stopped. */
+  terminatedHandles: ExecutionHandle[];
+  /** Error message if stopping failed. */
+  error?: string;
+}
+
+/**
+ * Options for ensuring execution processes are stopped.
+ */
+export interface EnsureStoppedOptions {
+  /** If specified, only stop executions associated with this taskId. */
+  taskId?: string;
+  /** If true, stops all handles regardless of prior termination events (useful during finalization release). */
+  all?: boolean;
+  /** If true, records task_terminated events for stopped handles (defaults to true when only active handles are stopped). */
+  recordTerminated?: boolean;
+}
+
+/**
+ * Facts returned by TaskExecution after inspecting and reconciling a task execution.
+ */
+export interface TaskReconciliationResult {
+  /** Task identifier. */
+  taskId: string;
+  /** Step associated with the task. */
+  step: string;
+  /** Role executing the task. */
+  role: string;
+  /** Execution handle if active or recovered. */
+  handle?: ExecutionHandle;
+  /** Execution process status. */
+  executionStatus: ExecutionStatus;
+  /** Reconciliation action taken. */
+  action: 'collected' | 'reconnected' | 'uncertain' | 'none';
+  /** Recorded task result if already submitted. */
+  result?: TaskResult;
+  /** Error details if reconciliation failed or is uncertain. */
+  error?: string;
+  /** True if execution status could not be verified with certainty. */
+  isUncertain?: boolean;
+}
 
 /**
  * Options for initializing TaskExecution.
@@ -447,6 +498,338 @@ export class TaskExecution {
    */
   async submitResult(params: RecordTaskResultParams): Promise<TaskExecutionResultFacts> {
     return this.recordResult(params);
+  }
+
+  /**
+   * Completely handles execution termination for active tasks or all registered handles in a Run.
+   * Discovers active provider handles, terminates executions via AgentExecutor.stop,
+   * records task_terminated events when applicable, and verifies termination without
+   * requiring Engine to interpret low-level handles.
+   *
+   * @param runId Unique Run identifier.
+   * @param options Teardown options (target taskId, whether to force stop all handles, and whether to record task_terminated).
+   * @returns Facts describing whether executions were stopped.
+   */
+  async ensureStopped(runId: string, options?: EnsureStoppedOptions): Promise<ExecutionTeardownResult> {
+    const events = await this.files.loadRun(runId);
+    const handleIdsSeen = new Set<string>();
+    const terminatedHandleIds = new Set<string>();
+    const allHandles: ExecutionHandle[] = [];
+
+    for (const evt of events) {
+      if (evt.type === 'task_terminated' && evt.payload.handle) {
+        terminatedHandleIds.add((evt.payload.handle as ExecutionHandle).id);
+      }
+      if (evt.type === 'task_launched' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+      if (evt.type === 'orchestrator_registered' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+      if (evt.type === 'execution_handle_registered' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+    }
+
+    let targetHandles = allHandles;
+    if (options?.taskId) {
+      targetHandles = targetHandles.filter((h) => h.taskId === options.taskId);
+    }
+    if (!options?.all) {
+      targetHandles = targetHandles.filter((h) => !terminatedHandleIds.has(h.id));
+    }
+
+    const terminatedHandles: ExecutionHandle[] = [];
+    const shouldRecordTerminated = options?.recordTerminated ?? !options?.all;
+
+    for (const handle of targetHandles) {
+      try {
+        const stopRes = await this.executor.stop(handle);
+        if (!stopRes.stopped || stopRes.uncertain) {
+          const reason = `Execution handle "${handle.id}" (${handle.taskId}) failed to terminate: ${stopRes.error || 'uncertain termination'}.`;
+          return {
+            stopped: false,
+            uncertain: stopRes.uncertain,
+            terminatedHandles,
+            error: reason,
+          };
+        }
+        terminatedHandles.push(handle);
+        if (shouldRecordTerminated) {
+          await this.files.record(runId, {
+            type: 'task_terminated',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: handle.taskId,
+              handle,
+              stopped: true,
+            },
+          });
+        }
+      } catch (err) {
+        const reason = `Execution handle "${handle.id}" (${handle.taskId}) threw on stop: ${(err as Error).message}.`;
+        return {
+          stopped: false,
+          terminatedHandles,
+          error: reason,
+        };
+      }
+    }
+
+    return {
+      stopped: true,
+      terminatedHandles,
+    };
+  }
+
+  /**
+   * Ensures the active task execution is stopped.
+   *
+   * @param runId Unique Run identifier.
+   * @param taskId Optional task identifier to stop.
+   * @returns Facts describing whether execution was stopped.
+   */
+  async stopActiveTask(runId: string, taskId?: string): Promise<ExecutionTeardownResult> {
+    return this.ensureStopped(runId, { taskId, recordTerminated: true });
+  }
+
+  /**
+   * Completely handles execution status confirmation, uncertain state reconciliation,
+   * reconnecting to running tasks, and persisting task_reconciled events.
+   *
+   * @param runId Unique Run identifier.
+   * @param targetTaskId Optional specific task identifier to reconcile.
+   * @returns Reconciliation facts about the task execution.
+   */
+  async reconcileExecution(runId: string, targetTaskId?: string): Promise<TaskReconciliationResult> {
+    const events = await this.files.loadRun(runId);
+
+    let taskId = targetTaskId;
+    let activeStep = 'implementation';
+    let activeRole = 'worker';
+    let activeHandle: ExecutionHandle | undefined;
+    let taskLaunched = false;
+    let isStopped = false;
+    let latestResult: TaskResult | undefined;
+
+    // Scan events to find the target task and its execution state
+    for (const evt of events) {
+      if (evt.type === 'dispatch_intent') {
+        const p = evt.payload as { taskId: string; step: string; role: string };
+        if (!targetTaskId || p.taskId === targetTaskId) {
+          taskId = p.taskId;
+          activeStep = p.step;
+          activeRole = p.role;
+          activeHandle = undefined;
+          taskLaunched = false;
+          isStopped = false;
+          latestResult = undefined;
+        }
+      }
+      if (evt.type === 'task_launched') {
+        const p = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
+        if (p.taskId === taskId) {
+          activeHandle = p.handle;
+          activeStep = p.step;
+          activeRole = p.role;
+          taskLaunched = true;
+        }
+      }
+      if (evt.type === 'task_reconciled') {
+        const p = evt.payload as { taskId: string; handle?: ExecutionHandle };
+        if (p.taskId === taskId && p.handle) {
+          activeHandle = p.handle;
+        }
+      }
+      if (evt.type === 'result_submitted') {
+        const p = evt.payload as { taskId: string; outcome: string; summary: string; artifacts?: Record<string, unknown> };
+        if (p.taskId === taskId) {
+          latestResult = {
+            outcome: p.outcome,
+            summary: p.summary,
+            artifacts: p.artifacts,
+          };
+        }
+      }
+      if (evt.type === 'task_terminated') {
+        const p = evt.payload as { taskId: string; stopped: boolean };
+        if (p.taskId === taskId) {
+          isStopped = p.stopped;
+        }
+      }
+    }
+
+    if (!taskId) {
+      return {
+        taskId: '',
+        step: activeStep,
+        role: activeRole,
+        executionStatus: 'not_started',
+        action: 'none',
+      };
+    }
+
+    // 1. If result was already recorded
+    if (latestResult) {
+      let executionStatus: ExecutionStatus = isStopped ? 'exited' : 'running';
+      try {
+        const inspection = await this.executor.inspect(taskId);
+        executionStatus = inspection.status;
+      } catch {
+        // If inspection fails when result is already durable, keep recorded status
+      }
+      return {
+        taskId,
+        step: activeStep,
+        role: activeRole,
+        handle: activeHandle,
+        executionStatus,
+        action: 'collected',
+        result: latestResult,
+      };
+    }
+
+    // 2. No result recorded yet; inspect provider executor by stable taskId
+    let inspection: ExecutionInspection;
+    try {
+      inspection = await this.executor.inspect(taskId);
+    } catch (err) {
+      inspection = {
+        status: 'uncertain',
+        error: (err as Error).message,
+      };
+    }
+
+    if (inspection.status === 'running') {
+      const handle = activeHandle ?? inspection.handle ?? {
+        id: `recovered-handle-${taskId}`,
+        taskId,
+      };
+
+      const reconcileEvent: RunEvent = {
+        type: 'task_reconciled',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          step: activeStep,
+          role: activeRole,
+          handle,
+          executionStatus: 'running',
+          action: 'reconnected',
+        },
+      };
+      await this.files.record(runId, reconcileEvent);
+
+      return {
+        taskId,
+        step: activeStep,
+        role: activeRole,
+        handle,
+        executionStatus: 'running',
+        action: 'reconnected',
+      };
+    }
+
+    if (inspection.status === 'exited') {
+      return {
+        taskId,
+        step: activeStep,
+        role: activeRole,
+        handle: activeHandle ?? inspection.handle,
+        executionStatus: 'exited',
+        action: 'none',
+        error: 'Process exited without submitting a result.',
+      };
+    }
+
+    if (inspection.status === 'uncertain' || (taskLaunched && inspection.status === 'not_started')) {
+      const errorMsg =
+        inspection.error ||
+        (inspection.status === 'not_started'
+          ? 'Execution was previously launched but cannot be reliably reconciled by provider.'
+          : 'Execution status is uncertain from provider.');
+
+      const reconcileEvent: RunEvent = {
+        type: 'task_reconciled',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          step: activeStep,
+          role: activeRole,
+          handle: activeHandle ?? inspection.handle,
+          executionStatus: 'uncertain',
+          action: 'uncertain',
+          error: errorMsg,
+        },
+      };
+      await this.files.record(runId, reconcileEvent);
+
+      return {
+        taskId,
+        step: activeStep,
+        role: activeRole,
+        handle: activeHandle ?? inspection.handle,
+        executionStatus: 'uncertain',
+        action: 'uncertain',
+        isUncertain: true,
+        error: errorMsg,
+      };
+    }
+
+    // not_started: launch never completed before interruption
+    return {
+      taskId,
+      step: activeStep,
+      role: activeRole,
+      handle: activeHandle,
+      executionStatus: 'not_started',
+      action: 'none',
+    };
+  }
+
+  /**
+   * Persists a task_reconciled event indicating explicit uncertainty.
+   *
+   * @param params Reconciled uncertainty details.
+   */
+  async recordTaskUncertain(params: {
+    runId: string;
+    taskId: string;
+    step: string;
+    role: string;
+    error: string;
+    handle?: ExecutionHandle;
+  }): Promise<void> {
+    const reconcileEvent: RunEvent = {
+      type: 'task_reconciled',
+      run_id: params.runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        taskId: params.taskId,
+        step: params.step,
+        role: params.role,
+        handle: params.handle,
+        executionStatus: 'uncertain',
+        action: 'uncertain',
+        error: params.error,
+      },
+    };
+    await this.files.record(params.runId, reconcileEvent);
   }
 
   /**
