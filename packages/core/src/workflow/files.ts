@@ -318,17 +318,6 @@ export class WorkflowFiles {
   }
 
   /**
-   * Releases run resources for a specific run. Validates worktree ownership and removes the worktree
-   * while preserving permanent run archive records in storageRoot/runs/<run_id>/events.jsonl.
-   *
-   * @param runId Run identifier.
-   * @param worktreePath Worktree directory path.
-   */
-  async releaseRunResources(runId: string, worktreePath: string): Promise<ReleaseWorktreeResult> {
-    return this.releaseWorktree(worktreePath, runId);
-  }
-
-  /**
    * Reads an external text file (such as a shared requirements document).
    *
    * @param filePath Absolute path to file to read.

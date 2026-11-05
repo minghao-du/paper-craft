@@ -393,7 +393,7 @@ export class WorkflowEngine {
           if (firstEvent.type === 'run_created') {
             const ctx = (firstEvent.payload as { context: RunContext }).context;
             if (ctx.repository === config.repository && ctx.issue === options.issue) {
-              const currentStatus = this.deriveRunStatusFromEvents(events);
+              const currentStatus = deriveRunStatus(events);
               if (currentStatus !== 'completed') {
                 errors.push(
                   `Active run "${entryRunId}" already exists for issue #${options.issue} in repository "${config.repository}" with status "${currentStatus}". Inspect status with "pc workflow status --run ${entryRunId}" or resume with "pc workflow resume ${entryRunId}" (or recover).`,
@@ -559,12 +559,11 @@ export class WorkflowEngine {
     }
 
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
-    let currentStatus = this.deriveRunStatus(events);
+    const currentStatus = deriveRunStatus(events);
+    const activeTask = this.taskExecution.getActiveTaskInfo(events);
+
     let currentStep = initialContext.current_step;
     let reworkCount = initialContext.rework_count;
-    let activeTaskId: string | undefined;
-    let activeHandle: ExecutionHandle | undefined;
-    let latestResult: TaskResult | undefined;
     let priorEvidence: PriorEvidence | undefined;
     let deliveryArtifacts: Record<string, unknown> = {};
     let mergedCommit: string | undefined;
@@ -572,34 +571,6 @@ export class WorkflowEngine {
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
       switch (evt.type) {
-        case 'dispatch_intent': {
-          const payload = evt.payload as { taskId: string; step: string };
-          activeTaskId = payload.taskId;
-          latestResult = undefined;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_launched': {
-          const payload = evt.payload as { taskId: string; handle: ExecutionHandle };
-          activeTaskId = payload.taskId;
-          activeHandle = payload.handle;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_reconciled': {
-          const payload = evt.payload as {
-            taskId: string;
-            handle?: ExecutionHandle;
-            action: string;
-          };
-          if (payload.handle) {
-            activeHandle = payload.handle;
-          }
-          if (payload.action === 'uncertain') {
-            currentStatus = 'uncertain';
-          }
-          break;
-        }
         case 'result_submitted': {
           const payload = evt.payload as {
             taskId: string;
@@ -608,11 +579,6 @@ export class WorkflowEngine {
             outcome: string;
             summary: string;
             artifacts?: Record<string, unknown>;
-          };
-          latestResult = {
-            outcome: payload.outcome,
-            summary: payload.summary,
-            artifacts: payload.artifacts,
           };
           if (payload.artifacts) {
             deliveryArtifacts = { ...deliveryArtifacts, ...payload.artifacts };
@@ -639,22 +605,6 @@ export class WorkflowEngine {
           };
           break;
         }
-        case 'task_terminated': {
-          const payload = evt.payload as { taskId: string };
-          if (payload.taskId === activeTaskId) {
-            activeTaskId = undefined;
-            activeHandle = undefined;
-          }
-          break;
-        }
-        case 'task_launch_failed': {
-          const payload = evt.payload as { taskId: string };
-          if (payload.taskId === activeTaskId) {
-            activeTaskId = undefined;
-            activeHandle = undefined;
-          }
-          break;
-        }
         case 'review_invalidated': {
           if (priorEvidence) {
             priorEvidence = {
@@ -676,10 +626,8 @@ export class WorkflowEngine {
           };
           if (payload.toStep === 'completed') {
             currentStep = 'completed';
-            currentStatus = 'completed';
           } else if (payload.toStep) {
             currentStep = payload.toStep;
-            currentStatus = 'pending_dispatch';
           }
           if (payload.reason === 'rework') {
             reworkCount = payload.reworkCount ?? (reworkCount + 1);
@@ -704,21 +652,10 @@ export class WorkflowEngine {
               findings: payload.findings ?? (payload.artifacts?.findings as string | undefined),
             };
           }
-          activeTaskId = undefined;
-          activeHandle = undefined;
           break;
         }
         case 'run_completed':
-          currentStatus = 'completed';
-          break;
-        case 'run_blocked':
-          currentStatus = 'blocked';
-          break;
-        case 'run_paused':
-          currentStatus = 'paused';
-          break;
-        case 'run_uncertain':
-          currentStatus = 'uncertain';
+          currentStep = 'completed';
           break;
       }
     }
@@ -744,9 +681,9 @@ export class WorkflowEngine {
       stepDefinition: stepDefinition ?? { role: '', guidance: '', transitions: {} },
       roleContract,
       sharedRequirements: initialContext.shared_requirements,
-      activeTaskId,
-      activeHandle,
-      latestResult,
+      activeTaskId: activeTask.activeTaskId,
+      activeHandle: activeTask.activeHandle,
+      latestResult: activeTask.lastTask?.latestResult,
       priorEvidence,
       evaluatedCommit: priorEvidence?.evaluatedCommit ?? (deliveryArtifacts.reviewed_commit as string | undefined),
       reviewFindings: priorEvidence?.findings ?? (deliveryArtifacts.findings as string | undefined),
@@ -1177,7 +1114,7 @@ export class WorkflowEngine {
     }
 
     // Determine current status and current step
-    const currentStatus = this.deriveRunStatus(events);
+    const currentStatus = deriveRunStatus(events);
     let currentStep = 'implementation';
     for (const evt of events) {
       if (evt.type === 'step_transitioned') {
@@ -1239,6 +1176,80 @@ export class WorkflowEngine {
    * to TaskExecution, then computes deterministic step transition and records Run progression.
    */
   async submitResult(runId: string, taskId: string, result: TaskResult): Promise<SubmitResultResponse> {
+    if (!taskId || typeof taskId !== 'string') {
+      throw new Error('Valid taskId is required to submit a result.');
+    }
+    if (!result || !result.outcome || typeof result.outcome !== 'string') {
+      throw new Error('TaskResult must specify an outcome.');
+    }
+    if (!result.summary || typeof result.summary !== 'string') {
+      throw new Error('TaskResult must specify a summary.');
+    }
+
+    const events = await this.readEvents(runId);
+    const firstEvent = events[0];
+    if (!firstEvent || firstEvent.type !== 'run_created') {
+      throw new Error(`First event in log for run "${runId}" must be "run_created".`);
+    }
+    const initialContext = (firstEvent.payload as { context: RunContext }).context;
+
+    // Locate dispatch event for taskId to validate role contract and step transitions
+    let taskEvent: RunEvent | undefined;
+    for (const evt of events) {
+      if (evt.type === 'dispatch_intent' && (evt.payload as { taskId: string }).taskId === taskId) {
+        taskEvent = evt;
+        break;
+      }
+    }
+    if (!taskEvent) {
+      throw new Error(`Task "${taskId}" not found in run "${runId}".`);
+    }
+
+    const taskPayload = taskEvent.payload as {
+      step: string;
+      role: string;
+      worktreePath: string;
+    };
+
+    // Role contract validation
+    const roleContract = initialContext.roles?.roles?.[taskPayload.role];
+    if (roleContract) {
+      if (!roleContract.permitted_outcomes.includes(result.outcome)) {
+        throw new Error(
+          `Outcome "${result.outcome}" is not permitted for role "${taskPayload.role}". Permitted outcomes: [${roleContract.permitted_outcomes.join(', ')}].`,
+        );
+      }
+
+      const required = roleContract.required_artifacts ?? [];
+      const artifacts = result.artifacts ?? {};
+      const missingArtifacts: string[] = [];
+      for (const key of required) {
+        const val = artifacts[key];
+        if (val === undefined || val === null || val === '') {
+          missingArtifacts.push(key);
+        }
+      }
+      if (missingArtifacts.length > 0) {
+        throw new Error(
+          `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
+        );
+      }
+    } else {
+      throw new Error(`Role contract for "${taskPayload.role}" is not defined.`);
+    }
+
+    // Step definition & transitions validation
+    const stepDef = initialContext.workflow?.steps?.[taskPayload.step];
+    if (!stepDef) {
+      throw new Error(`Step "${taskPayload.step}" is not defined in workflow definition.`);
+    }
+    if (!(result.outcome in stepDef.transitions)) {
+      const permitted = Object.keys(stepDef.transitions).join(', ');
+      throw new Error(
+        `Step "${taskPayload.step}" does not define a transition for outcome "${result.outcome}". Permitted transitions: [${permitted}].`,
+      );
+    }
+
     // 1. Delegate task result recording, duplicate/conflicting detection, persistence, and execution teardown to TaskExecution
     const facts = await this.taskExecution.recordResult({
       runId,
@@ -1262,9 +1273,7 @@ export class WorkflowEngine {
       };
     }
 
-    const events = await this.readEvents(runId);
-    const firstEvent = events[0];
-    const initialContext = (firstEvent.payload as { context: RunContext }).context;
+    const updatedEvents = await this.readEvents(runId);
 
     // 3. Verify external GitHub merge outcome for merger role
     if ((facts.role === 'merger' || facts.step === 'merge') && facts.outcome === 'completed') {
@@ -1337,7 +1346,7 @@ export class WorkflowEngine {
 
     // 4. Determine current rework count from event log
     let currentReworkCount = initialContext.rework_count;
-    for (const evt of events) {
+    for (const evt of updatedEvents) {
       if (evt.type === 'step_transitioned') {
         const payload = evt.payload as { reason?: string; reworkCount?: number };
         if (payload.reason === 'rework') {
@@ -1511,78 +1520,16 @@ export class WorkflowEngine {
     }
 
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
-    let currentStatus = this.deriveRunStatus(events);
+    const currentStatus = deriveRunStatus(events);
+    const activeTask = this.taskExecution.getActiveTaskInfo(events);
+
     let currentStep = initialContext.current_step;
     let reworkCount = initialContext.rework_count;
-
-    let activeTaskId: string | undefined;
-    let activeStep: string | undefined;
-    let activeRole: string | undefined;
-    let activeHandle: ExecutionHandle | undefined;
-    let latestResult: TaskResult | undefined;
-    let isStopped: boolean | undefined;
     let blockedReason: string | undefined;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
       switch (evt.type) {
-        case 'dispatch_intent': {
-          const payload = evt.payload as { taskId: string; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          activeHandle = undefined;
-          latestResult = undefined;
-          isStopped = false;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_launched': {
-          const payload = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeHandle = payload.handle;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_reconciled': {
-          const payload = evt.payload as {
-            taskId: string;
-            handle?: ExecutionHandle;
-            action: string;
-          };
-          if (payload.handle) {
-            activeHandle = payload.handle;
-          }
-          if (payload.action === 'uncertain') {
-            currentStatus = 'uncertain';
-          }
-          break;
-        }
-        case 'result_submitted': {
-          const payload = evt.payload as {
-            taskId: string;
-            outcome: string;
-            summary: string;
-            artifacts?: Record<string, unknown>;
-          };
-          if (payload.taskId === activeTaskId) {
-            latestResult = {
-              outcome: payload.outcome,
-              summary: payload.summary,
-              artifacts: payload.artifacts,
-            };
-          }
-          break;
-        }
-        case 'task_terminated': {
-          const payload = evt.payload as { taskId: string; stopped: boolean };
-          if (payload.taskId === activeTaskId) {
-            isStopped = payload.stopped;
-          }
-          break;
-        }
         case 'step_transitioned': {
           const payload = evt.payload as { toStep?: string; reason?: string; reworkCount?: number };
           if (payload.toStep && payload.toStep !== 'completed') {
@@ -1597,31 +1544,24 @@ export class WorkflowEngine {
           break;
         }
         case 'run_completed':
-          currentStatus = 'completed';
           currentStep = 'completed';
           break;
         case 'run_blocked': {
-          currentStatus = 'blocked';
           const payload = evt.payload as { reason?: string };
           blockedReason = payload?.reason;
           break;
         }
-        case 'run_paused':
-          currentStatus = 'paused';
-          break;
-        case 'run_uncertain':
-          currentStatus = 'uncertain';
-          break;
       }
     }
 
     let activeTaskInfo: StatusActiveTask | undefined;
-    if (activeTaskId && activeStep && activeRole) {
+    const targetTask = activeTask.lastTask;
+    if (targetTask) {
       let executionStatus: StatusActiveTask['execution_status'];
       let exitCode: number | undefined;
       let error: string | undefined;
       try {
-        const inspection = await this.taskExecution.inspect(activeTaskId);
+        const inspection = await this.taskExecution.inspect(targetTask.taskId);
         executionStatus = inspection.status;
         exitCode = inspection.exitCode;
         error = inspection.error;
@@ -1631,16 +1571,16 @@ export class WorkflowEngine {
       }
 
       activeTaskInfo = {
-        task_id: activeTaskId,
-        step: activeStep,
-        role: activeRole,
-        handle: activeHandle,
+        task_id: targetTask.taskId,
+        step: targetTask.step,
+        role: targetTask.role,
+        handle: targetTask.handle,
         execution_status: executionStatus,
         exit_code: exitCode,
         error,
-        business_outcome: latestResult?.outcome,
-        result: latestResult,
-        stopped: isStopped,
+        business_outcome: targetTask.latestResult?.outcome,
+        result: targetTask.latestResult,
+        stopped: targetTask.isStopped,
       };
     }
 
@@ -1651,8 +1591,8 @@ export class WorkflowEngine {
     }
     summary += ` for issue #${initialContext.issue}.`;
 
-    if (latestResult) {
-      summary += ` Collected outcome: ${latestResult.outcome}.`;
+    if (activeTaskInfo?.result) {
+      summary += ` Collected outcome: ${activeTaskInfo.result.outcome}.`;
     }
     if (currentStatus === 'paused') {
       summary += ` Rework limit of ${reworkLimit} rounds exhausted. Records preserved.`;
@@ -1660,7 +1600,7 @@ export class WorkflowEngine {
     if (currentStatus === 'blocked' && blockedReason) {
       summary += ` Blocker: ${blockedReason}`;
     }
-    if (activeTaskInfo?.execution_status === 'exited' && !latestResult) {
+    if (activeTaskInfo?.execution_status === 'exited' && !activeTaskInfo.result) {
       summary += ` Warning: process exited without submitting a business result.`;
     }
 
@@ -1733,59 +1673,31 @@ export class WorkflowEngine {
     }
 
     // Reconstruct state from durable event log
-    let currentStatus: RunStatus = this.deriveRunStatus(events);
+    let currentStatus: RunStatus = deriveRunStatus(events);
+    const activeTask = this.taskExecution.getActiveTaskInfo(events);
     let currentStep = initialContext.current_step;
-
-    let activeTaskId: string | undefined;
-    let activeStep: string | undefined;
-    let activeRole: string | undefined;
-    let activeHandle: ExecutionHandle | undefined;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
-      switch (evt.type) {
-        case 'dispatch_intent': {
-          const payload = evt.payload as { taskId: string; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          activeHandle = undefined;
-          break;
+      if (evt.type === 'step_transitioned') {
+        const payload = evt.payload as { toStep?: string };
+        if (payload.toStep && payload.toStep !== 'completed') {
+          currentStep = payload.toStep;
         }
-        case 'task_launched': {
-          const payload = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeHandle = payload.handle;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          break;
-        }
-        case 'task_reconciled': {
-          const payload = evt.payload as {
-            taskId: string;
-            handle?: ExecutionHandle;
-            action: string;
-          };
-          if (payload.handle) {
-            activeHandle = payload.handle;
-          }
-          break;
-        }
-        case 'step_transitioned': {
-          const payload = evt.payload as { toStep?: string };
-          if (payload.toStep && payload.toStep !== 'completed') {
-            currentStep = payload.toStep;
-          }
-          if (payload.toStep === 'completed') {
-            currentStep = 'completed';
-          }
-          break;
-        }
-        case 'run_completed':
+        if (payload.toStep === 'completed') {
           currentStep = 'completed';
-          break;
+        }
+      } else if (evt.type === 'run_completed') {
+        currentStep = 'completed';
       }
     }
+
+    const activeTaskId = activeTask.activeTaskId ?? activeTask.lastTask?.taskId;
+    const activeStep = activeTask.activeStep ?? activeTask.lastTask?.step ?? currentStep;
+    const activeRole =
+      activeTask.activeRole ??
+      activeTask.lastTask?.role ??
+      initialContext.workflow.steps[activeStep]?.role;
 
     // Check if task result was already received (e.g. saved before interruption)
     const savedResult = activeTaskId ? await this.taskExecution.getTaskResult(runId, activeTaskId) : null;
@@ -1833,7 +1745,7 @@ export class WorkflowEngine {
             taskId: activeTaskId,
             step: activeStep,
             role: activeRole,
-            handle: activeHandle,
+            handle: activeTask.activeHandle,
             executionStatus: 'exited',
             action: 'collected',
             result: savedResult,
@@ -1864,7 +1776,6 @@ export class WorkflowEngine {
             taskId: activeTaskId,
             step: activeStep,
             role: activeRole,
-            handle: activeHandle,
             error: mergeStatus.error,
           });
 
@@ -1883,7 +1794,7 @@ export class WorkflowEngine {
             taskId: activeTaskId,
             step: activeStep,
             role: activeRole,
-            handle: activeHandle,
+            handle: activeTask.activeHandle,
             executionStatus: 'uncertain',
             action: 'uncertain',
             error: mergeStatus.error,
@@ -1902,24 +1813,12 @@ export class WorkflowEngine {
             },
           };
 
-          const resultEvent: RunEvent = {
-            type: 'result_submitted',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              outcome: reconciledResult.outcome,
-              summary: reconciledResult.summary,
-              artifacts: reconciledResult.artifacts,
-            },
-          };
-          await this.appendEvent(runId, resultEvent);
-
-          if (activeHandle) {
-            await this.taskExecution.stopActiveTask(runId, activeTaskId);
-          }
+          // Delegate task reconciliation and result recording to TaskExecution
+          reconciledTask = await this.taskExecution.reconcileExternalResult({
+            runId,
+            taskId: activeTaskId,
+            result: reconciledResult,
+          });
 
           const stepTransEvent: RunEvent = {
             type: 'step_transitioned',
@@ -1938,30 +1837,6 @@ export class WorkflowEngine {
           };
           await this.appendEvent(runId, stepTransEvent);
 
-          const reconcileEvent: RunEvent = {
-            type: 'task_reconciled',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle,
-              executionStatus: 'exited',
-              action: 'collected',
-            },
-          };
-          await this.appendEvent(runId, reconcileEvent);
-
-          reconciledTask = {
-            taskId: activeTaskId,
-            step: activeStep,
-            role: activeRole,
-            handle: activeHandle,
-            executionStatus: 'exited',
-            action: 'collected',
-            result: reconciledResult,
-          };
           resumeMessage = `Reconciled external merge outcome: PR #${initialContext.issue} is confirmed merged with commit ${mergedCommit}. Advanced to finalization.`;
         } else {
           // PR is not merged yet on GitHub: inspect provider process via TaskExecution without duplicating merge
@@ -2045,13 +1920,5 @@ export class WorkflowEngine {
       eventsCount: updatedEvents.length,
       message: resumeMessage,
     };
-  }
-
-  private deriveRunStatus(events: RunEvent[]): RunStatus {
-    return deriveRunStatus(events);
-  }
-
-  private deriveRunStatusFromEvents(events: RunEvent[]): RunStatus {
-    return deriveRunStatus(events);
   }
 }

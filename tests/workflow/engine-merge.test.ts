@@ -206,7 +206,7 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     // Status derivation reflects merge completion and pending finalization
     const st = await engine.status(run.run_id);
     expect(st.step).toBe('finalization');
-    expect(st.status).toBe('running');
+    expect(st.status).toBe('pending_dispatch');
   });
 
   it('invalidates review approval and transitions back to review when PR head changes before merge', async () => {
@@ -400,7 +400,7 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
 
     const st = await engine.status(run.run_id);
     expect(st.step).toBe('finalization');
-    expect(st.status).toBe('running');
+    expect(st.status).toBe('pending_dispatch');
   });
 
   it('does not duplicate merge when interrupted and PR is not merged on GitHub', async () => {

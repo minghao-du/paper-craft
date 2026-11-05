@@ -11,13 +11,36 @@ import type {
   ExecutionStatus,
   ExecutionStopResult,
   PriorEvidence,
-  RoleContract,
-  RunContext,
+  ReconciledTask,
   RunEvent,
   TaskResult,
-  WorkflowStep,
 } from './types.js';
 import type { WorkflowFiles, WorktreeOwnerMarker } from './files.js';
+
+/**
+ * Facts about the active or most recently dispatched task for a Run.
+ */
+export interface ActiveTaskFacts {
+  /** Currently active (in-flight) task ID if one is running. */
+  activeTaskId?: string;
+  /** Currently active task's step. */
+  activeStep?: string;
+  /** Currently active task's role. */
+  activeRole?: string;
+  /** Currently active task's execution handle. */
+  activeHandle?: ExecutionHandle;
+  /** True if a task is currently in-flight. */
+  isRunning?: boolean;
+  /** The most recent task (active or completed) associated with the run. */
+  lastTask?: {
+    taskId: string;
+    step: string;
+    role: string;
+    handle?: ExecutionHandle;
+    latestResult?: TaskResult;
+    isStopped?: boolean;
+  };
+}
 
 /**
  * Result returned by TaskExecution after stopping active executions.
@@ -125,10 +148,6 @@ export interface RecordTaskResultParams {
   taskId: string;
   /** The submitted task result facts. */
   result: TaskResult;
-  /** Optional role contract for validating permitted outcomes and required artifacts. */
-  roleContract?: RoleContract;
-  /** Optional workflow step definition for validating outcome transitions. */
-  stepDefinition?: WorkflowStep;
 }
 
 /**
@@ -333,7 +352,6 @@ export class TaskExecution {
     if (!firstEvent || firstEvent.type !== 'run_created') {
       throw new Error(`First event in log for run "${params.runId}" must be "run_created".`);
     }
-    const initialContext = (firstEvent.payload as { context: RunContext }).context;
 
     // Locate dispatch / task event for taskId
     let taskEvent: RunEvent | undefined;
@@ -398,46 +416,6 @@ export class TaskExecution {
       );
     }
 
-    // Role contract & step transitions validation
-    const roleContract =
-      params.roleContract ?? initialContext.roles?.roles?.[taskPayload.role];
-    if (roleContract) {
-      if (!roleContract.permitted_outcomes.includes(params.result.outcome)) {
-        throw new Error(
-          `Outcome "${params.result.outcome}" is not permitted for role "${taskPayload.role}". Permitted outcomes: [${roleContract.permitted_outcomes.join(', ')}].`,
-        );
-      }
-
-      const required = roleContract.required_artifacts ?? [];
-      const artifacts = params.result.artifacts ?? {};
-      const missingArtifacts: string[] = [];
-      for (const key of required) {
-        const val = artifacts[key];
-        if (val === undefined || val === null || val === '') {
-          missingArtifacts.push(key);
-        }
-      }
-      if (missingArtifacts.length > 0) {
-        throw new Error(
-          `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
-        );
-      }
-    } else {
-      throw new Error(`Role contract for "${taskPayload.role}" is not defined.`);
-    }
-
-    const stepDef =
-      params.stepDefinition ?? initialContext.workflow?.steps?.[taskPayload.step];
-    if (!stepDef) {
-      throw new Error(`Step "${taskPayload.step}" is not defined in workflow definition.`);
-    }
-    if (!(params.result.outcome in stepDef.transitions)) {
-      const permitted = Object.keys(stepDef.transitions).join(', ');
-      throw new Error(
-        `Step "${taskPayload.step}" does not define a transition for outcome "${params.result.outcome}". Permitted transitions: [${permitted}].`,
-      );
-    }
-
     // 1. Persist result_submitted event
     const nowIso = new Date().toISOString();
     const artifacts = params.result.artifacts ?? {};
@@ -491,13 +469,6 @@ export class TaskExecution {
       worktreePath: taskPayload.worktreePath,
       handle,
     };
-  }
-
-  /**
-   * Alias for recordResult.
-   */
-  async submitResult(params: RecordTaskResultParams): Promise<TaskExecutionResultFacts> {
-    return this.recordResult(params);
   }
 
   /**
@@ -803,7 +774,53 @@ export class TaskExecution {
   }
 
   /**
+   * Reconciles an externally verified task completion (e.g. external merge):
+   * records the result_submitted event, stops any active execution process without Engine checking handles,
+   * records task_reconciled event, and returns reconciliation facts.
+   *
+   * @param params Parameters specifying runId, taskId, and the reconciled TaskResult.
+   * @returns Facts describing the reconciled task execution.
+   */
+  async reconcileExternalResult(params: {
+    runId: string;
+    taskId: string;
+    result: TaskResult;
+  }): Promise<ReconciledTask> {
+    const facts = await this.recordResult({
+      runId: params.runId,
+      taskId: params.taskId,
+      result: params.result,
+    });
+
+    const reconcileEvent: RunEvent = {
+      type: 'task_reconciled',
+      run_id: params.runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        taskId: facts.taskId,
+        step: facts.step,
+        role: facts.role,
+        handle: facts.handle,
+        executionStatus: 'exited',
+        action: 'collected',
+      },
+    };
+    await this.files.record(params.runId, reconcileEvent);
+
+    return {
+      taskId: facts.taskId,
+      step: facts.step,
+      role: facts.role,
+      handle: facts.handle,
+      executionStatus: 'exited',
+      action: 'collected',
+      result: params.result,
+    };
+  }
+
+  /**
    * Persists a task_reconciled event indicating explicit uncertainty.
+   * Discovers the execution handle automatically from events if not explicitly passed.
    *
    * @param params Reconciled uncertainty details.
    */
@@ -815,6 +832,12 @@ export class TaskExecution {
     error: string;
     handle?: ExecutionHandle;
   }): Promise<void> {
+    let handle = params.handle;
+    if (!handle) {
+      const events = await this.files.loadRun(params.runId);
+      const activeInfo = this.getActiveTaskInfo(events);
+      handle = activeInfo.activeHandle ?? activeInfo.lastTask?.handle;
+    }
     const reconcileEvent: RunEvent = {
       type: 'task_reconciled',
       run_id: params.runId,
@@ -823,13 +846,141 @@ export class TaskExecution {
         taskId: params.taskId,
         step: params.step,
         role: params.role,
-        handle: params.handle,
+        handle,
         executionStatus: 'uncertain',
         action: 'uncertain',
         error: params.error,
       },
     };
     await this.files.record(params.runId, reconcileEvent);
+  }
+
+  /**
+   * Derives active and recent task execution facts directly from recorded RunEvents
+   * without exposing low-level event parsing or handles to Engine.
+   *
+   * @param events Recorded run events.
+   * @returns Active task facts.
+   */
+  getActiveTaskInfo(events: RunEvent[]): ActiveTaskFacts {
+    let activeTaskId: string | undefined;
+    let activeStep: string | undefined;
+    let activeRole: string | undefined;
+    let activeHandle: ExecutionHandle | undefined;
+    let isRunning = false;
+
+    let lastTaskId: string | undefined;
+    let lastStep: string | undefined;
+    let lastRole: string | undefined;
+    let lastHandle: ExecutionHandle | undefined;
+    let lastResult: TaskResult | undefined;
+    let lastStopped: boolean | undefined;
+
+    for (let i = 1; i < events.length; i++) {
+      const evt = events[i];
+      switch (evt.type) {
+        case 'dispatch_intent': {
+          const p = evt.payload as { taskId: string; step: string; role: string };
+          activeTaskId = p.taskId;
+          activeStep = p.step;
+          activeRole = p.role;
+          activeHandle = undefined;
+          isRunning = true;
+
+          lastTaskId = p.taskId;
+          lastStep = p.step;
+          lastRole = p.role;
+          lastHandle = undefined;
+          lastResult = undefined;
+          lastStopped = false;
+          break;
+        }
+        case 'task_launched': {
+          const p = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
+          if (p.taskId === activeTaskId || !activeTaskId) {
+            activeTaskId = p.taskId;
+            activeHandle = p.handle;
+            activeStep = p.step;
+            activeRole = p.role;
+            isRunning = true;
+          }
+          if (p.taskId === lastTaskId) {
+            lastHandle = p.handle;
+          }
+          break;
+        }
+        case 'task_reconciled': {
+          const p = evt.payload as { taskId: string; handle?: ExecutionHandle; action: string };
+          if (p.taskId === activeTaskId && p.handle) {
+            activeHandle = p.handle;
+          }
+          if (p.taskId === activeTaskId && p.action === 'reconnected') {
+            isRunning = true;
+          }
+          if (p.taskId === lastTaskId && p.handle) {
+            lastHandle = p.handle;
+          }
+          break;
+        }
+        case 'result_submitted': {
+          const p = evt.payload as { taskId: string; outcome: string; summary: string; artifacts?: Record<string, unknown> };
+          if (p.taskId === lastTaskId) {
+            lastResult = {
+              outcome: p.outcome,
+              summary: p.summary,
+              artifacts: p.artifacts,
+            };
+          }
+          break;
+        }
+        case 'task_terminated': {
+          const p = evt.payload as { taskId: string; stopped: boolean };
+          if (p.taskId === activeTaskId) {
+            activeTaskId = undefined;
+            activeHandle = undefined;
+            isRunning = false;
+          }
+          if (p.taskId === lastTaskId) {
+            lastStopped = p.stopped;
+          }
+          break;
+        }
+        case 'task_launch_failed': {
+          const p = evt.payload as { taskId: string };
+          if (p.taskId === activeTaskId) {
+            activeTaskId = undefined;
+            activeHandle = undefined;
+            isRunning = false;
+          }
+          break;
+        }
+        case 'step_transitioned': {
+          activeTaskId = undefined;
+          activeHandle = undefined;
+          isRunning = false;
+          break;
+        }
+      }
+    }
+
+    return {
+      activeTaskId,
+      activeStep,
+      activeRole,
+      activeHandle,
+      isRunning,
+      lastTask:
+        lastTaskId && lastStep && lastRole
+          ? {
+              taskId: lastTaskId,
+              step: lastStep,
+              role: lastRole,
+              handle: lastHandle,
+              latestResult: lastResult,
+              isStopped: lastStopped,
+            }
+          : undefined,
+    };
   }
 
   /**
