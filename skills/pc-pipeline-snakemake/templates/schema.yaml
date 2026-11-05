@@ -1,0 +1,20 @@
+$schema: "https://json-schema.org/draft-07/schema#"
+description: "Validation schema for pipeline configuration parameters"
+type: object
+
+properties:
+  samples:
+    type: array
+    items:
+      type: string
+    description: "List of sample identifiers to process"
+  data_dir:
+    type: string
+    description: "Path to raw input directory (defaults to data/)"
+  reference_genome:
+    type: string
+    description: "Path to reference FASTA file"
+
+required:
+  - samples
+  - reference_genome

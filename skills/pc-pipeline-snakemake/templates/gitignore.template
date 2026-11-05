@@ -1,0 +1,14 @@
+# Snakemake runtime cache and metadata
+.snakemake/
+
+# Python virtual environment & bytecode cache
+.venv/
+__pycache__/
+
+# Generated execution data tiers
+processed/
+results/
+logs/
+
+# Local research workspace when this repository is the designated research home
+/research-state/
