@@ -34,6 +34,8 @@ import type {
   StatusOptions,
   StatusResult,
   StepTransitionResult,
+  StopRunOptions,
+  StopRunResult,
   SubmitResultResponse,
   TaskResult,
   WorkflowDefinition,
@@ -623,8 +625,15 @@ export class WorkflowEngine {
             }
           }
           priorEvidence = {
-            evaluatedCommit: payload.artifacts?.reviewed_commit as string | undefined,
-            findings: payload.artifacts?.findings as string | undefined,
+            ...priorEvidence,
+            evaluatedCommit:
+              (payload.artifacts?.reviewed_commit as string | undefined) ??
+              priorEvidence?.evaluatedCommit ??
+              (deliveryArtifacts.reviewed_commit as string | undefined),
+            findings:
+              (payload.artifacts?.findings as string | undefined) ??
+              priorEvidence?.findings ??
+              (deliveryArtifacts.findings as string | undefined),
             priorTaskId: payload.taskId,
             priorStep: payload.step,
             priorRole: payload.role,
@@ -743,8 +752,8 @@ export class WorkflowEngine {
       activeHandle,
       latestResult,
       priorEvidence,
-      evaluatedCommit: priorEvidence?.evaluatedCommit,
-      reviewFindings: priorEvidence?.findings,
+      evaluatedCommit: priorEvidence?.evaluatedCommit ?? (deliveryArtifacts.reviewed_commit as string | undefined),
+      reviewFindings: priorEvidence?.findings ?? (deliveryArtifacts.findings as string | undefined),
       mergedCommit,
       deliveryArtifacts,
     };
@@ -1419,6 +1428,155 @@ export class WorkflowEngine {
       terminatedHandles,
       status: 'completed',
       message: 'Resources successfully released and Run marked completed.',
+    };
+  }
+
+  /**
+   * Stops an active workflow Run: terminates all active role tasks and orchestrator executions,
+   * appends task_terminated and run_paused events, and verifies termination.
+   *
+   * @param runIdOrOptions Target Run ID string or StopRunOptions.
+   * @returns Result indicating whether executions were stopped and the Run paused.
+   */
+  async stop(runIdOrOptions?: string | StopRunOptions): Promise<StopRunResult> {
+    const options: StopRunOptions =
+      typeof runIdOrOptions === 'string'
+        ? { runId: runIdOrOptions }
+        : runIdOrOptions ?? {};
+
+    let runId = options.runId;
+    if (!runId) {
+      const latest = await this.status({ configPath: options.configPath });
+      runId = latest.run_id;
+    }
+
+    if (!runId) {
+      throw new Error('Stop requires a valid Run identifier or an active Run in status.');
+    }
+
+    const events = await this.readEvents(runId);
+    if (events.length === 0) {
+      throw new Error(`Run "${runId}" does not exist or has no recorded events.`);
+    }
+
+    // Determine current status and current step
+    let currentStatus: RunStatus = 'running';
+    let currentStep = 'implementation';
+    for (const evt of events) {
+      if (evt.type === 'step_transitioned') {
+        const payload = evt.payload as { toStep?: string };
+        if (payload.toStep) {
+          currentStep = payload.toStep;
+        }
+      }
+      if (evt.type === 'run_completed') currentStatus = 'completed';
+      if (evt.type === 'run_blocked') currentStatus = 'blocked';
+      if (evt.type === 'run_paused') currentStatus = 'paused';
+      if (evt.type === 'run_uncertain') currentStatus = 'uncertain';
+    }
+
+    if (currentStatus === 'completed') {
+      return {
+        runId,
+        stopped: true,
+        terminatedHandles: [],
+        status: 'completed',
+        message: `Run "${runId}" is already completed. No active executions to stop.`,
+      };
+    }
+
+    // Collect all handles and identify those not yet terminated
+    const handleIdsSeen = new Set<string>();
+    const terminatedHandleIds = new Set<string>();
+    const allHandles: ExecutionHandle[] = [];
+
+    for (const evt of events) {
+      if (evt.type === 'task_terminated' && evt.payload.handle) {
+        terminatedHandleIds.add((evt.payload.handle as ExecutionHandle).id);
+      }
+      if (evt.type === 'task_launched' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+      if (evt.type === 'orchestrator_registered' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+      if (evt.type === 'execution_handle_registered' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+    }
+
+    const activeHandles = allHandles.filter((h) => !terminatedHandleIds.has(h.id));
+    const terminatedHandles: ExecutionHandle[] = [];
+
+    for (const handle of activeHandles) {
+      try {
+        const stopRes = await this.executor.stop(handle);
+        if (!stopRes.stopped || stopRes.uncertain) {
+          const reason = `Execution handle "${handle.id}" (${handle.taskId}) failed to terminate: ${stopRes.error || 'uncertain termination'}.`;
+          return {
+            runId,
+            stopped: false,
+            terminatedHandles,
+            status: currentStatus,
+            error: reason,
+            message: `Failed to stop run "${runId}": ${reason}`,
+          };
+        }
+        terminatedHandles.push(handle);
+        await this.appendEvent(runId, {
+          type: 'task_terminated',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: {
+            taskId: handle.taskId,
+            handle,
+            stopped: true,
+          },
+        });
+      } catch (err) {
+        const reason = `Execution handle "${handle.id}" (${handle.taskId}) threw on stop: ${(err as Error).message}.`;
+        return {
+          runId,
+          stopped: false,
+          terminatedHandles,
+          status: currentStatus,
+          error: reason,
+          message: `Failed to stop run "${runId}": ${reason}`,
+        };
+      }
+    }
+
+    const reason = options.reason || 'Manual stop requested by operator';
+    await this.appendEvent(runId, {
+      type: 'run_paused',
+      run_id: runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        step: currentStep,
+        reason,
+        terminatedHandles,
+        stoppedAt: new Date().toISOString(),
+      },
+    });
+
+    return {
+      runId,
+      stopped: true,
+      terminatedHandles,
+      status: 'paused',
+      message: `Run "${runId}" stopped successfully. All active executions terminated and Run paused at step "${currentStep}".`,
     };
   }
 

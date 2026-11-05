@@ -601,3 +601,33 @@ export interface ReleaseResourcesResult {
   error?: string;
 }
 
+/**
+ * Options for stopping active executions and pausing a workflow Run.
+ */
+export interface StopRunOptions {
+  /** Target Run identifier. If omitted, latest run is selected. */
+  runId?: string;
+  /** Path to workflow configuration file. */
+  configPath?: string;
+  /** Reason for stopping the Run. */
+  reason?: string;
+}
+
+/**
+ * Result of stopping active executions and pausing a workflow Run.
+ */
+export interface StopRunResult {
+  /** Unique Run identifier. */
+  runId: string;
+  /** Whether active executions were stopped and verified terminated. */
+  stopped: boolean;
+  /** List of execution handles verified terminated during stop. */
+  terminatedHandles: ExecutionHandle[];
+  /** Resulting lifecycle status of the Run. */
+  status: RunStatus;
+  /** Human-readable explanation. */
+  message: string;
+  /** Error or diagnostic details if stopping failed. */
+  error?: string;
+}
+

@@ -35,6 +35,8 @@ pc workflow init --repo owner/repo
 pc workflow start 79 --provider agy --config /absolute/path/.pc-workflow.yml
 pc workflow status --config /absolute/path/.pc-workflow.yml
 pc workflow resume <run-id>
+pc workflow stop <run-id>
+pc workflow release <run-id>
 ```
 
 Resume recovers an interrupted Run explicitly without background daemons:

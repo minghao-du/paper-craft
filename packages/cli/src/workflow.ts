@@ -20,8 +20,9 @@ Usage: pc workflow <command> [options]
 Commands:
   init                     Scaffold default workflow configuration (.pc-workflow.yml)
   start <issue>            Validate preflight gates and start a new workflow Run
-  status                   Inspect the current status of a workflow Run
+  status [runId]           Inspect the current status of a workflow Run
   resume [runId]           Resume an interrupted workflow Run and reconcile executions
+  stop [runId]             Stop active executions and pause a workflow Run
   dispatch [runId]         Dispatch a specialist role task with instructions
   submit-result            Submit structured result for an assigned role task
   release [runId]          Release resources and verify termination for a completed or finalized Run
@@ -50,6 +51,11 @@ Status Options:
 Resume Options:
   --run <runId>            Run identifier to resume (defaults to latest)
   --config <path>          Path to workflow configuration file
+
+Stop Options:
+  --run <runId>            Run identifier to stop (defaults to latest)
+  --config <path>          Path to workflow configuration file
+  --reason <reason>        Explanation for stopping the Run
 
 Dispatch Options:
   --run <runId>            Target workflow Run identifier (or positional arg)
@@ -188,7 +194,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
       }
 
       case 'status': {
-        const { values } = parseArgs({
+        const { values, positionals } = parseArgs({
           args: args.slice(1),
           options: {
             run: { type: 'string' },
@@ -204,14 +210,43 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
           return 0;
         }
 
-        const statusResult = await engine.status({
-          runId: values.run,
-          configPath: values.config,
-          detailed: values.detailed,
-        });
+        const targetRunId = values.run || positionals[0];
+        const statusResult = await engine.status(
+          targetRunId
+            ? { runId: targetRunId, configPath: values.config, detailed: values.detailed }
+            : { configPath: values.config, detailed: values.detailed },
+        );
 
         stdout(JSON.stringify(statusResult, null, 2));
         return 0;
+      }
+
+      case 'stop': {
+        const { values, positionals } = parseArgs({
+          args: args.slice(1),
+          options: {
+            run: { type: 'string' },
+            config: { type: 'string' },
+            reason: { type: 'string' },
+            help: { type: 'boolean', short: 'h' },
+          },
+          allowPositionals: true,
+        });
+
+        if (values.help) {
+          stdout(USAGE_HELP);
+          return 0;
+        }
+
+        const targetRunId = values.run || positionals[0];
+        const res = await engine.stop({
+          runId: targetRunId,
+          configPath: values.config,
+          reason: values.reason,
+        });
+
+        stdout(JSON.stringify(res, null, 2));
+        return res.stopped ? 0 : 1;
       }
 
       case 'resume':
