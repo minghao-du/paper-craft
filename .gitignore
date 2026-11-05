@@ -45,3 +45,5 @@ dist/
 
 # Local workflow Runtime records and diagnostics
 .runtime/
+.paper-craft/
+.worktrees/

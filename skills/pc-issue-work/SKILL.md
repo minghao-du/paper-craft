@@ -132,19 +132,24 @@ gh pr create --title "<concise title>" --body "<body>"
 
 ### Step 7: Return correlated results
 
-Publish your completed implementation evidence:
-1. Write a structured result JSON in your attempt directory (e.g. `implementation.json`):
-   ```json
-   {
-     "status": "completed",
-     "head": "<current git rev-parse HEAD>",
-     "summary": "Concise summary of implementation",
-     "evidence": ["<path-to-result-or-test-output>"]
-   }
-   ```
-2. The Orchestrator will collect this result via `stage collect` and evaluate acceptance via `stage accept`.
-3. If remediation feedback is returned due to rejection, review the feedback, retain all prior evidence, address the blocker in the same checkout, and commit the correction before the next collection turn.
-4. Complete your turn and release execution occupancy.
+Publish your completed implementation evidence through the `submit-result` contract:
+
+```bash
+pc workflow submit-result \
+  --run "<run-id>" \
+  --task "<task-id>" \
+  --outcome completed \
+  --summary "Concise summary of implementation" \
+  --artifacts '{"diff":"<git-diff-summary>","test_results":"<test-run-output>"}'
+```
+
+The Engine validates:
+1. `run` and `task` match the active assignment.
+2. `outcome` is in `permitted_outcomes` for worker (`completed`, `blocked`).
+3. `artifacts` satisfies `required_artifacts` (`diff`, `test_results`).
+
+Upon acknowledgement, the Engine verifies execution termination and reports the collected outcome.
+Do not declare whole Issue delivery yourself. Complete your turn cleanly.
 
 ### Step 8: Final records stage (when dispatched post-merge)
 
