@@ -1,7 +1,9 @@
 /**
- * @fileoverview CLI commands for workflow lifecycle: init, start, status.
+ * @fileoverview CLI commands for workflow lifecycle: init, start, status, dispatch, submit-result.
  */
 
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { parseArgs } from 'node:util';
 import { WorkflowEngine } from '../../core/src/workflow/engine.js';
 
@@ -19,6 +21,8 @@ Commands:
   init                     Scaffold default workflow configuration (.pc-workflow.yml)
   start <issue>            Validate preflight gates and start a new workflow Run
   status                   Inspect the current status of a workflow Run
+  dispatch [runId]         Dispatch a specialist role task with instructions
+  submit-result            Submit structured result for an assigned role task
 
 Global Options:
   -h, --help               Show help information
@@ -40,6 +44,19 @@ Status Options:
   --run <runId>            Run identifier to inspect (defaults to latest)
   --config <path>          Path to workflow configuration file
   --detailed               Show full structured context and telemetry
+
+Dispatch Options:
+  --run <runId>            Target workflow Run identifier (or positional arg)
+  --instructions <text>    Task-specific instructions for the specialist role
+  --instructions-file <file> Path to file containing task instructions
+
+Submit-Result Options:
+  --run <runId>            Target workflow Run identifier
+  --task <taskId>          Task identifier bound to the attempt
+  --outcome <outcome>      Submitted outcome (e.g. completed, blocked)
+  --summary <summary>      Summary of work performed
+  --artifacts <json>       JSON string of produced artifacts
+  --artifacts-file <file>  Path to JSON file containing produced artifacts
 `.trim();
 
 /**
@@ -184,6 +201,120 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
         });
 
         stdout(JSON.stringify(statusResult, null, 2));
+        return 0;
+      }
+
+      case 'dispatch': {
+        const { values, positionals } = parseArgs({
+          args: args.slice(1),
+          options: {
+            run: { type: 'string' },
+            instructions: { type: 'string' },
+            'instructions-file': { type: 'string' },
+            help: { type: 'boolean', short: 'h' },
+          },
+          allowPositionals: true,
+        });
+
+        if (values.help) {
+          stdout(USAGE_HELP);
+          return 0;
+        }
+
+        const targetRunId = values.run || positionals[0];
+        let runId = targetRunId;
+        if (!runId) {
+          // Fall back to status run resolution to find latest
+          const latestStatus = await engine.status();
+          runId = latestStatus.run_id;
+        }
+
+        let taskInstructions = '';
+        if (values['instructions-file']) {
+          const resolvedPath = path.resolve(cwd, values['instructions-file']);
+          try {
+            taskInstructions = await fs.readFile(resolvedPath, 'utf8');
+          } catch {
+            stderr(`Error: Instructions file not found at: ${resolvedPath}`);
+            return 1;
+          }
+        } else if (values.instructions) {
+          taskInstructions = values.instructions;
+        }
+
+        if (!taskInstructions.trim()) {
+          stderr('Error: Task instructions are required. Use --instructions <text> or --instructions-file <file>.');
+          return 1;
+        }
+
+        const dispatchResult = await engine.dispatch(runId, taskInstructions);
+        stdout(JSON.stringify(dispatchResult, null, 2));
+        return 0;
+      }
+
+      case 'submit-result': {
+        const { values } = parseArgs({
+          args: args.slice(1),
+          options: {
+            run: { type: 'string' },
+            task: { type: 'string' },
+            outcome: { type: 'string' },
+            summary: { type: 'string' },
+            artifacts: { type: 'string' },
+            'artifacts-file': { type: 'string' },
+            help: { type: 'boolean', short: 'h' },
+          },
+          allowPositionals: true,
+        });
+
+        if (values.help) {
+          stdout(USAGE_HELP);
+          return 0;
+        }
+
+        if (!values.run) {
+          stderr('Error: Run identifier is required. Use --run <runId>.');
+          return 1;
+        }
+        if (!values.task) {
+          stderr('Error: Task identifier is required. Use --task <taskId>.');
+          return 1;
+        }
+        if (!values.outcome) {
+          stderr('Error: Outcome is required. Use --outcome <outcome>.');
+          return 1;
+        }
+        if (!values.summary) {
+          stderr('Error: Summary is required. Use --summary <summary>.');
+          return 1;
+        }
+
+        let artifacts: Record<string, unknown> = {};
+        if (values['artifacts-file']) {
+          const resolvedPath = path.resolve(cwd, values['artifacts-file']);
+          try {
+            const raw = await fs.readFile(resolvedPath, 'utf8');
+            artifacts = JSON.parse(raw);
+          } catch (err) {
+            stderr(`Error: Failed to read artifacts file at ${resolvedPath}: ${(err as Error).message}`);
+            return 1;
+          }
+        } else if (values.artifacts) {
+          try {
+            artifacts = JSON.parse(values.artifacts);
+          } catch (err) {
+            stderr(`Error: Invalid JSON in --artifacts: ${(err as Error).message}`);
+            return 1;
+          }
+        }
+
+        const submitResponse = await engine.submitResult(values.run, values.task, {
+          outcome: values.outcome,
+          summary: values.summary,
+          artifacts,
+        });
+
+        stdout(JSON.stringify(submitResponse, null, 2));
         return 0;
       }
 

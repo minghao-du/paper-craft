@@ -60,8 +60,23 @@ For decomposed children, the [child scheduling rules](planning-workflow.md#child
 
 ### 2. Implement and assess
 
-Dispatch the Worker through the managed execution contract when implementation is required.
-Collect the correlated result, independently assess its evidence against every acceptance criterion, and request scoped rework when it falls short.
+The Orchestrator receives the workflow, role contract, and current scheduling context automatically from the Engine (`WorkflowEngine.getSchedulingContext`).
+Dispatch the Worker by providing task instructions; the Engine binds Run identity, step, role, provider, inputs, and the dedicated worktree workspace:
+
+```bash
+pc workflow dispatch <run-id> --instructions "Implement requested changes adhering to acceptance criteria"
+```
+
+The Engine persists dispatch intent before launching the specialist role via `AgyExecutor`, records the provider execution handle, and prepares the worktree with `.pc-execution-owner` and `initialization.json`.
+
+Specialist roles submit their structured result via the `submit-result` contract:
+
+```bash
+pc workflow submit-result --run <run-id> --task <task-id> --outcome completed --summary "Implemented changes" --artifacts '{"diff":"...","test_results":"..."}'
+```
+
+The Engine validates ownership, permitted outcomes, and required artifacts before acknowledging the result, verifies execution termination, and records the collected implementation outcome.
+Chat text or normal process exit alone does not complete a business step.
 Use `/pc-issue-lead` for an independent stopping-point assessment and `/pc-pr-check` plus `/pc-pr-review` for PR readiness and quality.
 Record a reason and evidence for any stage that does not apply; missing implementation or review evidence is not completion.
 

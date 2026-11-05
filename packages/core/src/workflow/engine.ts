@@ -1,11 +1,16 @@
 /**
- * @fileoverview Deterministic Workflow Engine owning Run lifecycle, intake preflight, and persistence.
+ * @fileoverview Deterministic Workflow Engine owning Run lifecycle, intake preflight,
+ * execution dispatch, and result persistence.
  */
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type {
+  AgentExecutor,
+  DispatchOptions,
+  DispatchResult,
+  ExecutionHandle,
   InitOptions,
   IssueChecker,
   PreflightCheckResult,
@@ -13,9 +18,13 @@ import type {
   RunContext,
   RunEvent,
   RunStatus,
+  SchedulingContext,
   StartOptions,
+  StatusActiveTask,
   StatusOptions,
   StatusResult,
+  SubmitResultResponse,
+  TaskResult,
 } from './types.js';
 import {
   initWorkflowConfig,
@@ -25,6 +34,7 @@ import {
   DefaultIssueChecker,
   DefaultProviderChecker,
 } from './checkers.js';
+import { AgyExecutor } from './executor.js';
 
 /**
  * Custom error raised when intake preflight checks fail.
@@ -51,17 +61,20 @@ export interface WorkflowEngineOptions {
   issueChecker?: IssueChecker;
   /** Checker for verifying provider capabilities. */
   providerChecker?: ProviderChecker;
+  /** Agent executor instance for launching and managing agent executions. */
+  executor?: AgentExecutor;
 }
 
 /**
  * The Workflow Engine is the deterministic driver of workflow runs, configuration,
- * and immutable event logging.
+ * provider dispatch, and immutable event logging.
  */
 export class WorkflowEngine {
   public readonly cwd: string;
   public readonly storageRoot: string;
   public readonly issueChecker: IssueChecker;
   public readonly providerChecker: ProviderChecker;
+  public readonly executor: AgentExecutor;
 
   constructor(options?: WorkflowEngineOptions) {
     this.cwd = options?.cwd ?? process.cwd();
@@ -70,6 +83,7 @@ export class WorkflowEngine {
       : path.join(this.cwd, '.paper-craft');
     this.issueChecker = options?.issueChecker ?? new DefaultIssueChecker();
     this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
+    this.executor = options?.executor ?? new AgyExecutor();
   }
 
   /**
@@ -184,7 +198,6 @@ export class WorkflowEngine {
           if (firstEvent.type === 'run_created') {
             const ctx = (firstEvent.payload as { context: RunContext }).context;
             if (ctx.repository === config.repository && ctx.issue === options.issue) {
-              // Replay to determine current status
               const currentStatus = this.deriveRunStatusFromLines(lines);
               if (currentStatus !== 'completed') {
                 errors.push(
@@ -305,50 +318,38 @@ export class WorkflowEngine {
   }
 
   /**
-   * Reports the current status of a Run reconstructed strictly from its persisted event log.
+   * Reads all events for a given run from its JSONL event log.
    */
-  async status(runIdOrOptions?: string | StatusOptions): Promise<StatusResult> {
-    let runId: string | undefined;
-    if (typeof runIdOrOptions === 'string') {
-      runId = runIdOrOptions;
-    } else if (runIdOrOptions?.runId) {
-      runId = runIdOrOptions.runId;
-    }
-
-    const runsDir = path.join(this.storageRoot, 'runs');
-
-    if (!runId) {
-      // Find latest created run
-      try {
-        const entries = await fs.readdir(runsDir, { withFileTypes: true });
-        const runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-        if (runDirs.length === 0) {
-          throw new Error('No workflow runs found.');
-        }
-        // Sort descending by directory creation / timestamp in name
-        runDirs.sort().reverse();
-        runId = runDirs[0];
-      } catch (err) {
-        throw new Error(`Failed to locate latest workflow run: ${(err as Error).message}`, { cause: err });
-      }
-    }
-
-    const runDir = path.join(runsDir, runId);
-    const eventLogPath = path.join(runDir, 'events.jsonl');
-
+  async readEvents(runId: string): Promise<RunEvent[]> {
+    const eventLogPath = path.join(this.storageRoot, 'runs', runId, 'events.jsonl');
     let rawLog: string;
     try {
       rawLog = await fs.readFile(eventLogPath, 'utf8');
     } catch {
       throw new Error(`Workflow run "${runId}" not found or missing event log at: ${eventLogPath}`);
     }
-
     const lines = rawLog.trim().split('\n').filter(Boolean);
     if (lines.length === 0) {
       throw new Error(`Workflow run "${runId}" has empty event log.`);
     }
+    return lines.map((l) => JSON.parse(l) as RunEvent);
+  }
 
-    const events: RunEvent[] = lines.map((l) => JSON.parse(l));
+  /**
+   * Appends an event to the run's JSONL event log.
+   */
+  async appendEvent(runId: string, event: RunEvent): Promise<void> {
+    const runDir = path.join(this.storageRoot, 'runs', runId);
+    await fs.mkdir(runDir, { recursive: true });
+    const eventLogPath = path.join(runDir, 'events.jsonl');
+    await fs.appendFile(eventLogPath, `${JSON.stringify(event)}\n`, 'utf8');
+  }
+
+  /**
+   * Derives current scheduling context for a Run to supply to an orchestrator.
+   */
+  async getSchedulingContext(runId: string): Promise<SchedulingContext> {
+    const events = await this.readEvents(runId);
     const firstEvent = events[0];
     if (firstEvent.type !== 'run_created') {
       throw new Error(`First event in log for run "${runId}" must be "run_created".`);
@@ -358,14 +359,35 @@ export class WorkflowEngine {
     let currentStatus: RunStatus = 'pending_dispatch';
     let currentStep = initialContext.current_step;
     let reworkCount = initialContext.rework_count;
+    let activeTaskId: string | undefined;
+    let activeHandle: ExecutionHandle | undefined;
+    let latestResult: TaskResult | undefined;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
       switch (evt.type) {
-        case 'dispatch_intent':
-        case 'task_launched':
+        case 'dispatch_intent': {
+          const payload = evt.payload as { taskId: string; step: string };
+          activeTaskId = payload.taskId;
           currentStatus = 'running';
           break;
+        }
+        case 'task_launched': {
+          const payload = evt.payload as { taskId: string; handle: ExecutionHandle };
+          activeTaskId = payload.taskId;
+          activeHandle = payload.handle;
+          currentStatus = 'running';
+          break;
+        }
+        case 'result_submitted': {
+          const payload = evt.payload as { outcome: string; summary: string; artifacts?: Record<string, unknown> };
+          latestResult = {
+            outcome: payload.outcome,
+            summary: payload.summary,
+            artifacts: payload.artifacts,
+          };
+          break;
+        }
         case 'step_transitioned': {
           const payload = evt.payload as { toStep?: string; reason?: string };
           if (payload.toStep) {
@@ -388,6 +410,491 @@ export class WorkflowEngine {
       }
     }
 
+    const stepDefinition = initialContext.workflow.steps[currentStep];
+    if (!stepDefinition) {
+      throw new Error(`Step "${currentStep}" is not defined in workflow definition.`);
+    }
+
+    const roleContract = initialContext.roles.roles[stepDefinition.role];
+    if (!roleContract) {
+      throw new Error(`Role "${stepDefinition.role}" required by step "${currentStep}" is not defined in role contracts.`);
+    }
+
+    return {
+      runId,
+      repository: initialContext.repository,
+      issue: initialContext.issue,
+      status: currentStatus,
+      currentStep,
+      reworkCount,
+      reworkLimit: initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3,
+      provider: initialContext.provider,
+      worktreePath: initialContext.worktree_path,
+      stepDefinition,
+      roleContract,
+      sharedRequirements: initialContext.shared_requirements,
+      activeTaskId,
+      activeHandle,
+      latestResult,
+    };
+  }
+
+  /**
+   * Dispatches a specialist role task for the current step.
+   * Engine binds Run identity, step, role, provider, inputs, and workspace;
+   * caller provides task-specific instructions.
+   */
+  async dispatch(runId: string, taskInstructions: string, options?: DispatchOptions): Promise<DispatchResult> {
+    if (!taskInstructions || typeof taskInstructions !== 'string' || !taskInstructions.trim()) {
+      throw new Error('Task instructions are required to dispatch a role task.');
+    }
+
+    const context = await this.getSchedulingContext(runId);
+    if (context.status === 'completed') {
+      throw new Error(`Cannot dispatch: run "${runId}" is already completed.`);
+    }
+    if (context.status === 'blocked') {
+      throw new Error(`Cannot dispatch: run "${runId}" is blocked.`);
+    }
+
+    const taskId =
+      options?.taskId ??
+      `task-${runId}-${context.currentStep}-${context.reworkCount}-${randomUUID().slice(0, 6)}`;
+
+    // 1. Prepare dedicated worktree
+    await fs.mkdir(context.worktreePath, { recursive: true });
+
+    // Update or write ownership marker
+    const ownerMarker = {
+      run_id: runId,
+      repository: context.repository,
+      issue: context.issue,
+      task_id: taskId,
+      role: context.stepDefinition.role,
+      claimed_at: new Date().toISOString(),
+    };
+    await fs.writeFile(
+      path.join(context.worktreePath, '.pc-execution-owner'),
+      JSON.stringify(ownerMarker, null, 2),
+      'utf8',
+    );
+
+    // Write initialization.json into the worktree
+    const initData = {
+      run_id: runId,
+      task_id: taskId,
+      role: context.stepDefinition.role,
+      step: context.currentStep,
+      skill: context.roleContract.skill,
+      checkout: context.worktreePath,
+      repository: context.repository,
+      issue: context.issue,
+      shared_requirements: context.sharedRequirements,
+      task_instructions: taskInstructions,
+      inputs: options?.inputs ?? {},
+      permitted_outcomes: context.roleContract.permitted_outcomes,
+      required_artifacts: context.roleContract.required_artifacts ?? [],
+    };
+    await fs.writeFile(
+      path.join(context.worktreePath, 'initialization.json'),
+      JSON.stringify(initData, null, 2),
+      'utf8',
+    );
+
+    // 2. Persist dispatch intent event BEFORE launch
+    const intentEvent: RunEvent = {
+      type: 'dispatch_intent',
+      run_id: runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        taskId,
+        step: context.currentStep,
+        role: context.stepDefinition.role,
+        skill: context.roleContract.skill,
+        taskInstructions,
+        inputs: options?.inputs ?? {},
+        worktreePath: context.worktreePath,
+      },
+    };
+    await this.appendEvent(runId, intentEvent);
+
+    // 3. Compose worker prompt
+    const prompt = [
+      `# Task Assignment: ${context.currentStep} (${context.stepDefinition.role})`,
+      `Run: ${runId}`,
+      `Task: ${taskId}`,
+      `Skill: ${context.roleContract.skill}`,
+      '',
+      '## Shared Requirements',
+      context.sharedRequirements || 'None specified.',
+      '',
+      '## Task Instructions',
+      taskInstructions,
+      '',
+      '## Permitted Outcomes',
+      context.roleContract.permitted_outcomes.join(', '),
+      '',
+      '## Required Artifacts',
+      (context.roleContract.required_artifacts ?? []).join(', ') || 'None',
+      '',
+      '## Submission Contract',
+      `When finished, submit your result using:`,
+      `pc workflow submit-result --run "${runId}" --task "${taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
+    ].join('\n');
+
+    // 4. Launch execution via provider Executor
+    let handle: ExecutionHandle;
+    try {
+      handle = await this.executor.launch(taskId, context.worktreePath, prompt);
+    } catch (err) {
+      const launchErrEvent: RunEvent = {
+        type: 'task_launch_failed',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          error: (err as Error).message,
+        },
+      };
+      await this.appendEvent(runId, launchErrEvent);
+      throw err;
+    }
+
+    // 5. Persist task_launched event recording the provider handle
+    const launchedEvent: RunEvent = {
+      type: 'task_launched',
+      run_id: runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        taskId,
+        step: context.currentStep,
+        role: context.stepDefinition.role,
+        handle,
+        launchedAt: new Date().toISOString(),
+      },
+    };
+    await this.appendEvent(runId, launchedEvent);
+
+    return {
+      taskId,
+      handle,
+      step: context.currentStep,
+      role: context.stepDefinition.role,
+      worktreePath: context.worktreePath,
+    };
+  }
+
+  /**
+   * Accepts and validates a specialist role's submitted result.
+   * Validates task ownership, permitted outcomes, and required artifacts before acknowledgement.
+   * Verifies termination of that role execution upon submission.
+   */
+  async submitResult(runId: string, taskId: string, result: TaskResult): Promise<SubmitResultResponse> {
+    if (!taskId || typeof taskId !== 'string') {
+      throw new Error('Valid taskId is required to submit a result.');
+    }
+    if (!result || !result.outcome || typeof result.outcome !== 'string') {
+      throw new Error('TaskResult must specify an outcome.');
+    }
+    if (!result.summary || typeof result.summary !== 'string') {
+      throw new Error('TaskResult must specify a summary.');
+    }
+
+    const events = await this.readEvents(runId);
+    const firstEvent = events[0];
+    const initialContext = (firstEvent.payload as { context: RunContext }).context;
+
+    // Locate dispatch / task event for taskId
+    let taskEvent: RunEvent | undefined;
+    let handle: ExecutionHandle | undefined;
+    let existingResultEvent: RunEvent | undefined;
+
+    for (const evt of events) {
+      if (evt.type === 'dispatch_intent' && (evt.payload as { taskId: string }).taskId === taskId) {
+        taskEvent = evt;
+      }
+      if (evt.type === 'task_launched' && (evt.payload as { taskId: string }).taskId === taskId) {
+        handle = (evt.payload as { handle: ExecutionHandle }).handle;
+      }
+      if (evt.type === 'result_submitted' && (evt.payload as { taskId: string }).taskId === taskId) {
+        existingResultEvent = evt;
+      }
+    }
+
+    if (!taskEvent) {
+      throw new Error(`Task "${taskId}" not found in run "${runId}".`);
+    }
+
+    const taskPayload = taskEvent.payload as {
+      step: string;
+      role: string;
+      worktreePath: string;
+    };
+
+    // Check if result already submitted for this taskId
+    if (existingResultEvent) {
+      const prior = existingResultEvent.payload as {
+        outcome: string;
+        summary: string;
+        artifacts?: Record<string, unknown>;
+      };
+
+      const normalize = (obj: unknown) => JSON.stringify(obj ?? {});
+      const isIdentical =
+        prior.outcome === result.outcome &&
+        prior.summary === result.summary &&
+        normalize(prior.artifacts) === normalize(result.artifacts);
+
+      if (isIdentical) {
+        return {
+          acknowledged: true,
+          taskId,
+          runId,
+          step: taskPayload.step,
+          outcome: result.outcome,
+          summary: result.summary,
+          artifacts: result.artifacts ?? {},
+          executionTerminated: true,
+          idempotent: true,
+          message: `Result for task "${taskId}" was already acknowledged (idempotent duplicate submission).`,
+        };
+      }
+
+      throw new Error(
+        `Conflicting result submitted for task "${taskId}". A prior result with outcome "${prior.outcome}" is already recorded.`,
+      );
+    }
+
+    // Role contract validation
+    const roleContract = initialContext.roles.roles[taskPayload.role];
+    if (!roleContract) {
+      throw new Error(`Role contract for "${taskPayload.role}" is not defined.`);
+    }
+
+    if (!roleContract.permitted_outcomes.includes(result.outcome)) {
+      throw new Error(
+        `Outcome "${result.outcome}" is not permitted for role "${taskPayload.role}". Permitted outcomes: [${roleContract.permitted_outcomes.join(', ')}].`,
+      );
+    }
+
+    const required = roleContract.required_artifacts ?? [];
+    const artifacts = result.artifacts ?? {};
+    const missingArtifacts: string[] = [];
+    for (const key of required) {
+      const val = artifacts[key];
+      if (val === undefined || val === null || val === '') {
+        missingArtifacts.push(key);
+      }
+    }
+    if (missingArtifacts.length > 0) {
+      throw new Error(
+        `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
+      );
+    }
+
+    // Persist result_submitted event
+    const nowIso = new Date().toISOString();
+    const resultSubmittedEvent: RunEvent = {
+      type: 'result_submitted',
+      run_id: runId,
+      timestamp: nowIso,
+      payload: {
+        taskId,
+        step: taskPayload.step,
+        role: taskPayload.role,
+        outcome: result.outcome,
+        summary: result.summary,
+        artifacts,
+      },
+    };
+    await this.appendEvent(runId, resultSubmittedEvent);
+
+    // Verify termination of the role execution
+    let executionTerminated = true;
+    if (handle) {
+      const stopRes = await this.executor.stop(handle);
+      executionTerminated = stopRes.stopped;
+
+      const termEvent: RunEvent = {
+        type: 'task_terminated',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          handle,
+          stopped: stopRes.stopped,
+          uncertain: stopRes.uncertain,
+          error: stopRes.error,
+        },
+      };
+      await this.appendEvent(runId, termEvent);
+    }
+
+    // If result outcome is blocked, record run_blocked
+    if (result.outcome === 'blocked') {
+      const blockedEvent: RunEvent = {
+        type: 'run_blocked',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          reason: result.summary,
+        },
+      };
+      await this.appendEvent(runId, blockedEvent);
+    }
+
+    return {
+      acknowledged: true,
+      taskId,
+      runId,
+      step: taskPayload.step,
+      outcome: result.outcome,
+      summary: result.summary,
+      artifacts,
+      executionTerminated,
+      message: `Result for task "${taskId}" successfully acknowledged. Execution terminated: ${executionTerminated}.`,
+    };
+  }
+
+  /**
+   * Reports the current status of a Run reconstructed strictly from its persisted event log.
+   * Clearly distinguishes provider execution status from workflow business completion.
+   */
+  async status(runIdOrOptions?: string | StatusOptions): Promise<StatusResult> {
+    let runId: string | undefined;
+    if (typeof runIdOrOptions === 'string') {
+      runId = runIdOrOptions;
+    } else if (runIdOrOptions?.runId) {
+      runId = runIdOrOptions.runId;
+    }
+
+    const runsDir = path.join(this.storageRoot, 'runs');
+
+    if (!runId) {
+      try {
+        const entries = await fs.readdir(runsDir, { withFileTypes: true });
+        const runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        if (runDirs.length === 0) {
+          throw new Error('No workflow runs found.');
+        }
+        runDirs.sort().reverse();
+        runId = runDirs[0];
+      } catch (err) {
+        throw new Error(`Failed to locate latest workflow run: ${(err as Error).message}`, { cause: err });
+      }
+    }
+
+    const events = await this.readEvents(runId);
+    const firstEvent = events[0];
+    if (firstEvent.type !== 'run_created') {
+      throw new Error(`First event in log for run "${runId}" must be "run_created".`);
+    }
+
+    const initialContext = (firstEvent.payload as { context: RunContext }).context;
+    let currentStatus: RunStatus = 'pending_dispatch';
+    let currentStep = initialContext.current_step;
+    let reworkCount = initialContext.rework_count;
+
+    let activeTaskId: string | undefined;
+    let activeStep: string | undefined;
+    let activeRole: string | undefined;
+    let activeHandle: ExecutionHandle | undefined;
+    let latestResult: TaskResult | undefined;
+    let isStopped: boolean | undefined;
+
+    for (let i = 1; i < events.length; i++) {
+      const evt = events[i];
+      switch (evt.type) {
+        case 'dispatch_intent': {
+          const payload = evt.payload as { taskId: string; step: string; role: string };
+          activeTaskId = payload.taskId;
+          activeStep = payload.step;
+          activeRole = payload.role;
+          currentStatus = 'running';
+          break;
+        }
+        case 'task_launched': {
+          const payload = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
+          activeTaskId = payload.taskId;
+          activeHandle = payload.handle;
+          activeStep = payload.step;
+          activeRole = payload.role;
+          currentStatus = 'running';
+          break;
+        }
+        case 'result_submitted': {
+          const payload = evt.payload as {
+            taskId: string;
+            outcome: string;
+            summary: string;
+            artifacts?: Record<string, unknown>;
+          };
+          if (payload.taskId === activeTaskId) {
+            latestResult = {
+              outcome: payload.outcome,
+              summary: payload.summary,
+              artifacts: payload.artifacts,
+            };
+          }
+          break;
+        }
+        case 'task_terminated': {
+          const payload = evt.payload as { taskId: string; stopped: boolean };
+          if (payload.taskId === activeTaskId) {
+            isStopped = payload.stopped;
+          }
+          break;
+        }
+        case 'step_transitioned': {
+          const payload = evt.payload as { toStep?: string; reason?: string };
+          if (payload.toStep) {
+            currentStep = payload.toStep;
+          }
+          if (payload.reason === 'rework') {
+            reworkCount++;
+          }
+          break;
+        }
+        case 'run_completed':
+          currentStatus = 'completed';
+          break;
+        case 'run_blocked':
+          currentStatus = 'blocked';
+          break;
+        case 'run_paused':
+          currentStatus = 'paused';
+          break;
+      }
+    }
+
+    let activeTaskInfo: StatusActiveTask | undefined;
+    if (activeTaskId && activeStep && activeRole) {
+      let executionStatus: StatusActiveTask['execution_status'];
+      try {
+        const inspection = await this.executor.inspect(activeTaskId);
+        executionStatus = inspection.status;
+      } catch {
+        executionStatus = 'uncertain';
+      }
+
+      activeTaskInfo = {
+        task_id: activeTaskId,
+        step: activeStep,
+        role: activeRole,
+        handle: activeHandle,
+        execution_status: executionStatus,
+        business_outcome: latestResult?.outcome,
+        result: latestResult,
+        stopped: isStopped,
+      };
+    }
+
+    let summary = `Run ${runId} is ${currentStatus} at step "${currentStep}" for issue #${initialContext.issue}.`;
+    if (latestResult) {
+      summary += ` Collected outcome: ${latestResult.outcome}.`;
+    }
+
     return {
       run_id: runId,
       repository: initialContext.repository,
@@ -399,8 +906,9 @@ export class WorkflowEngine {
       worktree_path: initialContext.worktree_path,
       rework_count: reworkCount,
       events_count: events.length,
-      summary: `Run ${runId} is ${currentStatus} at step "${currentStep}" for issue #${initialContext.issue}.`,
+      summary,
       shared_requirements: initialContext.shared_requirements,
+      active_task: activeTaskInfo,
     };
   }
 

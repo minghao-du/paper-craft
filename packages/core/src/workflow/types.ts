@@ -189,6 +189,175 @@ export interface StatusResult {
   summary: string;
   /** Captured shared requirements. */
   shared_requirements?: string;
+  /** Detailed active task information if any task was dispatched. */
+  active_task?: StatusActiveTask;
+}
+
+/**
+ * Detailed active task information embedded in StatusResult.
+ */
+export interface StatusActiveTask {
+  /** Active or last dispatched task ID. */
+  task_id: string;
+  /** Step name for the task. */
+  step: string;
+  /** Assigned role. */
+  role: string;
+  /** Associated execution handle. */
+  handle?: ExecutionHandle;
+  /** Process/session execution status from provider. */
+  execution_status?: ExecutionStatus;
+  /** Business result outcome if submitted. */
+  business_outcome?: string;
+  /** Submitted task result if available. */
+  result?: TaskResult;
+  /** Whether execution termination has been verified. */
+  stopped?: boolean;
+}
+
+/**
+ * Opaque handle returned by an agent executor representing a launched task.
+ */
+export interface ExecutionHandle {
+  /** Provider-specific execution identifier (e.g. process PID, session ID, conversation ID). */
+  id: string;
+  /** Stable task identifier bound to the workflow attempt. */
+  taskId: string;
+}
+
+/**
+ * Status of the agent execution process or session.
+ */
+export type ExecutionStatus = 'not_started' | 'running' | 'exited' | 'uncertain';
+
+/**
+ * Result of inspecting an agent execution process by its stable taskId.
+ */
+export interface ExecutionInspection {
+  /** Current process or session execution status. */
+  status: ExecutionStatus;
+  /** Associated execution handle if started. */
+  handle?: ExecutionHandle;
+  /** Exit code if the process exited. */
+  exitCode?: number;
+  /** Failure or diagnostic message if uncertain or errored. */
+  error?: string;
+}
+
+/**
+ * Provider-independent contract for agent execution.
+ */
+export interface AgentExecutor {
+  /** Verifies availability and readiness of the execution provider. */
+  check(): Promise<{ available: boolean; error?: string }>;
+  /** Launches an agent task in the target working directory with the given prompt. */
+  launch(taskId: string, workingDirectory: string, prompt: string): Promise<ExecutionHandle>;
+  /** Inspects the execution state by its stable task identifier. */
+  inspect(taskId: string): Promise<ExecutionInspection>;
+  /** Sends a message to a running agent execution. */
+  send(handle: ExecutionHandle, message: string): Promise<void>;
+  /** Stops a running agent execution and verifies termination. */
+  stop(handle: ExecutionHandle): Promise<{ stopped: boolean; uncertain?: boolean; error?: string }>;
+}
+
+/**
+ * Complete scheduling context supplied by the Engine to an orchestrator.
+ */
+export interface SchedulingContext {
+  /** Run identifier. */
+  runId: string;
+  /** Repository in owner/repo format. */
+  repository: string;
+  /** Target issue number. */
+  issue: number;
+  /** Current lifecycle status. */
+  status: RunStatus;
+  /** Current workflow step. */
+  currentStep: string;
+  /** Number of rework loops completed. */
+  reworkCount: number;
+  /** Maximum rework loops allowed. */
+  reworkLimit: number;
+  /** Provider identifier. */
+  provider: string;
+  /** Path to the assigned worktree. */
+  worktreePath: string;
+  /** Step definition for the current step. */
+  stepDefinition: WorkflowStep;
+  /** Role contract for the current step. */
+  roleContract: RoleContract;
+  /** Immutable shared requirements for the Run. */
+  sharedRequirements: string;
+  /** Active task ID if one is currently in flight or dispatched. */
+  activeTaskId?: string;
+  /** Active execution handle if launched. */
+  activeHandle?: ExecutionHandle;
+  /** Latest submitted task result if available. */
+  latestResult?: TaskResult;
+}
+
+/**
+ * Options for dispatching a task to a specialist role.
+ */
+export interface DispatchOptions {
+  /** Optional task-specific input references or metadata. */
+  inputs?: Record<string, unknown>;
+  /** Custom task identifier override (optional; Engine generates one by default). */
+  taskId?: string;
+}
+
+/**
+ * Result returned upon successful task dispatch.
+ */
+export interface DispatchResult {
+  /** Unique stable task identifier. */
+  taskId: string;
+  /** Provider execution handle. */
+  handle: ExecutionHandle;
+  /** Active workflow step name. */
+  step: string;
+  /** Specialist role name. */
+  role: string;
+  /** Dedicated worktree path. */
+  worktreePath: string;
+}
+
+/**
+ * Structured result submitted by a specialist role.
+ */
+export interface TaskResult {
+  /** Submitted outcome string (must match permitted_outcomes in RoleContract). */
+  outcome: string;
+  /** High-level summary of work performed. */
+  summary: string;
+  /** Artifacts produced by the task (must satisfy required_artifacts in RoleContract). */
+  artifacts?: Record<string, unknown>;
+}
+
+/**
+ * Response acknowledging a validated task result submission.
+ */
+export interface SubmitResultResponse {
+  /** Whether the submission was acknowledged. */
+  acknowledged: boolean;
+  /** Task identifier bound to the result. */
+  taskId: string;
+  /** Run identifier. */
+  runId: string;
+  /** Workflow step at the time of submission. */
+  step: string;
+  /** Submitted outcome. */
+  outcome: string;
+  /** Summary of the result. */
+  summary: string;
+  /** Captured artifacts. */
+  artifacts: Record<string, unknown>;
+  /** Whether execution termination was verified. */
+  executionTerminated: boolean;
+  /** True if this was an idempotent resubmission of an identical result. */
+  idempotent?: boolean;
+  /** Human-readable status message. */
+  message?: string;
 }
 
 /**
