@@ -11,7 +11,7 @@ Synchronize all code, rules, configurations, and data assets across local workst
 
 ## Post-closure audit invocation
 
-When dispatched by an EPIC Orchestrator after verified closure, perform applicability
+When dispatched by an Orchestrator after verified closure, perform applicability
 and bounded structural audit only, following [the shared finalization contract](../pc-orchestrator/finalization.md).
 Return the inspected versions and classified findings required there; completion uses
 that shared accepted-disposition contract.

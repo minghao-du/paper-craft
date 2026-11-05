@@ -69,7 +69,7 @@ Ask the user only if the topic is genuinely ambiguous.
 
 Also gather what's relevant from whichever source is in play:
 
-- The **EPIC** or parent issue if referenced (e.g., "EPIC: #285")
+- The parent issue if referenced (e.g., "Parent: #285")
 - Related issues referenced in the PR or conversation
 - Key files, data paths, and function names relevant to the next step
 
@@ -113,7 +113,7 @@ The slug should be a short kebab-case summary (e.g., `ISSUE-quartet-timing-instr
 - **Experiment** (if applicable): Question, Hypothesis, Conditions table, Dataset, Running instructions (exact CLI), Success criteria (quantitative thresholds), Diagnostics
 - **Success criteria**: Numbered, falsifiable, with concrete thresholds
 - **Scope boundaries**: Explicit "In scope" / "Out of scope" lists
-- **References**: Link to source PR (if any), EPIC, related issues, papers if applicable
+- **References**: Link to source PR (if any), parent issue, related issues, papers if applicable
 - **Depends on / Blocked by**: If there are dependency relationships
 
 **Avoid vague language.**
@@ -141,7 +141,7 @@ gh issue list -R <repo> --state open --search "sort:created-desc" \
 ```
 
 If any issue created since the Step 3 check has a title or scope that substantially overlaps the draft, stop — do not file.
-This is the common failure mode when another agent (e.g. a concurrent epic worker) reached the same "obvious next step" independently while this one was drafting.
+This is the common failure mode when another agent (e.g. a concurrent worker) reached the same "obvious next step" independently while this one was drafting.
 Report the collision and ask the user whether to close/link the draft against the existing issue instead of filing a duplicate.
 
 ### Step 5: Run /pc-issue-check

@@ -20,7 +20,7 @@ For missing assignment or resume, return to [Orchestrator intake](../pc-orchestr
    This step ends with one verified owner of the checkout.
 
 2. **Verify the evaluated PR.** Read live GitHub state,
-   evaluated SHA, applicable completion/review outcomes and every required EPIC confirmation.
+   evaluated SHA, applicable completion/review outcomes and every required parent/planner confirmation.
    Use `gh pr view <N> --json url,state,headRefOid,baseRefName,closingIssuesReferences`.
    Match repository, PR, local HEAD and live head to that SHA. Inspect `git status --porcelain`.
    Dirty or untracked work requires worker accounting through the orchestrator; preserve it
@@ -32,7 +32,7 @@ For missing assignment or resume, return to [Orchestrator intake](../pc-orchestr
    A conflict stops the operation: report the precise blocker, preserve the worktree
    (including any rebase state), and release ownership before worker remediation.
    If a successful rebase changes HEAD, push with `--force-with-lease`, report the new
-   SHA and release. The orchestrator repeats applicable checks, EPIC confirmations and
+   SHA and release. The orchestrator repeats applicable checks, planner confirmations and
    professional confirmation before another merge dispatch.
    With unchanged HEAD, verify current-base ancestry and required checks using
    `gh pr checks <N> --required`; inspect installed `gh pr checks --help` for supported
@@ -53,7 +53,7 @@ For missing assignment or resume, return to [Orchestrator intake](../pc-orchestr
 
    Use an explicit squash body containing only intended closing references (or `--body ""`).
    The match-head guard rejects a moved head; it does not make the separate base check
-   atomic. A moved head returns to checks and applicable EPIC confirmation. A moved base
+   atomic. A moved head returns to checks and applicable planner confirmation. A moved base
    requires current-base revalidation and, if rebase changes head, fresh quality and professional confirmation.
    Never replace a failed guard with an unguarded merge.
 
@@ -107,7 +107,7 @@ Managed delivery and `pc workflow orchestrator land` execute delivery stages (`p
 Unknown execution occupancy or unaccounted checkout files retain the checkout.
 A blocked completion resumes its persisted stages; inspect the original execution before retrying a missing receipt.
 Interrupted merge recovery verifies the actual merge result on GitHub and does not repeat a successful merge.
-EPIC closure remains a separate user decision.
+Parent Issue closure remains a separate user decision.
 
 ## Managed completion
 

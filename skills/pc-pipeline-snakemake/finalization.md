@@ -1,6 +1,6 @@
-# EPIC finalization audit
+# Post-closure finalization audit
 
-Use this branch when Orchestrator dispatches a post-merge EPIC audit; other creation,
+Use this branch when Orchestrator dispatches a post-merge audit; other creation,
 optimization and review uses retain their own workflow.
 
 1. Read the verified integrated SHA, actual per-PR changes, Worker results and evidence.
@@ -23,6 +23,6 @@ optimization and review uses retain their own workflow.
    and unperformed checks in the appropriate fields. Include the named code roots,
    affected directory/script mapping, callers and dependent stages in that scope
    evidence for the research-state writer. Technical defects return to the
-   existing EPIC/Worker/PR repair flow; this task audits without editing workflow code.
+   existing Worker/PR repair flow; this task audits without editing workflow code.
    **Done:** Status is `blocked` for required evidence gaps or blocking defects;
    `completed` accounts for all required checks, with limitations and advice explicit.
