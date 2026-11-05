@@ -149,6 +149,8 @@ export interface StartOptions {
   requirements?: string;
   /** Path to shared requirements file (UTF-8). Mutually exclusive with requirements. */
   requirementsFile?: string;
+  /** Optional execution handle representing an active orchestrator session. */
+  orchestratorHandle?: ExecutionHandle;
 }
 
 /**
@@ -346,6 +348,10 @@ export interface SchedulingContext {
   evaluatedCommit?: string;
   /** Usable review findings if available. */
   reviewFindings?: string;
+  /** Confirmed merged commit SHA from merge step if available. */
+  mergedCommit?: string;
+  /** Accumulated delivery artifacts from prior workflow steps (diff, test results, review, merge). */
+  deliveryArtifacts?: Record<string, unknown>;
 }
 
 /**
@@ -559,5 +565,39 @@ export interface ResumeResult {
   eventsCount: number;
   /** Human-readable explanation of resume and reconciliation outcome. */
   message: string;
+}
+
+/**
+ * Options for releasing Run resources.
+ */
+export interface ReleaseResourcesOptions {
+  /** Task ID triggering the release. */
+  taskId?: string;
+  /** Summary of work performed before release. */
+  summary?: string;
+  /** Artifacts produced by the finalizer task. */
+  artifacts?: Record<string, unknown>;
+}
+
+/**
+ * Result of releasing Run resources and verifying completion.
+ */
+export interface ReleaseResourcesResult {
+  /** Unique identifier of the Run. */
+  runId: string;
+  /** Whether all resources were cleanly released and all executions verified terminated. */
+  released: boolean;
+  /** Whether the worktree was deleted. */
+  worktreeRemoved: boolean;
+  /** Path to the worktree that was verified and removed. */
+  worktreePath?: string;
+  /** List of execution handles verified terminated during release. */
+  terminatedHandles: ExecutionHandle[];
+  /** Resulting lifecycle status of the Run (completed or blocked). */
+  status: RunStatus;
+  /** Human-readable explanation. */
+  message: string;
+  /** Error or diagnostic details if release failed. */
+  error?: string;
 }
 

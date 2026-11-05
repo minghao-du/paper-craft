@@ -24,6 +24,7 @@ Commands:
   resume [runId]           Resume an interrupted workflow Run and reconcile executions
   dispatch [runId]         Dispatch a specialist role task with instructions
   submit-result            Submit structured result for an assigned role task
+  release [runId]          Release resources and verify termination for a completed or finalized Run
 
 Global Options:
   -h, --help               Show help information
@@ -62,6 +63,10 @@ Submit-Result Options:
   --summary <summary>      Summary of work performed
   --artifacts <json>       JSON string of produced artifacts
   --artifacts-file <file>  Path to JSON file containing produced artifacts
+
+Release Options:
+  --run <runId>            Run identifier to release (defaults to latest)
+  --config <path>          Path to workflow configuration file
 `.trim();
 
 /**
@@ -378,6 +383,34 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
 
         stdout(JSON.stringify(submitResponse, null, 2));
         return 0;
+      }
+
+      case 'release': {
+        const { values, positionals } = parseArgs({
+          args: args.slice(1),
+          options: {
+            run: { type: 'string' },
+            config: { type: 'string' },
+            help: { type: 'boolean', short: 'h' },
+          },
+          allowPositionals: true,
+        });
+
+        if (values.help) {
+          stdout(USAGE_HELP);
+          return 0;
+        }
+
+        const targetRunId = values.run || positionals[0];
+        let runId = targetRunId;
+        if (!runId) {
+          const latestStatus = await engine.status({ configPath: values.config });
+          runId = latestStatus.run_id;
+        }
+
+        const res = await engine.releaseRunResources(runId);
+        stdout(JSON.stringify(res, null, 2));
+        return res.released ? 0 : 1;
       }
 
       default: {

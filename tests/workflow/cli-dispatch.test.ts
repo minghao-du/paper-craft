@@ -185,4 +185,42 @@ describe('Workflow CLI dispatch & submit-result (Ticket #3)', () => {
     expect(exitCode).toBe(1);
     expect(stderr.join('\n')).toContain('missing required artifact');
   });
+
+  it('runs release command via CLI to release resources', async () => {
+    const run = await mockEngine.start({ issue: 81 });
+
+    // Emulate completed finalization with release_evidence in events log
+    await mockEngine.appendEvent(run.run_id, {
+      type: 'result_submitted',
+      run_id: run.run_id,
+      timestamp: new Date().toISOString(),
+      payload: {
+        taskId: 'task-final-81',
+        step: 'finalization',
+        role: 'finalizer',
+        outcome: 'completed',
+        summary: 'Final records preserved',
+        artifacts: {
+          release_evidence: { preserved: true },
+        },
+      },
+    });
+
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+
+    const exitCode = await runCli(['workflow', 'release', run.run_id], {
+      cwd: tmpDir,
+      engine: mockEngine,
+      stdout: (msg) => stdout.push(msg),
+      stderr: (msg) => stderr.push(msg),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.length).toBe(0);
+
+    const output = JSON.parse(stdout.join('\n'));
+    expect(output.released).toBe(true);
+    expect(output.status).toBe('completed');
+  });
 });

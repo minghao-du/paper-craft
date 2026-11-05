@@ -124,8 +124,36 @@ On `pc workflow resume`, if interrupted during the merge step, the Engine inspec
 
 ### 4. Record, preserve and release
 
-For merged work, follow [post-merge delivery](managed-lifecycle.md#post-merge-delivery) for Worker final records, preservation, and PR-Land cleanup.
-For work without a PR, retain the accepted outcome and follow the managed release contract for every reserved execution and checkout.
+Following verified merge, the Engine automatically transitions to `finalization`.
+The Orchestrator queries `getSchedulingContext` (`currentStep: 'finalization'`, `role: 'finalizer'`, `skill: 'pc-pr-land'`) and dispatches the finalizer role through the common dispatch interface:
+
+```bash
+pc workflow dispatch <run-id> --instructions "Preserve final records, verify archives, and release resources"
+```
+
+The finalizer task automatically inherits the Run's immutable shared requirements and accumulated delivery artifacts (`merged_commit`, `reviewed_commit`, `diff`, etc.), which are populated into `initialization.json` and the task prompt.
+
+Specialist roles submit their structured result with required preservation evidence:
+
+```bash
+pc workflow submit-result --run <run-id> --task <task-id> --outcome completed --summary "Records preserved and bundles verified" --artifacts '{"release_evidence":{"preserved":true,"bundle":"git-bundle.pack"}}'
+```
+
+Before destroying any worktree or completing the Run:
+1. **Preservation validation:** The Engine verifies that required final records and preservation evidence (`release_evidence`) exist and are valid.
+2. **Ownership verification:** The Engine checks `.pc-execution-owner` inside the worktree to ensure ownership matches the Run. Destructive deletion of foreign or unverified worktrees is strictly blocked.
+3. **Execution termination:** The Engine verifies termination of all remaining active execution handles (including registered orchestrator sessions) via `AgyExecutor.stop`.
+4. **Engine-controlled cleanup:** The Engine deletes the verified worktree and records `resources_released` and `run_completed` events. Roles do not edit Run state directly.
+
+Failures in recording, preservation, or cleanup retain actionable diagnostic status, record `cleanup_failed` and `run_blocked`, and do not mark the Run complete.
+
+Explicit resource release can also be triggered or repeated idempotently:
+
+```bash
+pc workflow release <run-id> --config /absolute/path/.pc-workflow.yml
+```
+
+On `pc workflow resume`, interrupted finalization resumes directly without repeating worker implementation or merge actions. Repeated cleanup safely reconciles actual resource state idempotently (recognizing already released resources).
 
 **Done:** Accepted scope, validation, final records, and follow-up attribution are retained; required archive/bundle evidence and actual resource release are verified.
 A merged PR alone does not complete delivery.
@@ -140,10 +168,11 @@ Use [managed recovery](managed-lifecycle.md) for receipt reconciliation, bounded
 pc workflow orchestrator recover <run-id> --config /absolute/path/.epic-config.json
 pc workflow orchestrator stop <run-id> --config /absolute/path/.epic-config.json
 pc workflow orchestrator release <run-id> --config /absolute/path/.epic-config.json
+pc workflow release <run-id>
 ```
 
 Use `stop` to revoke further scheduling authority, cancel owned executions and helpers, and verify termination without altering completed business deliverables.
-Use `release` on a completed Run to terminate remaining executions/helpers and release resources through verified preservation and cleanup prerequisites.
+Use `release` on a completed or finalized Run to terminate remaining executions/helpers and release resources through verified preservation and cleanup prerequisites.
 
 **Done:** Every reported result has an acceptance/rework disposition, and unresolved execution or ownership uncertainty remains a recorded blocker to dependent work.
 

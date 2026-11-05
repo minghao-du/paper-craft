@@ -21,6 +21,8 @@ import type {
   PriorEvidence,
   ProviderChecker,
   ReconciledTask,
+  ReleaseResourcesOptions,
+  ReleaseResourcesResult,
   ResumeOptions,
   ResumeResult,
   RunContext,
@@ -183,6 +185,16 @@ export class WorkflowMergeVerificationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'WorkflowMergeVerificationError';
+  }
+}
+
+/**
+ * Custom error raised when resource cleanup or preservation verification fails.
+ */
+export class WorkflowCleanupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowCleanupError';
   }
 }
 
@@ -455,7 +467,43 @@ export class WorkflowEngine {
     const eventLogPath = path.join(runDir, 'events.jsonl');
     await fs.writeFile(eventLogPath, `${JSON.stringify(initialEvent)}\n`, 'utf8');
 
+    if (options.orchestratorHandle) {
+      const orchEvent: RunEvent = {
+        type: 'orchestrator_registered',
+        run_id: runId,
+        timestamp: nowIso,
+        payload: {
+          handle: options.orchestratorHandle,
+          type: 'orchestrator',
+        },
+      };
+      await this.appendEvent(runId, orchEvent);
+    }
+
     return runContext;
+  }
+
+  /**
+   * Registers an orchestrator execution handle to be tracked and gracefully terminated
+   * upon workflow resource release before completion.
+   */
+  async registerOrchestrator(runId: string, handle: ExecutionHandle): Promise<void> {
+    if (!runId || typeof runId !== 'string') {
+      throw new Error('Valid runId is required to register an orchestrator handle.');
+    }
+    if (!handle || !handle.id) {
+      throw new Error('Valid ExecutionHandle is required.');
+    }
+    const orchEvent: RunEvent = {
+      type: 'orchestrator_registered',
+      run_id: runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        handle,
+        type: 'orchestrator',
+      },
+    };
+    await this.appendEvent(runId, orchEvent);
   }
 
   /**
@@ -520,6 +568,8 @@ export class WorkflowEngine {
     let activeHandle: ExecutionHandle | undefined;
     let latestResult: TaskResult | undefined;
     let priorEvidence: PriorEvidence | undefined;
+    let deliveryArtifacts: Record<string, unknown> = {};
+    let mergedCommit: string | undefined;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
@@ -566,6 +616,12 @@ export class WorkflowEngine {
             summary: payload.summary,
             artifacts: payload.artifacts,
           };
+          if (payload.artifacts) {
+            deliveryArtifacts = { ...deliveryArtifacts, ...payload.artifacts };
+            if (payload.artifacts.merged_commit) {
+              mergedCommit = payload.artifacts.merged_commit as string;
+            }
+          }
           priorEvidence = {
             evaluatedCommit: payload.artifacts?.reviewed_commit as string | undefined,
             findings: payload.artifacts?.findings as string | undefined,
@@ -611,12 +667,23 @@ export class WorkflowEngine {
             reviewedCommit?: string;
             findings?: string;
             artifacts?: Record<string, unknown>;
+            mergedCommit?: string;
           };
-          if (payload.toStep && payload.toStep !== 'completed') {
+          if (payload.toStep === 'completed') {
+            currentStep = 'completed';
+            currentStatus = 'completed';
+          } else if (payload.toStep) {
             currentStep = payload.toStep;
+            currentStatus = 'pending_dispatch';
           }
           if (payload.reason === 'rework') {
             reworkCount = payload.reworkCount ?? (reworkCount + 1);
+          }
+          if (payload.artifacts) {
+            deliveryArtifacts = { ...deliveryArtifacts, ...payload.artifacts };
+          }
+          if (payload.mergedCommit) {
+            mergedCommit = payload.mergedCommit;
           }
           if (payload.reason === 'review_invalidated') {
             if (priorEvidence) {
@@ -634,7 +701,6 @@ export class WorkflowEngine {
           }
           activeTaskId = undefined;
           activeHandle = undefined;
-          currentStatus = 'pending_dispatch';
           break;
         }
         case 'run_completed':
@@ -679,6 +745,8 @@ export class WorkflowEngine {
       priorEvidence,
       evaluatedCommit: priorEvidence?.evaluatedCommit,
       reviewFindings: priorEvidence?.findings,
+      mergedCommit,
+      deliveryArtifacts,
     };
   }
 
@@ -887,11 +955,13 @@ export class WorkflowEngine {
       task_instructions: taskInstructions,
       inputs: {
         ...(context.priorEvidence ? { prior_evidence: context.priorEvidence } : {}),
+        ...(context.deliveryArtifacts ? { delivery_artifacts: context.deliveryArtifacts } : {}),
         ...(options?.inputs ?? {}),
       },
       permitted_outcomes: context.roleContract.permitted_outcomes,
       required_artifacts: context.roleContract.required_artifacts ?? [],
       prior_evidence: context.priorEvidence,
+      delivery_artifacts: context.deliveryArtifacts,
     };
     await fs.writeFile(
       path.join(context.worktreePath, 'initialization.json'),
@@ -912,6 +982,7 @@ export class WorkflowEngine {
         taskInstructions,
         inputs: options?.inputs ?? {},
         priorEvidence: context.priorEvidence,
+        deliveryArtifacts: context.deliveryArtifacts,
         worktreePath: context.worktreePath,
       },
     };
@@ -927,6 +998,13 @@ export class WorkflowEngine {
       '## Shared Requirements',
       context.sharedRequirements || 'None specified.',
     ];
+
+    if (context.deliveryArtifacts && Object.keys(context.deliveryArtifacts).length > 0) {
+      promptLines.push('', '## Delivery Artifacts');
+      for (const [key, val] of Object.entries(context.deliveryArtifacts)) {
+        promptLines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
+      }
+    }
 
     if (context.priorEvidence) {
       promptLines.push('', '## Prior Evidence & Review Findings');
@@ -998,6 +1076,349 @@ export class WorkflowEngine {
       step: context.currentStep,
       role: context.stepDefinition.role,
       worktreePath: context.worktreePath,
+    };
+  }
+
+  /**
+   * Engine-controlled release of Run resources and records preservation.
+   * Validates preservation conditions and worktree ownership before destructive cleanup,
+   * terminates all remaining owned agent executions (including registered orchestrator),
+   * and records resources_released and run_completed events upon success.
+   */
+  async releaseRunResources(runId: string, options?: ReleaseResourcesOptions): Promise<ReleaseResourcesResult> {
+    const events = await this.readEvents(runId);
+    const initialContext = (events[0].payload as { context: RunContext }).context;
+
+    // Check if already released and completed
+    const alreadyReleased = events.some((e) => e.type === 'resources_released');
+    const alreadyCompleted = events.some((e) => e.type === 'run_completed');
+    if (alreadyReleased && alreadyCompleted) {
+      return {
+        runId,
+        released: true,
+        worktreeRemoved: false,
+        worktreePath: initialContext.worktree_path,
+        terminatedHandles: [],
+        status: 'completed',
+        message: `Resources were already released for run "${runId}".`,
+      };
+    }
+
+    // 1. Determine artifacts for preservation check
+    let artifacts = options?.artifacts;
+    if (!artifacts) {
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].type === 'result_submitted') {
+          const p = events[i].payload as { artifacts?: Record<string, unknown> };
+          if (p.artifacts) {
+            artifacts = p.artifacts;
+            break;
+          }
+        }
+      }
+    }
+    artifacts = artifacts ?? {};
+
+    // 2. Validate preservation conditions
+    const releaseEvidence = artifacts.release_evidence;
+    let preservationValid = true;
+    let preservationError: string | undefined;
+
+    if (releaseEvidence === undefined || releaseEvidence === null || releaseEvidence === '') {
+      preservationValid = false;
+      preservationError = 'Missing required release_evidence for preservation.';
+    } else if (typeof releaseEvidence === 'object') {
+      const rev = releaseEvidence as Record<string, unknown>;
+      if (rev.preserved === false || rev.valid === false) {
+        preservationValid = false;
+        preservationError = (rev.error as string) || 'Preservation evidence indicates failed preservation.';
+      }
+    } else if (releaseEvidence === false) {
+      preservationValid = false;
+      preservationError = 'release_evidence indicates failed preservation.';
+    }
+
+    if (artifacts.preservation_evidence !== undefined) {
+      const pev = artifacts.preservation_evidence;
+      if (
+        pev === false ||
+        (typeof pev === 'object' &&
+          ((pev as Record<string, unknown>).valid === false ||
+            (pev as Record<string, unknown>).preserved === false))
+      ) {
+        preservationValid = false;
+        preservationError =
+          ((pev as Record<string, unknown>)?.error as string) ||
+          'Preservation evidence indicates failed preservation.';
+      }
+    }
+
+    if (!preservationValid) {
+      const reason = preservationError || 'Preservation conditions not satisfied.';
+      await this.appendEvent(runId, {
+        type: 'cleanup_failed',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          runId,
+          reason,
+          error: reason,
+          worktreePath: initialContext.worktree_path,
+        },
+      });
+      await this.appendEvent(runId, {
+        type: 'run_blocked',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          step: 'finalization',
+          reason: `Resource release failed: ${reason}`,
+        },
+      });
+      return {
+        runId,
+        released: false,
+        worktreeRemoved: false,
+        worktreePath: initialContext.worktree_path,
+        terminatedHandles: [],
+        status: 'blocked',
+        error: reason,
+        message: `Resource release failed: ${reason}`,
+      };
+    }
+
+    const worktreePath = initialContext.worktree_path;
+
+    // 3. Validate worktree ownership conditions before destructive deletion
+    let worktreeExists: boolean;
+    try {
+      const st = await fs.stat(worktreePath);
+      worktreeExists = st.isDirectory();
+    } catch {
+      worktreeExists = false;
+    }
+
+    if (worktreeExists) {
+      const ownerMarkerPath = path.join(worktreePath, '.pc-execution-owner');
+      let ownerMarkerRaw: string | null;
+      try {
+        ownerMarkerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
+      } catch {
+        ownerMarkerRaw = null;
+      }
+
+      if (!ownerMarkerRaw) {
+        const reason = `Cannot clean up worktree: .pc-execution-owner marker is missing at "${worktreePath}". Refusing to destroy unverified directory.`;
+        await this.appendEvent(runId, {
+          type: 'cleanup_failed',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { runId, worktreePath, reason },
+        });
+        await this.appendEvent(runId, {
+          type: 'run_blocked',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { step: 'finalization', reason },
+        });
+        return {
+          runId,
+          released: false,
+          worktreeRemoved: false,
+          worktreePath,
+          terminatedHandles: [],
+          status: 'blocked',
+          error: reason,
+          message: `Resource release failed: ${reason}`,
+        };
+      }
+
+      let ownerMarker: { run_id?: string };
+      try {
+        ownerMarker = JSON.parse(ownerMarkerRaw);
+      } catch {
+        ownerMarker = {};
+      }
+
+      if (ownerMarker.run_id !== runId) {
+        const reason = `Cannot clean up worktree: ownership mismatch. Worktree belongs to run "${ownerMarker.run_id}", not "${runId}". Refusing to destroy foreign worktree.`;
+        await this.appendEvent(runId, {
+          type: 'cleanup_failed',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { runId, worktreePath, reason },
+        });
+        await this.appendEvent(runId, {
+          type: 'run_blocked',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { step: 'finalization', reason },
+        });
+        return {
+          runId,
+          released: false,
+          worktreeRemoved: false,
+          worktreePath,
+          terminatedHandles: [],
+          status: 'blocked',
+          error: reason,
+          message: `Resource release failed: ${reason}`,
+        };
+      }
+    }
+
+    // 4. Terminate all remaining owned agent executions (including registered orchestrator)
+    const allHandles: ExecutionHandle[] = [];
+    const handleIdsSeen = new Set<string>();
+
+    for (const evt of events) {
+      if (evt.type === 'task_launched' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+      if (evt.type === 'orchestrator_registered' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+      if (evt.type === 'execution_handle_registered' && evt.payload.handle) {
+        const h = evt.payload.handle as ExecutionHandle;
+        if (!handleIdsSeen.has(h.id)) {
+          handleIdsSeen.add(h.id);
+          allHandles.push(h);
+        }
+      }
+    }
+
+    const terminatedHandles: ExecutionHandle[] = [];
+    for (const handle of allHandles) {
+      try {
+        const stopRes = await this.executor.stop(handle);
+        if (!stopRes.stopped || stopRes.uncertain) {
+          const reason = `Execution handle "${handle.id}" (${handle.taskId}) failed to terminate: ${stopRes.error || 'uncertain termination'}.`;
+          await this.appendEvent(runId, {
+            type: 'cleanup_failed',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: { runId, handle, reason },
+          });
+          await this.appendEvent(runId, {
+            type: 'run_blocked',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: { step: 'finalization', reason },
+          });
+          return {
+            runId,
+            released: false,
+            worktreeRemoved: false,
+            worktreePath,
+            terminatedHandles,
+            status: 'blocked',
+            error: reason,
+            message: `Resource release failed: ${reason}`,
+          };
+        }
+        terminatedHandles.push(handle);
+      } catch (err) {
+        const reason = `Execution handle "${handle.id}" (${handle.taskId}) threw on stop: ${(err as Error).message}.`;
+        await this.appendEvent(runId, {
+          type: 'cleanup_failed',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { runId, handle, reason },
+        });
+        await this.appendEvent(runId, {
+          type: 'run_blocked',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { step: 'finalization', reason },
+        });
+        return {
+          runId,
+          released: false,
+          worktreeRemoved: false,
+          worktreePath,
+          terminatedHandles,
+          status: 'blocked',
+          error: reason,
+          message: `Resource release failed: ${reason}`,
+        };
+      }
+    }
+
+    // 5. Destructive worktree cleanup (if exists)
+    let worktreeRemoved = false;
+    if (worktreeExists) {
+      try {
+        await fs.rm(worktreePath, { recursive: true, force: true });
+        worktreeRemoved = true;
+      } catch (err) {
+        const reason = `Failed to remove worktree at "${worktreePath}": ${(err as Error).message}.`;
+        await this.appendEvent(runId, {
+          type: 'cleanup_failed',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { runId, worktreePath, reason },
+        });
+        await this.appendEvent(runId, {
+          type: 'run_blocked',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: { step: 'finalization', reason },
+        });
+        return {
+          runId,
+          released: false,
+          worktreeRemoved: false,
+          worktreePath,
+          terminatedHandles,
+          status: 'blocked',
+          error: reason,
+          message: `Resource release failed: ${reason}`,
+        };
+      }
+    }
+
+    // 6. Record resources_released and run_completed events
+    await this.appendEvent(runId, {
+      type: 'resources_released',
+      run_id: runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        runId,
+        worktreePath,
+        worktreeRemoved,
+        terminatedHandles,
+        releasedAt: new Date().toISOString(),
+      },
+    });
+
+    await this.appendEvent(runId, {
+      type: 'run_completed',
+      run_id: runId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        taskId: options?.taskId,
+        step: 'finalization',
+        summary: options?.summary || 'Run resources successfully released and final records preserved.',
+        completedAt: new Date().toISOString(),
+      },
+    });
+
+    return {
+      runId,
+      released: true,
+      worktreeRemoved,
+      worktreePath,
+      terminatedHandles,
+      status: 'completed',
+      message: 'Resources successfully released and Run marked completed.',
     };
   }
 
@@ -1347,6 +1768,27 @@ export class WorkflowEngine {
       };
       await this.appendEvent(runId, pausedEvent);
     } else if (transition.status === 'completed') {
+      const releaseRes = await this.releaseRunResources(runId, {
+        taskId,
+        summary: result.summary,
+        artifacts,
+      });
+
+      if (!releaseRes.released) {
+        return {
+          acknowledged: true,
+          taskId,
+          runId,
+          step: taskPayload.step,
+          outcome: result.outcome,
+          summary: result.summary,
+          artifacts,
+          executionTerminated,
+          transitionStatus: 'blocked',
+          message: `Resource release failed: ${releaseRes.error}. Run is blocked.`,
+        };
+      }
+
       const stepTransEvent: RunEvent = {
         type: 'step_transitioned',
         run_id: runId,
@@ -1364,17 +1806,20 @@ export class WorkflowEngine {
       };
       await this.appendEvent(runId, stepTransEvent);
 
-      const compEvent: RunEvent = {
-        type: 'run_completed',
-        run_id: runId,
-        timestamp: new Date().toISOString(),
-        payload: {
-          taskId,
-          step: taskPayload.step,
-          summary: result.summary,
-        },
+      return {
+        acknowledged: true,
+        taskId,
+        runId,
+        step: taskPayload.step,
+        outcome: result.outcome,
+        summary: result.summary,
+        artifacts,
+        executionTerminated,
+        nextStep: 'completed',
+        transitionStatus: 'completed',
+        reworkCount: transition.reworkCount,
+        message: `Result for task "${taskId}" successfully acknowledged. Resources released and Run completed.`,
       };
-      await this.appendEvent(runId, compEvent);
     } else {
       const stepTransEvent: RunEvent = {
         type: 'step_transitioned',
@@ -1528,6 +1973,9 @@ export class WorkflowEngine {
           if (payload.toStep && payload.toStep !== 'completed') {
             currentStep = payload.toStep;
           }
+          if (payload.toStep === 'completed') {
+            currentStep = 'completed';
+          }
           if (payload.reason === 'rework') {
             reworkCount = payload.reworkCount ?? (reworkCount + 1);
           }
@@ -1535,6 +1983,7 @@ export class WorkflowEngine {
         }
         case 'run_completed':
           currentStatus = 'completed';
+          currentStep = 'completed';
           break;
         case 'run_blocked': {
           currentStatus = 'blocked';
@@ -1749,10 +2198,14 @@ export class WorkflowEngine {
           if (payload.toStep && payload.toStep !== 'completed') {
             currentStep = payload.toStep;
           }
+          if (payload.toStep === 'completed') {
+            currentStep = 'completed';
+          }
           break;
         }
         case 'run_completed':
           currentStatus = 'completed';
+          currentStep = 'completed';
           break;
         case 'run_blocked':
           currentStatus = 'blocked';
@@ -1775,24 +2228,66 @@ export class WorkflowEngine {
     } else if (activeTaskId && activeStep && activeRole) {
       if (latestResult) {
         // Result was already submitted and durable
-        let executionStatus: ExecutionStatus = isStopped ? 'exited' : 'running';
-        try {
-          const inspection = await this.executor.inspect(activeTaskId);
-          executionStatus = inspection.status;
-        } catch {
-          // If inspection fails when result is already durable, keep recorded status
-        }
+        if ((activeStep === 'finalization' || currentStep === 'finalization') && latestResult.outcome === 'completed') {
+          // Attempt to reconcile finalization resource release!
+          const releaseRes = await this.releaseRunResources(runId, {
+            taskId: activeTaskId,
+            summary: latestResult.summary,
+            artifacts: latestResult.artifacts,
+          });
 
-        reconciledTask = {
-          taskId: activeTaskId,
-          step: activeStep,
-          role: activeRole,
-          handle: activeHandle,
-          executionStatus,
-          action: 'collected',
-          result: latestResult,
-        };
-        resumeMessage = `Collected completed task result for task "${activeTaskId}" (outcome: ${latestResult.outcome}).`;
+          if (releaseRes.released) {
+            await this.appendEvent(runId, {
+              type: 'step_transitioned',
+              run_id: runId,
+              timestamp: new Date().toISOString(),
+              payload: {
+                fromStep: activeStep,
+                toStep: 'completed',
+                outcome: latestResult.outcome,
+                reason: 'finalization_completed',
+                priorTaskId: activeTaskId,
+                summary: latestResult.summary,
+                artifacts: latestResult.artifacts,
+              },
+            });
+            currentStatus = 'completed';
+            currentStep = 'completed';
+            resumeMessage = `Resumed and reconciled finalization release for task "${activeTaskId}". Resources released and Run marked completed.`;
+          } else {
+            currentStatus = 'blocked';
+            resumeMessage = `Resumed finalization resource release failed: ${releaseRes.error}. Run is blocked.`;
+          }
+
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle,
+            executionStatus: 'exited',
+            action: 'collected',
+            result: latestResult,
+          };
+        } else {
+          let executionStatus: ExecutionStatus = isStopped ? 'exited' : 'running';
+          try {
+            const inspection = await this.executor.inspect(activeTaskId);
+            executionStatus = inspection.status;
+          } catch {
+            // If inspection fails when result is already durable, keep recorded status
+          }
+
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle,
+            executionStatus,
+            action: 'collected',
+            result: latestResult,
+          };
+          resumeMessage = `Collected completed task result for task "${activeTaskId}" (outcome: ${latestResult.outcome}).`;
+        }
       } else if (activeStep === 'merge' || currentStep === 'merge') {
         let mergeStatus: MergeStatusResult;
         try {
@@ -2141,21 +2636,23 @@ export class WorkflowEngine {
       }
     }
 
-    // Maintain worktree ownership
-    await fs.mkdir(initialContext.worktree_path, { recursive: true });
-    const ownerMarker = {
-      run_id: runId,
-      repository: initialContext.repository,
-      issue: initialContext.issue,
-      task_id: activeTaskId,
-      role: activeRole ?? initialContext.workflow.steps[currentStep]?.role,
-      claimed_at: new Date().toISOString(),
-    };
-    await fs.writeFile(
-      ownerMarkerPath,
-      JSON.stringify(ownerMarker, null, 2),
-      'utf8',
-    );
+    // Maintain worktree ownership ONLY if the Run is not completed
+    if (currentStatus !== 'completed') {
+      await fs.mkdir(initialContext.worktree_path, { recursive: true });
+      const ownerMarker = {
+        run_id: runId,
+        repository: initialContext.repository,
+        issue: initialContext.issue,
+        task_id: activeTaskId,
+        role: activeRole ?? initialContext.workflow.steps[currentStep]?.role,
+        claimed_at: new Date().toISOString(),
+      };
+      await fs.writeFile(
+        ownerMarkerPath,
+        JSON.stringify(ownerMarker, null, 2),
+        'utf8',
+      );
+    }
 
     // Get current scheduling context after reconciliation
     const schedulingContext = await this.getSchedulingContext(runId);
@@ -2180,15 +2677,18 @@ export class WorkflowEngine {
     for (let i = 1; i < lines.length; i++) {
       try {
         const evt = JSON.parse(lines[i]) as RunEvent;
-        if (evt.type === 'run_completed') return 'completed';
-        if (evt.type === 'run_blocked') return 'blocked';
-        if (evt.type === 'run_paused') return 'paused';
-        if (evt.type === 'run_uncertain') return 'uncertain';
-        if (evt.type === 'task_reconciled') {
+        if (evt.type === 'run_completed') {
+          status = 'completed';
+        } else if (evt.type === 'run_blocked') {
+          status = 'blocked';
+        } else if (evt.type === 'run_paused') {
+          status = 'paused';
+        } else if (evt.type === 'run_uncertain') {
+          status = 'uncertain';
+        } else if (evt.type === 'task_reconciled') {
           const payload = evt.payload as { action?: string };
-          if (payload.action === 'uncertain') return 'uncertain';
-        }
-        if (evt.type === 'task_launched' || evt.type === 'dispatch_intent') {
+          if (payload.action === 'uncertain') status = 'uncertain';
+        } else if (evt.type === 'task_launched' || evt.type === 'dispatch_intent') {
           status = 'running';
         }
       } catch {
