@@ -14,6 +14,7 @@ import type {
   InitOptions,
   IssueChecker,
   PreflightCheckResult,
+  PriorEvidence,
   ProviderChecker,
   RunContext,
   RunEvent,
@@ -23,8 +24,10 @@ import type {
   StatusActiveTask,
   StatusOptions,
   StatusResult,
+  StepTransitionResult,
   SubmitResultResponse,
   TaskResult,
+  WorkflowDefinition,
 } from './types.js';
 import {
   initWorkflowConfig,
@@ -35,6 +38,102 @@ import {
   DefaultProviderChecker,
 } from './checkers.js';
 import { AgyExecutor } from './executor.js';
+
+/**
+ * Computes the deterministic step transition given the current step, outcome, rework state, and workflow definition.
+ * Pure function: drives step progression, review pass, bounded rework, pause on exhaustion, and blocked states.
+ *
+ * @param currentStep The current workflow step name.
+ * @param outcome The submitted role outcome.
+ * @param reworkCount The number of rework cycles completed so far.
+ * @param reworkLimit The maximum permitted rework cycles.
+ * @param workflow The workflow definition specifying steps and transitions.
+ * @returns Deterministic StepTransitionResult.
+ */
+export function computeNextStep(
+  currentStep: string,
+  outcome: string,
+  reworkCount: number,
+  reworkLimit: number,
+  workflow: WorkflowDefinition,
+): StepTransitionResult {
+  const stepDefinition = workflow.steps[currentStep];
+  if (!stepDefinition) {
+    throw new Error(`Step "${currentStep}" is not defined in workflow definition.`);
+  }
+
+  const target = stepDefinition.transitions[outcome];
+  if (!target) {
+    const permitted = Object.keys(stepDefinition.transitions).join(', ');
+    throw new Error(
+      `Step "${currentStep}" does not define a transition for outcome "${outcome}". Permitted transitions: [${permitted}].`,
+    );
+  }
+
+  // 1. Blocked outcome or target
+  if (target === 'blocked' || outcome === 'blocked') {
+    return {
+      nextStep: undefined,
+      status: 'blocked',
+      isTerminal: true,
+      isRework: false,
+      reworkCount,
+      reason: 'blocked',
+    };
+  }
+
+  // 2. Terminal completion
+  if (target === 'completed') {
+    return {
+      nextStep: 'completed',
+      status: 'completed',
+      isTerminal: true,
+      isRework: false,
+      reworkCount,
+      reason: 'completed',
+    };
+  }
+
+  // 3. Business rework: outcome is rework or target loops back to initial_step (or an earlier step)
+  const isReworkTransition =
+    outcome === 'rework' ||
+    (target === workflow.initial_step && currentStep !== workflow.initial_step);
+
+  if (isReworkTransition) {
+    if (reworkCount >= reworkLimit) {
+      return {
+        nextStep: undefined,
+        status: 'paused',
+        isTerminal: true,
+        isRework: true,
+        reworkCount,
+        reason: 'rework_limit_exhausted',
+      };
+    }
+    return {
+      nextStep: target,
+      status: 'running',
+      isTerminal: false,
+      isRework: true,
+      reworkCount: reworkCount + 1,
+      reason: 'rework',
+    };
+  }
+
+  // 4. Normal progression (pass, completed to next step, etc.)
+  if (!workflow.steps[target]) {
+    throw new Error(`Target step "${target}" is not defined in workflow definition.`);
+  }
+
+  return {
+    nextStep: target,
+    status: 'running',
+    isTerminal: false,
+    isRework: false,
+    reworkCount,
+    reason: outcome === 'pass' ? 'review_passed' : 'step_completed',
+  };
+}
 
 /**
  * Custom error raised when intake preflight checks fail.
@@ -346,6 +445,22 @@ export class WorkflowEngine {
   }
 
   /**
+   * Computes the deterministic step transition for a run given a prospective or submitted outcome.
+   */
+  async computeNextStep(runId: string, outcome: string): Promise<StepTransitionResult> {
+    const context = await this.getSchedulingContext(runId);
+    const events = await this.readEvents(runId);
+    const initialContext = (events[0].payload as { context: RunContext }).context;
+    return computeNextStep(
+      context.currentStep,
+      outcome,
+      context.reworkCount,
+      context.reworkLimit,
+      initialContext.workflow,
+    );
+  }
+
+  /**
    * Derives current scheduling context for a Run to supply to an orchestrator.
    */
   async getSchedulingContext(runId: string): Promise<SchedulingContext> {
@@ -362,6 +477,7 @@ export class WorkflowEngine {
     let activeTaskId: string | undefined;
     let activeHandle: ExecutionHandle | undefined;
     let latestResult: TaskResult | undefined;
+    let priorEvidence: PriorEvidence | undefined;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
@@ -380,21 +496,68 @@ export class WorkflowEngine {
           break;
         }
         case 'result_submitted': {
-          const payload = evt.payload as { outcome: string; summary: string; artifacts?: Record<string, unknown> };
+          const payload = evt.payload as {
+            taskId: string;
+            step: string;
+            role: string;
+            outcome: string;
+            summary: string;
+            artifacts?: Record<string, unknown>;
+          };
           latestResult = {
             outcome: payload.outcome,
             summary: payload.summary,
             artifacts: payload.artifacts,
           };
+          priorEvidence = {
+            evaluatedCommit: payload.artifacts?.reviewed_commit as string | undefined,
+            findings: payload.artifacts?.findings as string | undefined,
+            priorTaskId: payload.taskId,
+            priorStep: payload.step,
+            priorRole: payload.role,
+            priorOutcome: payload.outcome,
+            priorSummary: payload.summary,
+            artifacts: payload.artifacts,
+          };
+          break;
+        }
+        case 'task_terminated': {
+          const payload = evt.payload as { taskId: string };
+          if (payload.taskId === activeTaskId) {
+            activeTaskId = undefined;
+            activeHandle = undefined;
+          }
+          break;
+        }
+        case 'task_launch_failed': {
+          const payload = evt.payload as { taskId: string };
+          if (payload.taskId === activeTaskId) {
+            activeTaskId = undefined;
+            activeHandle = undefined;
+          }
           break;
         }
         case 'step_transitioned': {
-          const payload = evt.payload as { toStep?: string; reason?: string };
-          if (payload.toStep) {
+          const payload = evt.payload as {
+            toStep?: string;
+            reason?: string;
+            reworkCount?: number;
+            reviewedCommit?: string;
+            findings?: string;
+            artifacts?: Record<string, unknown>;
+          };
+          if (payload.toStep && payload.toStep !== 'completed') {
             currentStep = payload.toStep;
           }
           if (payload.reason === 'rework') {
-            reworkCount++;
+            reworkCount = payload.reworkCount ?? (reworkCount + 1);
+          }
+          if (payload.reviewedCommit || payload.findings) {
+            priorEvidence = {
+              ...priorEvidence,
+              evaluatedCommit: payload.reviewedCommit ?? (payload.artifacts?.reviewed_commit as string | undefined),
+              findings: payload.findings ?? (payload.artifacts?.findings as string | undefined),
+            };
           }
           break;
         }
@@ -410,15 +573,13 @@ export class WorkflowEngine {
       }
     }
 
+    const reworkLimit = initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3;
     const stepDefinition = initialContext.workflow.steps[currentStep];
-    if (!stepDefinition) {
-      throw new Error(`Step "${currentStep}" is not defined in workflow definition.`);
-    }
-
-    const roleContract = initialContext.roles.roles[stepDefinition.role];
-    if (!roleContract) {
-      throw new Error(`Role "${stepDefinition.role}" required by step "${currentStep}" is not defined in role contracts.`);
-    }
+    const roleName = stepDefinition ? stepDefinition.role : 'none';
+    const roleContract = initialContext.roles.roles[roleName] ?? {
+      skill: 'none',
+      permitted_outcomes: [],
+    };
 
     return {
       runId,
@@ -427,15 +588,18 @@ export class WorkflowEngine {
       status: currentStatus,
       currentStep,
       reworkCount,
-      reworkLimit: initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3,
+      reworkLimit,
       provider: initialContext.provider,
       worktreePath: initialContext.worktree_path,
-      stepDefinition,
+      stepDefinition: stepDefinition ?? { role: '', guidance: '', transitions: {} },
       roleContract,
       sharedRequirements: initialContext.shared_requirements,
       activeTaskId,
       activeHandle,
       latestResult,
+      priorEvidence,
+      evaluatedCommit: priorEvidence?.evaluatedCommit,
+      reviewFindings: priorEvidence?.findings,
     };
   }
 
@@ -455,6 +619,16 @@ export class WorkflowEngine {
     }
     if (context.status === 'blocked') {
       throw new Error(`Cannot dispatch: run "${runId}" is blocked.`);
+    }
+    if (context.status === 'paused') {
+      throw new Error(
+        `Cannot dispatch: run "${runId}" is paused. Rework limit of ${context.reworkLimit} rounds exhausted.`,
+      );
+    }
+    if (context.activeTaskId) {
+      throw new Error(
+        `Cannot dispatch: task "${context.activeTaskId}" is currently running. Run at most one professional task at a time.`,
+      );
     }
 
     const taskId =
@@ -491,9 +665,13 @@ export class WorkflowEngine {
       issue: context.issue,
       shared_requirements: context.sharedRequirements,
       task_instructions: taskInstructions,
-      inputs: options?.inputs ?? {},
+      inputs: {
+        ...(context.priorEvidence ? { prior_evidence: context.priorEvidence } : {}),
+        ...(options?.inputs ?? {}),
+      },
       permitted_outcomes: context.roleContract.permitted_outcomes,
       required_artifacts: context.roleContract.required_artifacts ?? [],
+      prior_evidence: context.priorEvidence,
     };
     await fs.writeFile(
       path.join(context.worktreePath, 'initialization.json'),
@@ -513,13 +691,14 @@ export class WorkflowEngine {
         skill: context.roleContract.skill,
         taskInstructions,
         inputs: options?.inputs ?? {},
+        priorEvidence: context.priorEvidence,
         worktreePath: context.worktreePath,
       },
     };
     await this.appendEvent(runId, intentEvent);
 
     // 3. Compose worker prompt
-    const prompt = [
+    const promptLines = [
       `# Task Assignment: ${context.currentStep} (${context.stepDefinition.role})`,
       `Run: ${runId}`,
       `Task: ${taskId}`,
@@ -527,6 +706,22 @@ export class WorkflowEngine {
       '',
       '## Shared Requirements',
       context.sharedRequirements || 'None specified.',
+    ];
+
+    if (context.priorEvidence) {
+      promptLines.push('', '## Prior Evidence & Review Findings');
+      if (context.priorEvidence.evaluatedCommit) {
+        promptLines.push(`Evaluated Commit: ${context.priorEvidence.evaluatedCommit}`);
+      }
+      if (context.priorEvidence.findings) {
+        promptLines.push(`Review Findings:\n${context.priorEvidence.findings}`);
+      }
+      if (context.priorEvidence.priorSummary) {
+        promptLines.push(`Prior Summary: ${context.priorEvidence.priorSummary}`);
+      }
+    }
+
+    promptLines.push(
       '',
       '## Task Instructions',
       taskInstructions,
@@ -540,7 +735,9 @@ export class WorkflowEngine {
       '## Submission Contract',
       `When finished, submit your result using:`,
       `pc workflow submit-result --run "${runId}" --task "${taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
-    ].join('\n');
+    );
+
+    const prompt = promptLines.join('\n');
 
     // 4. Launch execution via provider Executor
     let handle: ExecutionHandle;
@@ -677,6 +874,18 @@ export class WorkflowEngine {
       );
     }
 
+    // Workflow step transitions validation
+    const stepDef = initialContext.workflow.steps[taskPayload.step];
+    if (!stepDef) {
+      throw new Error(`Step "${taskPayload.step}" is not defined in workflow definition.`);
+    }
+    if (!(result.outcome in stepDef.transitions)) {
+      const permitted = Object.keys(stepDef.transitions).join(', ');
+      throw new Error(
+        `Step "${taskPayload.step}" does not define a transition for outcome "${result.outcome}". Permitted transitions: [${permitted}].`,
+      );
+    }
+
     const required = roleContract.required_artifacts ?? [];
     const artifacts = result.artifacts ?? {};
     const missingArtifacts: string[] = [];
@@ -691,6 +900,26 @@ export class WorkflowEngine {
         `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
       );
     }
+
+    // Determine current rework count from event log
+    let currentReworkCount = initialContext.rework_count;
+    for (const evt of events) {
+      if (evt.type === 'step_transitioned') {
+        const payload = evt.payload as { reason?: string; reworkCount?: number };
+        if (payload.reason === 'rework') {
+          currentReworkCount = payload.reworkCount ?? (currentReworkCount + 1);
+        }
+      }
+    }
+
+    const reworkLimit = initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3;
+    const transition = computeNextStep(
+      taskPayload.step,
+      result.outcome,
+      currentReworkCount,
+      reworkLimit,
+      initialContext.workflow,
+    );
 
     // Persist result_submitted event
     const nowIso = new Date().toISOString();
@@ -730,19 +959,87 @@ export class WorkflowEngine {
       await this.appendEvent(runId, termEvent);
     }
 
-    // If result outcome is blocked, record run_blocked
-    if (result.outcome === 'blocked') {
+    // Persist transition events
+    if (transition.status === 'blocked') {
       const blockedEvent: RunEvent = {
         type: 'run_blocked',
         run_id: runId,
         timestamp: new Date().toISOString(),
         payload: {
           taskId,
+          step: taskPayload.step,
           reason: result.summary,
         },
       };
       await this.appendEvent(runId, blockedEvent);
+    } else if (transition.status === 'paused') {
+      const pausedEvent: RunEvent = {
+        type: 'run_paused',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          step: taskPayload.step,
+          reason: transition.reason,
+          reworkCount: transition.reworkCount,
+          reworkLimit,
+          summary: result.summary,
+          artifacts,
+          message: `Rework limit of ${reworkLimit} rounds exhausted. Run paused with preserved records.`,
+        },
+      };
+      await this.appendEvent(runId, pausedEvent);
+    } else if (transition.status === 'completed') {
+      const stepTransEvent: RunEvent = {
+        type: 'step_transitioned',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          fromStep: taskPayload.step,
+          toStep: 'completed',
+          outcome: result.outcome,
+          reason: transition.reason,
+          reworkCount: transition.reworkCount,
+          priorTaskId: taskId,
+          summary: result.summary,
+          artifacts,
+        },
+      };
+      await this.appendEvent(runId, stepTransEvent);
+
+      const compEvent: RunEvent = {
+        type: 'run_completed',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          step: taskPayload.step,
+          summary: result.summary,
+        },
+      };
+      await this.appendEvent(runId, compEvent);
+    } else {
+      const stepTransEvent: RunEvent = {
+        type: 'step_transitioned',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          fromStep: taskPayload.step,
+          toStep: transition.nextStep,
+          outcome: result.outcome,
+          reason: transition.reason,
+          reworkCount: transition.reworkCount,
+          priorTaskId: taskId,
+          summary: result.summary,
+          artifacts,
+          reviewedCommit: artifacts.reviewed_commit,
+          findings: artifacts.findings,
+        },
+      };
+      await this.appendEvent(runId, stepTransEvent);
     }
+
+    const nextRole = transition.nextStep ? initialContext.workflow.steps[transition.nextStep]?.role : undefined;
 
     return {
       acknowledged: true,
@@ -753,7 +1050,11 @@ export class WorkflowEngine {
       summary: result.summary,
       artifacts,
       executionTerminated,
-      message: `Result for task "${taskId}" successfully acknowledged. Execution terminated: ${executionTerminated}.`,
+      nextStep: transition.nextStep,
+      nextRole,
+      transitionStatus: transition.status,
+      reworkCount: transition.reworkCount,
+      message: `Result for task "${taskId}" successfully acknowledged. Execution terminated: ${executionTerminated}. Next step: ${transition.nextStep ?? 'none'} (${transition.status}).`,
     };
   }
 
@@ -847,12 +1148,12 @@ export class WorkflowEngine {
           break;
         }
         case 'step_transitioned': {
-          const payload = evt.payload as { toStep?: string; reason?: string };
-          if (payload.toStep) {
+          const payload = evt.payload as { toStep?: string; reason?: string; reworkCount?: number };
+          if (payload.toStep && payload.toStep !== 'completed') {
             currentStep = payload.toStep;
           }
           if (payload.reason === 'rework') {
-            reworkCount++;
+            reworkCount = payload.reworkCount ?? (reworkCount + 1);
           }
           break;
         }
@@ -871,11 +1172,16 @@ export class WorkflowEngine {
     let activeTaskInfo: StatusActiveTask | undefined;
     if (activeTaskId && activeStep && activeRole) {
       let executionStatus: StatusActiveTask['execution_status'];
+      let exitCode: number | undefined;
+      let error: string | undefined;
       try {
         const inspection = await this.executor.inspect(activeTaskId);
         executionStatus = inspection.status;
-      } catch {
+        exitCode = inspection.exitCode;
+        error = inspection.error;
+      } catch (err) {
         executionStatus = 'uncertain';
+        error = (err as Error).message;
       }
 
       activeTaskInfo = {
@@ -884,15 +1190,29 @@ export class WorkflowEngine {
         role: activeRole,
         handle: activeHandle,
         execution_status: executionStatus,
+        exit_code: exitCode,
+        error,
         business_outcome: latestResult?.outcome,
         result: latestResult,
         stopped: isStopped,
       };
     }
 
-    let summary = `Run ${runId} is ${currentStatus} at step "${currentStep}" for issue #${initialContext.issue}.`;
+    const reworkLimit = initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3;
+    let summary = `Run ${runId} is ${currentStatus} at step "${currentStep}"`;
+    if (reworkCount > 0) {
+      summary += ` (rework round ${reworkCount}/${reworkLimit})`;
+    }
+    summary += ` for issue #${initialContext.issue}.`;
+
     if (latestResult) {
       summary += ` Collected outcome: ${latestResult.outcome}.`;
+    }
+    if (currentStatus === 'paused') {
+      summary += ` Rework limit of ${reworkLimit} rounds exhausted. Records preserved.`;
+    }
+    if (activeTaskInfo?.execution_status === 'exited' && !latestResult) {
+      summary += ` Warning: process exited without submitting a business result.`;
     }
 
     return {

@@ -84,7 +84,18 @@ Record a reason and evidence for any stage that does not apply; missing implemen
 
 ### 3. Review and land
 
-For a PR, dispatch managed quality and PR-Land work through [current-head PR merge](managed-lifecycle.md#current-head-pr-merge).
+The Engine automatically transitions from `implementation` to `review` upon receiving a `completed` worker result.
+The Orchestrator queries `getSchedulingContext` and dispatches the Reviewer role via `pc workflow dispatch <run-id> --instructions "..."`.
+The Reviewer evaluates the implementation against acceptance criteria and submits either `pass` (transitioning to `merge`), `rework` (transitioning back to `implementation`), or `blocked`:
+
+```bash
+pc workflow submit-result --run <run-id> --task <task-id> --outcome rework --summary "Found defects" --artifacts '{"reviewed_commit":"<sha>","findings":"<details>"}'
+```
+
+On `rework`, the Engine checks the rework count against `rework_limit` (default: 3 rounds). If under the limit, the Engine increments `rework_count`, transitions back to `implementation`, and carries forward `priorEvidence` (the evaluated commit SHA and review findings). The Orchestrator receives this prior evidence via `WorkflowEngine.getSchedulingContext`, composes focused repair instructions, and dispatches a fresh worker task with unchanged public requirements.
+If the rework limit is exhausted, the Engine transitions the Run to `paused` with preserved records and artifacts, preventing endless rework loops.
+
+For a PR approved on `pass`, the Engine transitions to `merge` and retains the evaluated revision. Dispatch managed quality and PR-Land work through [current-head PR merge](managed-lifecycle.md#current-head-pr-merge).
 Resolve defects and obtain current quality evidence plus any required parent professional confirmation before requesting merge.
 When the head changes, reassess the changed revision through that protocol.
 
