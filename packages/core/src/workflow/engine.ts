@@ -1395,152 +1395,45 @@ export class WorkflowEngine {
 
   /**
    * Accepts and validates a specialist role's submitted result.
-   * Validates task ownership, permitted outcomes, and required artifacts before acknowledgement.
-   * Verifies termination of that role execution upon submission.
+   * Delegates result recording, duplicate/conflicting checks, and execution teardown
+   * to TaskExecution, then computes deterministic step transition and records Run progression.
    */
   async submitResult(runId: string, taskId: string, result: TaskResult): Promise<SubmitResultResponse> {
-    if (!taskId || typeof taskId !== 'string') {
-      throw new Error('Valid taskId is required to submit a result.');
-    }
-    if (!result || !result.outcome || typeof result.outcome !== 'string') {
-      throw new Error('TaskResult must specify an outcome.');
-    }
-    if (!result.summary || typeof result.summary !== 'string') {
-      throw new Error('TaskResult must specify a summary.');
+    // 1. Delegate task result recording, duplicate/conflicting detection, persistence, and execution teardown to TaskExecution
+    const facts = await this.taskExecution.recordResult({
+      runId,
+      taskId,
+      result,
+    });
+
+    // 2. Handle idempotent resubmission
+    if (facts.idempotent) {
+      return {
+        acknowledged: true,
+        taskId: facts.taskId,
+        runId: facts.runId,
+        step: facts.step,
+        outcome: facts.outcome,
+        summary: facts.summary,
+        artifacts: facts.artifacts,
+        executionTerminated: true,
+        idempotent: true,
+        message: `Result for task "${taskId}" was already acknowledged (idempotent duplicate submission).`,
+      };
     }
 
     const events = await this.readEvents(runId);
     const firstEvent = events[0];
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
 
-    // Locate dispatch / task event for taskId
-    let taskEvent: RunEvent | undefined;
-    let handle: ExecutionHandle | undefined;
-    let existingResultEvent: RunEvent | undefined;
-
-    for (const evt of events) {
-      if (evt.type === 'dispatch_intent' && (evt.payload as { taskId: string }).taskId === taskId) {
-        taskEvent = evt;
-      }
-      if (evt.type === 'task_launched' && (evt.payload as { taskId: string }).taskId === taskId) {
-        handle = (evt.payload as { handle: ExecutionHandle }).handle;
-      }
-      if (evt.type === 'result_submitted' && (evt.payload as { taskId: string }).taskId === taskId) {
-        existingResultEvent = evt;
-      }
-    }
-
-    if (!taskEvent) {
-      throw new Error(`Task "${taskId}" not found in run "${runId}".`);
-    }
-
-    const taskPayload = taskEvent.payload as {
-      step: string;
-      role: string;
-      worktreePath: string;
-    };
-
-    // Check if result already submitted for this taskId
-    if (existingResultEvent) {
-      const prior = existingResultEvent.payload as {
-        outcome: string;
-        summary: string;
-        artifacts?: Record<string, unknown>;
-      };
-
-      const normalize = (obj: unknown) => JSON.stringify(obj ?? {});
-      const isIdentical =
-        prior.outcome === result.outcome &&
-        prior.summary === result.summary &&
-        normalize(prior.artifacts) === normalize(result.artifacts);
-
-      if (isIdentical) {
-        return {
-          acknowledged: true,
-          taskId,
-          runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts: result.artifacts ?? {},
-          executionTerminated: true,
-          idempotent: true,
-          message: `Result for task "${taskId}" was already acknowledged (idempotent duplicate submission).`,
-        };
-      }
-
-      throw new Error(
-        `Conflicting result submitted for task "${taskId}". A prior result with outcome "${prior.outcome}" is already recorded.`,
-      );
-    }
-
-    // Role contract validation
-    const roleContract = initialContext.roles.roles[taskPayload.role];
-    if (!roleContract) {
-      throw new Error(`Role contract for "${taskPayload.role}" is not defined.`);
-    }
-
-    if (!roleContract.permitted_outcomes.includes(result.outcome)) {
-      throw new Error(
-        `Outcome "${result.outcome}" is not permitted for role "${taskPayload.role}". Permitted outcomes: [${roleContract.permitted_outcomes.join(', ')}].`,
-      );
-    }
-
-    // Workflow step transitions validation
-    const stepDef = initialContext.workflow.steps[taskPayload.step];
-    if (!stepDef) {
-      throw new Error(`Step "${taskPayload.step}" is not defined in workflow definition.`);
-    }
-    if (!(result.outcome in stepDef.transitions)) {
-      const permitted = Object.keys(stepDef.transitions).join(', ');
-      throw new Error(
-        `Step "${taskPayload.step}" does not define a transition for outcome "${result.outcome}". Permitted transitions: [${permitted}].`,
-      );
-    }
-
-    const required = roleContract.required_artifacts ?? [];
-    const artifacts = result.artifacts ?? {};
-    const missingArtifacts: string[] = [];
-    for (const key of required) {
-      const val = artifacts[key];
-      if (val === undefined || val === null || val === '') {
-        missingArtifacts.push(key);
-      }
-    }
-    if (missingArtifacts.length > 0) {
-      throw new Error(
-        `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
-      );
-    }
-
-    // Determine current rework count from event log
-    let currentReworkCount = initialContext.rework_count;
-    for (const evt of events) {
-      if (evt.type === 'step_transitioned') {
-        const payload = evt.payload as { reason?: string; reworkCount?: number };
-        if (payload.reason === 'rework') {
-          currentReworkCount = payload.reworkCount ?? (currentReworkCount + 1);
-        }
-      }
-    }
-
-    const reworkLimit = initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3;
-    const transition = computeNextStep(
-      taskPayload.step,
-      result.outcome,
-      currentReworkCount,
-      reworkLimit,
-      initialContext.workflow,
-    );
-
-    // Verify external GitHub merge outcome for merger role
-    if ((taskPayload.role === 'merger' || taskPayload.step === 'merge') && result.outcome === 'completed') {
+    // 3. Verify external GitHub merge outcome for merger role
+    if ((facts.role === 'merger' || facts.step === 'merge') && facts.outcome === 'completed') {
       let mergeStatus: MergeStatusResult;
       try {
         mergeStatus = await this.mergeChecker.checkMergeStatus(
           initialContext.repository,
           initialContext.issue,
-          taskPayload.worktreePath,
+          facts.worktreePath,
         );
       } catch (err) {
         mergeStatus = {
@@ -1550,40 +1443,6 @@ export class WorkflowEngine {
       }
 
       if (mergeStatus.error) {
-        const nowIso = new Date().toISOString();
-        const resultSubmittedEvent: RunEvent = {
-          type: 'result_submitted',
-          run_id: runId,
-          timestamp: nowIso,
-          payload: {
-            taskId,
-            step: taskPayload.step,
-            role: taskPayload.role,
-            outcome: result.outcome,
-            summary: result.summary,
-            artifacts,
-          },
-        };
-        await this.appendEvent(runId, resultSubmittedEvent);
-
-        let executionTerminated = true;
-        if (handle) {
-          const stopRes = await this.executor.stop(handle);
-          executionTerminated = stopRes.stopped;
-          await this.appendEvent(runId, {
-            type: 'task_terminated',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId,
-              handle,
-              stopped: stopRes.stopped,
-              uncertain: stopRes.uncertain,
-              error: stopRes.error,
-            },
-          });
-        }
-
         await this.appendEvent(runId, {
           type: 'run_uncertain',
           run_id: runId,
@@ -1598,58 +1457,24 @@ export class WorkflowEngine {
           acknowledged: true,
           taskId,
           runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts,
-          executionTerminated,
+          step: facts.step,
+          outcome: facts.outcome,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          executionTerminated: facts.executionTerminated,
           transitionStatus: 'uncertain',
           message: `External merge verification uncertain on GitHub: ${mergeStatus.error}. Preserved explicit uncertainty.`,
         };
       }
 
       if (!mergeStatus.merged || mergeStatus.state !== 'MERGED') {
-        const nowIso = new Date().toISOString();
-        const resultSubmittedEvent: RunEvent = {
-          type: 'result_submitted',
-          run_id: runId,
-          timestamp: nowIso,
-          payload: {
-            taskId,
-            step: taskPayload.step,
-            role: taskPayload.role,
-            outcome: result.outcome,
-            summary: result.summary,
-            artifacts,
-          },
-        };
-        await this.appendEvent(runId, resultSubmittedEvent);
-
-        let executionTerminated = true;
-        if (handle) {
-          const stopRes = await this.executor.stop(handle);
-          executionTerminated = stopRes.stopped;
-          await this.appendEvent(runId, {
-            type: 'task_terminated',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId,
-              handle,
-              stopped: stopRes.stopped,
-              uncertain: stopRes.uncertain,
-              error: stopRes.error,
-            },
-          });
-        }
-
         const blockedEvent: RunEvent = {
           type: 'run_blocked',
           run_id: runId,
           timestamp: new Date().toISOString(),
           payload: {
             taskId,
-            step: taskPayload.step,
+            step: facts.step,
             reason: `Merge verification failed: PR #${initialContext.issue} is not merged on GitHub (state: ${mergeStatus.state ?? 'unmerged'}). Premature completion prevented.`,
           },
         };
@@ -1659,56 +1484,38 @@ export class WorkflowEngine {
           acknowledged: true,
           taskId,
           runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts,
-          executionTerminated,
+          step: facts.step,
+          outcome: facts.outcome,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          executionTerminated: facts.executionTerminated,
           transitionStatus: 'blocked',
           message: `Merge verification failed: PR #${initialContext.issue} is not merged on GitHub. Run is blocked.`,
         };
       }
     }
 
-    // Persist result_submitted event
-    const nowIso = new Date().toISOString();
-    const resultSubmittedEvent: RunEvent = {
-      type: 'result_submitted',
-      run_id: runId,
-      timestamp: nowIso,
-      payload: {
-        taskId,
-        step: taskPayload.step,
-        role: taskPayload.role,
-        outcome: result.outcome,
-        summary: result.summary,
-        artifacts,
-      },
-    };
-    await this.appendEvent(runId, resultSubmittedEvent);
-
-    // Verify termination of the role execution
-    let executionTerminated = true;
-    if (handle) {
-      const stopRes = await this.executor.stop(handle);
-      executionTerminated = stopRes.stopped;
-
-      const termEvent: RunEvent = {
-        type: 'task_terminated',
-        run_id: runId,
-        timestamp: new Date().toISOString(),
-        payload: {
-          taskId,
-          handle,
-          stopped: stopRes.stopped,
-          uncertain: stopRes.uncertain,
-          error: stopRes.error,
-        },
-      };
-      await this.appendEvent(runId, termEvent);
+    // 4. Determine current rework count from event log
+    let currentReworkCount = initialContext.rework_count;
+    for (const evt of events) {
+      if (evt.type === 'step_transitioned') {
+        const payload = evt.payload as { reason?: string; reworkCount?: number };
+        if (payload.reason === 'rework') {
+          currentReworkCount = payload.reworkCount ?? (currentReworkCount + 1);
+        }
+      }
     }
 
-    // Persist transition events
+    const reworkLimit = initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3;
+    const transition = computeNextStep(
+      facts.step,
+      facts.outcome,
+      currentReworkCount,
+      reworkLimit,
+      initialContext.workflow,
+    );
+
+    // 5. Persist transition events
     if (transition.status === 'blocked') {
       const blockedEvent: RunEvent = {
         type: 'run_blocked',
@@ -1716,8 +1523,8 @@ export class WorkflowEngine {
         timestamp: new Date().toISOString(),
         payload: {
           taskId,
-          step: taskPayload.step,
-          reason: result.summary,
+          step: facts.step,
+          reason: facts.summary,
         },
       };
       await this.appendEvent(runId, blockedEvent);
@@ -1728,12 +1535,12 @@ export class WorkflowEngine {
         timestamp: new Date().toISOString(),
         payload: {
           taskId,
-          step: taskPayload.step,
+          step: facts.step,
           reason: transition.reason,
           reworkCount: transition.reworkCount,
           reworkLimit,
-          summary: result.summary,
-          artifacts,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
           message: `Rework limit of ${reworkLimit} rounds exhausted. Run paused with preserved records.`,
         },
       };
@@ -1741,8 +1548,8 @@ export class WorkflowEngine {
     } else if (transition.status === 'completed') {
       const releaseRes = await this.releaseRunResources(runId, {
         taskId,
-        summary: result.summary,
-        artifacts,
+        summary: facts.summary,
+        artifacts: facts.artifacts,
       });
 
       if (!releaseRes.released) {
@@ -1750,11 +1557,11 @@ export class WorkflowEngine {
           acknowledged: true,
           taskId,
           runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts,
-          executionTerminated,
+          step: facts.step,
+          outcome: facts.outcome,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          executionTerminated: facts.executionTerminated,
           transitionStatus: 'blocked',
           message: `Resource release failed: ${releaseRes.error}. Run is blocked.`,
         };
@@ -1765,14 +1572,14 @@ export class WorkflowEngine {
         run_id: runId,
         timestamp: new Date().toISOString(),
         payload: {
-          fromStep: taskPayload.step,
+          fromStep: facts.step,
           toStep: 'completed',
-          outcome: result.outcome,
+          outcome: facts.outcome,
           reason: transition.reason,
           reworkCount: transition.reworkCount,
           priorTaskId: taskId,
-          summary: result.summary,
-          artifacts,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
         },
       };
       await this.appendEvent(runId, stepTransEvent);
@@ -1781,11 +1588,11 @@ export class WorkflowEngine {
         acknowledged: true,
         taskId,
         runId,
-        step: taskPayload.step,
-        outcome: result.outcome,
-        summary: result.summary,
-        artifacts,
-        executionTerminated,
+        step: facts.step,
+        outcome: facts.outcome,
+        summary: facts.summary,
+        artifacts: facts.artifacts,
+        executionTerminated: facts.executionTerminated,
         nextStep: 'completed',
         transitionStatus: 'completed',
         reworkCount: transition.reworkCount,
@@ -1797,17 +1604,17 @@ export class WorkflowEngine {
         run_id: runId,
         timestamp: new Date().toISOString(),
         payload: {
-          fromStep: taskPayload.step,
+          fromStep: facts.step,
           toStep: transition.nextStep,
-          outcome: result.outcome,
+          outcome: facts.outcome,
           reason: transition.reason,
           reworkCount: transition.reworkCount,
           priorTaskId: taskId,
-          summary: result.summary,
-          artifacts,
-          reviewedCommit: artifacts.reviewed_commit,
-          mergedCommit: artifacts.merged_commit,
-          findings: artifacts.findings,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          reviewedCommit: facts.artifacts.reviewed_commit,
+          mergedCommit: facts.artifacts.merged_commit,
+          findings: facts.artifacts.findings,
         },
       };
       await this.appendEvent(runId, stepTransEvent);
@@ -1819,16 +1626,16 @@ export class WorkflowEngine {
       acknowledged: true,
       taskId,
       runId,
-      step: taskPayload.step,
-      outcome: result.outcome,
-      summary: result.summary,
-      artifacts,
-      executionTerminated,
+      step: facts.step,
+      outcome: facts.outcome,
+      summary: facts.summary,
+      artifacts: facts.artifacts,
+      executionTerminated: facts.executionTerminated,
       nextStep: transition.nextStep,
       nextRole,
       transitionStatus: transition.status,
       reworkCount: transition.reworkCount,
-      message: `Result for task "${taskId}" successfully acknowledged. Execution terminated: ${executionTerminated}. Next step: ${transition.nextStep ?? 'none'} (${transition.status}).`,
+      message: `Result for task "${taskId}" successfully acknowledged. Execution terminated: ${facts.executionTerminated}. Next step: ${transition.nextStep ?? 'none'} (${transition.status}).`,
     };
   }
 

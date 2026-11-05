@@ -10,7 +10,11 @@ import type {
   ExecutionInspection,
   ExecutionStopResult,
   PriorEvidence,
+  RoleContract,
+  RunContext,
   RunEvent,
+  TaskResult,
+  WorkflowStep,
 } from './types.js';
 import type { WorkflowFiles, WorktreeOwnerMarker } from './files.js';
 
@@ -58,6 +62,53 @@ export interface TaskDispatchParams {
   deliveryArtifacts?: Record<string, unknown>;
   /** Optional caller-supplied inputs. */
   inputs?: Record<string, unknown>;
+}
+
+/**
+ * Parameters for recording and persisting a specialist role's submitted result.
+ */
+export interface RecordTaskResultParams {
+  /** Unique Run identifier. */
+  runId: string;
+  /** Stable task identifier. */
+  taskId: string;
+  /** The submitted task result facts. */
+  result: TaskResult;
+  /** Optional role contract for validating permitted outcomes and required artifacts. */
+  roleContract?: RoleContract;
+  /** Optional workflow step definition for validating outcome transitions. */
+  stepDefinition?: WorkflowStep;
+}
+
+/**
+ * Facts returned by TaskExecution after associating, validating, persisting the result,
+ * and terminating the executor process.
+ */
+export interface TaskExecutionResultFacts {
+  /** Whether the submission was acknowledged. */
+  acknowledged: boolean;
+  /** Task identifier bound to the result. */
+  taskId: string;
+  /** Run identifier. */
+  runId: string;
+  /** Workflow step at the time of submission. */
+  step: string;
+  /** Role that executed the task. */
+  role: string;
+  /** Submitted outcome string. */
+  outcome: string;
+  /** Summary of the result. */
+  summary: string;
+  /** Captured artifacts dictionary. */
+  artifacts: Record<string, unknown>;
+  /** Whether execution termination was verified. */
+  executionTerminated: boolean;
+  /** Worktree directory path for the task. */
+  worktreePath: string;
+  /** Active execution handle if present. */
+  handle?: ExecutionHandle;
+  /** True if this was an idempotent resubmission of an identical result. */
+  idempotent?: boolean;
 }
 
 /**
@@ -204,6 +255,226 @@ export class TaskExecution {
    */
   async stop(handle: ExecutionHandle): Promise<ExecutionStopResult> {
     return this.executor.stop(handle);
+  }
+
+  /**
+   * Completely handles single task result association, duplicate and conflicting
+   * submission detection, result persistence (result_submitted event recorded via WorkflowFiles.record),
+   * and execution teardown (stopping the executor handle).
+   * Returns task execution result facts without evaluating Run-level progression decisions.
+   *
+   * @param params Parameters specifying the task result to record.
+   * @returns Facts about the recorded task execution.
+   */
+  async recordResult(params: RecordTaskResultParams): Promise<TaskExecutionResultFacts> {
+    if (!params.taskId || typeof params.taskId !== 'string') {
+      throw new Error('Valid taskId is required to submit a result.');
+    }
+    if (!params.result || !params.result.outcome || typeof params.result.outcome !== 'string') {
+      throw new Error('TaskResult must specify an outcome.');
+    }
+    if (!params.result.summary || typeof params.result.summary !== 'string') {
+      throw new Error('TaskResult must specify a summary.');
+    }
+
+    const events = await this.files.loadRun(params.runId);
+    const firstEvent = events[0];
+    if (!firstEvent || firstEvent.type !== 'run_created') {
+      throw new Error(`First event in log for run "${params.runId}" must be "run_created".`);
+    }
+    const initialContext = (firstEvent.payload as { context: RunContext }).context;
+
+    // Locate dispatch / task event for taskId
+    let taskEvent: RunEvent | undefined;
+    let handle: ExecutionHandle | undefined;
+    let existingResultEvent: RunEvent | undefined;
+
+    for (const evt of events) {
+      if (evt.type === 'dispatch_intent' && (evt.payload as { taskId: string }).taskId === params.taskId) {
+        taskEvent = evt;
+      }
+      if (evt.type === 'task_launched' && (evt.payload as { taskId: string }).taskId === params.taskId) {
+        handle = (evt.payload as { handle: ExecutionHandle }).handle;
+      }
+      if (evt.type === 'result_submitted' && (evt.payload as { taskId: string }).taskId === params.taskId) {
+        existingResultEvent = evt;
+      }
+    }
+
+    if (!taskEvent) {
+      throw new Error(`Task "${params.taskId}" not found in run "${params.runId}".`);
+    }
+
+    const taskPayload = taskEvent.payload as {
+      step: string;
+      role: string;
+      worktreePath: string;
+    };
+
+    // Duplicate or conflicting submission check
+    if (existingResultEvent) {
+      const prior = existingResultEvent.payload as {
+        outcome: string;
+        summary: string;
+        artifacts?: Record<string, unknown>;
+      };
+
+      const normalize = (obj: unknown) => JSON.stringify(obj ?? {});
+      const isIdentical =
+        prior.outcome === params.result.outcome &&
+        prior.summary === params.result.summary &&
+        normalize(prior.artifacts) === normalize(params.result.artifacts);
+
+      if (isIdentical) {
+        return {
+          acknowledged: true,
+          idempotent: true,
+          taskId: params.taskId,
+          runId: params.runId,
+          step: taskPayload.step,
+          role: taskPayload.role,
+          outcome: params.result.outcome,
+          summary: params.result.summary,
+          artifacts: (params.result.artifacts ?? {}) as Record<string, unknown>,
+          executionTerminated: true,
+          worktreePath: taskPayload.worktreePath,
+          handle,
+        };
+      }
+
+      throw new Error(
+        `Conflicting result submitted for task "${params.taskId}". A prior result with outcome "${prior.outcome}" is already recorded.`,
+      );
+    }
+
+    // Role contract & step transitions validation
+    const roleContract =
+      params.roleContract ?? initialContext.roles?.roles?.[taskPayload.role];
+    if (roleContract) {
+      if (!roleContract.permitted_outcomes.includes(params.result.outcome)) {
+        throw new Error(
+          `Outcome "${params.result.outcome}" is not permitted for role "${taskPayload.role}". Permitted outcomes: [${roleContract.permitted_outcomes.join(', ')}].`,
+        );
+      }
+
+      const required = roleContract.required_artifacts ?? [];
+      const artifacts = params.result.artifacts ?? {};
+      const missingArtifacts: string[] = [];
+      for (const key of required) {
+        const val = artifacts[key];
+        if (val === undefined || val === null || val === '') {
+          missingArtifacts.push(key);
+        }
+      }
+      if (missingArtifacts.length > 0) {
+        throw new Error(
+          `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
+        );
+      }
+    } else {
+      throw new Error(`Role contract for "${taskPayload.role}" is not defined.`);
+    }
+
+    const stepDef =
+      params.stepDefinition ?? initialContext.workflow?.steps?.[taskPayload.step];
+    if (!stepDef) {
+      throw new Error(`Step "${taskPayload.step}" is not defined in workflow definition.`);
+    }
+    if (!(params.result.outcome in stepDef.transitions)) {
+      const permitted = Object.keys(stepDef.transitions).join(', ');
+      throw new Error(
+        `Step "${taskPayload.step}" does not define a transition for outcome "${params.result.outcome}". Permitted transitions: [${permitted}].`,
+      );
+    }
+
+    // 1. Persist result_submitted event
+    const nowIso = new Date().toISOString();
+    const artifacts = params.result.artifacts ?? {};
+    const resultSubmittedEvent: RunEvent = {
+      type: 'result_submitted',
+      run_id: params.runId,
+      timestamp: nowIso,
+      payload: {
+        taskId: params.taskId,
+        step: taskPayload.step,
+        role: taskPayload.role,
+        outcome: params.result.outcome,
+        summary: params.result.summary,
+        artifacts,
+      },
+    };
+    await this.files.record(params.runId, resultSubmittedEvent);
+
+    // 2. Teardown execution (stop handle) and persist task_terminated event
+    let executionTerminated = true;
+    if (handle) {
+      const stopRes = await this.executor.stop(handle);
+      executionTerminated = stopRes.stopped;
+
+      const termEvent: RunEvent = {
+        type: 'task_terminated',
+        run_id: params.runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId: params.taskId,
+          handle,
+          stopped: stopRes.stopped,
+          uncertain: stopRes.uncertain,
+          error: stopRes.error,
+        },
+      };
+      await this.files.record(params.runId, termEvent);
+    }
+
+    // 3. Return task execution result facts
+    return {
+      acknowledged: true,
+      taskId: params.taskId,
+      runId: params.runId,
+      step: taskPayload.step,
+      role: taskPayload.role,
+      outcome: params.result.outcome,
+      summary: params.result.summary,
+      artifacts,
+      executionTerminated,
+      worktreePath: taskPayload.worktreePath,
+      handle,
+    };
+  }
+
+  /**
+   * Alias for recordResult.
+   */
+  async submitResult(params: RecordTaskResultParams): Promise<TaskExecutionResultFacts> {
+    return this.recordResult(params);
+  }
+
+  /**
+   * Retrieves previously recorded TaskResult for a task if present in the event log.
+   * Useful when reconciling interrupted states where task result was saved but Run not progressed.
+   *
+   * @param runId Unique Run identifier.
+   * @param taskId Stable task identifier.
+   * @returns Recorded TaskResult or null if not yet recorded.
+   */
+  async getTaskResult(runId: string, taskId: string): Promise<TaskResult | null> {
+    const events = await this.files.loadRun(runId);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const evt = events[i];
+      if (evt.type === 'result_submitted' && (evt.payload as { taskId: string }).taskId === taskId) {
+        const payload = evt.payload as {
+          outcome: string;
+          summary: string;
+          artifacts?: Record<string, unknown>;
+        };
+        return {
+          outcome: payload.outcome,
+          summary: payload.summary,
+          artifacts: payload.artifacts,
+        };
+      }
+    }
+    return null;
   }
 
   /**
