@@ -102,9 +102,23 @@ pc workflow submit-result --run <run-id> --task <task-id> --outcome rework --sum
 On `rework`, the Engine checks the rework count against `rework_limit` (default: 3 rounds). If under the limit, the Engine increments `rework_count`, transitions back to `implementation`, and carries forward `priorEvidence` (the evaluated commit SHA and review findings). The Orchestrator receives this prior evidence via `WorkflowEngine.getSchedulingContext`, composes focused repair instructions, and dispatches a fresh worker task with unchanged public requirements.
 If the rework limit is exhausted, the Engine transitions the Run to `paused` with preserved records and artifacts, preventing endless rework loops.
 
-For a PR approved on `pass`, the Engine transitions to `merge` and retains the evaluated revision. Dispatch managed quality and PR-Land work through [current-head PR merge](managed-lifecycle.md#current-head-pr-merge).
-Resolve defects and obtain current quality evidence plus any required parent professional confirmation before requesting merge.
-When the head changes, reassess the changed revision through that protocol.
+For a PR approved on `pass`, the Engine transitions to `merge` and retains the approved evaluated revision (`evaluatedCommit`). The Orchestrator queries `getSchedulingContext` (`currentStep: 'merge'`, `role: 'merger'`, `skill: 'pc-pr-land'`) and dispatches the merger:
+
+```bash
+pc workflow dispatch <run-id> --instructions "Squash merge evaluated PR head into main"
+```
+
+Before launching the merger, the Engine validates that the current PR head revision on GitHub matches the approved `evaluatedCommit`. If the PR head has changed, review approval is invalidated and the workflow transitions back to `review` for fresh evaluation before any merge can proceed.
+
+The merger specialist executes the merge and submits its structured result:
+
+```bash
+pc workflow submit-result --run <run-id> --task <task-id> --outcome completed --summary "Merged PR #<N>" --artifacts '{"merged_commit":"<merge-sha>"}'
+```
+
+The Engine confirms actual external GitHub merge state before advancing to `finalization`. A non-merged PR prevents premature advancement and records an explicit blocker.
+
+On `pc workflow resume`, if interrupted during the merge step, the Engine inspects external GitHub state directly. If already merged on GitHub, it reconciles state as merged without duplicate merge command or duplicate agent execution.
 
 **Done:** GitHub merge and its evaluated revision are verified, or an evidence-backed no-PR disposition is retained.
 

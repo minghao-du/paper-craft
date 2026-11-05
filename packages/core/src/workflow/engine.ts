@@ -13,8 +13,10 @@ import type {
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
+  GitHubMergeChecker,
   InitOptions,
   IssueChecker,
+  MergeStatusResult,
   PreflightCheckResult,
   PriorEvidence,
   ProviderChecker,
@@ -39,6 +41,7 @@ import {
   loadWorkflowConfig,
 } from './config.js';
 import {
+  DefaultGitHubMergeChecker,
   DefaultIssueChecker,
   DefaultProviderChecker,
 } from './checkers.js';
@@ -164,6 +167,26 @@ export class WorkflowOwnershipError extends Error {
 }
 
 /**
+ * Custom error raised when review approval is invalidated due to changed PR head revision.
+ */
+export class WorkflowReviewInvalidatedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowReviewInvalidatedError';
+  }
+}
+
+/**
+ * Custom error raised when merge verification fails or review evidence is missing.
+ */
+export class WorkflowMergeVerificationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowMergeVerificationError';
+  }
+}
+
+/**
  * Constructor options for initializing the WorkflowEngine.
  */
 export interface WorkflowEngineOptions {
@@ -177,6 +200,8 @@ export interface WorkflowEngineOptions {
   providerChecker?: ProviderChecker;
   /** Agent executor instance for launching and managing agent executions. */
   executor?: AgentExecutor;
+  /** Checker for verifying PR head revision and GitHub merge status. */
+  mergeChecker?: GitHubMergeChecker;
 }
 
 /**
@@ -189,6 +214,7 @@ export class WorkflowEngine {
   public readonly issueChecker: IssueChecker;
   public readonly providerChecker: ProviderChecker;
   public readonly executor: AgentExecutor;
+  public readonly mergeChecker: GitHubMergeChecker;
 
   constructor(options?: WorkflowEngineOptions) {
     this.cwd = options?.cwd ?? process.cwd();
@@ -198,6 +224,7 @@ export class WorkflowEngine {
     this.issueChecker = options?.issueChecker ?? new DefaultIssueChecker();
     this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
     this.executor = options?.executor ?? new AgyExecutor();
+    this.mergeChecker = options?.mergeChecker ?? new DefaultGitHubMergeChecker();
   }
 
   /**
@@ -567,6 +594,15 @@ export class WorkflowEngine {
           }
           break;
         }
+        case 'review_invalidated': {
+          if (priorEvidence) {
+            priorEvidence = {
+              ...priorEvidence,
+              evaluatedCommit: undefined,
+            };
+          }
+          break;
+        }
         case 'step_transitioned': {
           const payload = evt.payload as {
             toStep?: string;
@@ -582,7 +618,14 @@ export class WorkflowEngine {
           if (payload.reason === 'rework') {
             reworkCount = payload.reworkCount ?? (reworkCount + 1);
           }
-          if (payload.reviewedCommit || payload.findings) {
+          if (payload.reason === 'review_invalidated') {
+            if (priorEvidence) {
+              priorEvidence = {
+                ...priorEvidence,
+                evaluatedCommit: undefined,
+              };
+            }
+          } else if (payload.reviewedCommit || payload.findings) {
             priorEvidence = {
               ...priorEvidence,
               evaluatedCommit: payload.reviewedCommit ?? (payload.artifacts?.reviewed_commit as string | undefined),
@@ -640,6 +683,135 @@ export class WorkflowEngine {
   }
 
   /**
+   * Verifies that prerequisites for the merge step are satisfied.
+   * Validates that an approved review commit exists and matches the current PR head on GitHub.
+   * If PR head has changed, invalidates review approval and transitions workflow back to review.
+   */
+  async verifyMergePrerequisites(runId: string): Promise<{
+    valid: boolean;
+    approvedCommit?: string;
+    currentHeadSha?: string;
+    invalidated?: boolean;
+    error?: string;
+  }> {
+    const context = await this.getSchedulingContext(runId);
+    if (context.currentStep !== 'merge' && context.stepDefinition.role !== 'merger') {
+      return { valid: true };
+    }
+
+    const approvedCommit = context.evaluatedCommit;
+    if (!approvedCommit) {
+      const blockerEvent: RunEvent = {
+        type: 'run_blocked',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          step: context.currentStep,
+          reason: 'Cannot dispatch merge: missing approved review revision (stale or absent review evidence).',
+        },
+      };
+      await this.appendEvent(runId, blockerEvent);
+      return {
+        valid: false,
+        error: 'Cannot dispatch merge: missing approved review revision (stale or absent review evidence).',
+      };
+    }
+
+    let mergeStatus: MergeStatusResult;
+    try {
+      mergeStatus = await this.mergeChecker.checkMergeStatus(
+        context.repository,
+        context.issue,
+        context.worktreePath,
+      );
+    } catch (err) {
+      mergeStatus = {
+        exists: false,
+        error: (err as Error).message,
+      };
+    }
+
+    if (mergeStatus.error) {
+      const uncertainEvent: RunEvent = {
+        type: 'run_uncertain',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          step: context.currentStep,
+          reason: `Merge prerequisite verification failed: ${mergeStatus.error}`,
+        },
+      };
+      await this.appendEvent(runId, uncertainEvent);
+      return {
+        valid: false,
+        error: `Merge prerequisite verification uncertain: ${mergeStatus.error}`,
+      };
+    }
+
+    if (!mergeStatus.headSha) {
+      const blockerEvent: RunEvent = {
+        type: 'run_blocked',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          step: context.currentStep,
+          reason: 'Merge prerequisite verification failed: PR head commit could not be determined on GitHub.',
+        },
+      };
+      await this.appendEvent(runId, blockerEvent);
+      return {
+        valid: false,
+        error: 'Could not determine PR head commit on GitHub.',
+      };
+    }
+
+    if (mergeStatus.headSha !== approvedCommit) {
+      // PR head has moved: invalidate review approval and transition back to review!
+      const invalidEvent: RunEvent = {
+        type: 'review_invalidated',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          step: context.currentStep,
+          approvedCommit,
+          currentHeadSha: mergeStatus.headSha,
+          reason: `Current PR head revision "${mergeStatus.headSha}" does not match approved review revision "${approvedCommit}". Review approval invalidated.`,
+        },
+      };
+      await this.appendEvent(runId, invalidEvent);
+
+      const stepTransEvent: RunEvent = {
+        type: 'step_transitioned',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          fromStep: 'merge',
+          toStep: 'review',
+          reason: 'review_invalidated',
+          invalidatedCommit: approvedCommit,
+          newHeadSha: mergeStatus.headSha,
+          message: `PR head changed from ${approvedCommit} to ${mergeStatus.headSha}. Fresh review required before merge.`,
+        },
+      };
+      await this.appendEvent(runId, stepTransEvent);
+
+      return {
+        valid: false,
+        invalidated: true,
+        approvedCommit,
+        currentHeadSha: mergeStatus.headSha,
+        error: `Current PR head revision "${mergeStatus.headSha}" does not match approved review revision "${approvedCommit}". Review approval has been invalidated and workflow transitioned back to review.`,
+      };
+    }
+
+    return {
+      valid: true,
+      approvedCommit,
+      currentHeadSha: mergeStatus.headSha,
+    };
+  }
+
+  /**
    * Dispatches a specialist role task for the current step.
    * Engine binds Run identity, step, role, provider, inputs, and workspace;
    * caller provides task-specific instructions.
@@ -665,6 +837,18 @@ export class WorkflowEngine {
       throw new Error(
         `Cannot dispatch: task "${context.activeTaskId}" is currently running. Run at most one professional task at a time.`,
       );
+    }
+
+    if (context.currentStep === 'merge' || context.stepDefinition.role === 'merger') {
+      const prereq = await this.verifyMergePrerequisites(runId);
+      if (!prereq.valid) {
+        if (prereq.invalidated) {
+          throw new WorkflowReviewInvalidatedError(
+            `Current PR head revision "${prereq.currentHeadSha}" does not match approved review revision "${prereq.approvedCommit}". Review approval has been invalidated and workflow transitioned back to review.`,
+          );
+        }
+        throw new WorkflowMergeVerificationError(prereq.error || 'Merge prerequisites not satisfied.');
+      }
     }
 
     const taskId =
@@ -957,6 +1141,143 @@ export class WorkflowEngine {
       initialContext.workflow,
     );
 
+    // Verify external GitHub merge outcome for merger role
+    if ((taskPayload.role === 'merger' || taskPayload.step === 'merge') && result.outcome === 'completed') {
+      let mergeStatus: MergeStatusResult;
+      try {
+        mergeStatus = await this.mergeChecker.checkMergeStatus(
+          initialContext.repository,
+          initialContext.issue,
+          taskPayload.worktreePath,
+        );
+      } catch (err) {
+        mergeStatus = {
+          exists: false,
+          error: (err as Error).message,
+        };
+      }
+
+      if (mergeStatus.error) {
+        const nowIso = new Date().toISOString();
+        const resultSubmittedEvent: RunEvent = {
+          type: 'result_submitted',
+          run_id: runId,
+          timestamp: nowIso,
+          payload: {
+            taskId,
+            step: taskPayload.step,
+            role: taskPayload.role,
+            outcome: result.outcome,
+            summary: result.summary,
+            artifacts,
+          },
+        };
+        await this.appendEvent(runId, resultSubmittedEvent);
+
+        let executionTerminated = true;
+        if (handle) {
+          const stopRes = await this.executor.stop(handle);
+          executionTerminated = stopRes.stopped;
+          await this.appendEvent(runId, {
+            type: 'task_terminated',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId,
+              handle,
+              stopped: stopRes.stopped,
+              uncertain: stopRes.uncertain,
+              error: stopRes.error,
+            },
+          });
+        }
+
+        await this.appendEvent(runId, {
+          type: 'run_uncertain',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: {
+            taskId,
+            reason: `External merge verification uncertain on GitHub: ${mergeStatus.error}`,
+          },
+        });
+
+        return {
+          acknowledged: true,
+          taskId,
+          runId,
+          step: taskPayload.step,
+          outcome: result.outcome,
+          summary: result.summary,
+          artifacts,
+          executionTerminated,
+          transitionStatus: 'uncertain',
+          message: `External merge verification uncertain on GitHub: ${mergeStatus.error}. Preserved explicit uncertainty.`,
+        };
+      }
+
+      if (!mergeStatus.merged || mergeStatus.state !== 'MERGED') {
+        const nowIso = new Date().toISOString();
+        const resultSubmittedEvent: RunEvent = {
+          type: 'result_submitted',
+          run_id: runId,
+          timestamp: nowIso,
+          payload: {
+            taskId,
+            step: taskPayload.step,
+            role: taskPayload.role,
+            outcome: result.outcome,
+            summary: result.summary,
+            artifacts,
+          },
+        };
+        await this.appendEvent(runId, resultSubmittedEvent);
+
+        let executionTerminated = true;
+        if (handle) {
+          const stopRes = await this.executor.stop(handle);
+          executionTerminated = stopRes.stopped;
+          await this.appendEvent(runId, {
+            type: 'task_terminated',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId,
+              handle,
+              stopped: stopRes.stopped,
+              uncertain: stopRes.uncertain,
+              error: stopRes.error,
+            },
+          });
+        }
+
+        const blockedEvent: RunEvent = {
+          type: 'run_blocked',
+          run_id: runId,
+          timestamp: new Date().toISOString(),
+          payload: {
+            taskId,
+            step: taskPayload.step,
+            reason: `Merge verification failed: PR #${initialContext.issue} is not merged on GitHub (state: ${mergeStatus.state ?? 'unmerged'}). Premature completion prevented.`,
+          },
+        };
+        await this.appendEvent(runId, blockedEvent);
+
+        return {
+          acknowledged: true,
+          taskId,
+          runId,
+          step: taskPayload.step,
+          outcome: result.outcome,
+          summary: result.summary,
+          artifacts,
+          executionTerminated,
+          transitionStatus: 'blocked',
+          message: `Merge verification failed: PR #${initialContext.issue} is not merged on GitHub. Run is blocked.`,
+        };
+      }
+    }
+
     // Persist result_submitted event
     const nowIso = new Date().toISOString();
     const resultSubmittedEvent: RunEvent = {
@@ -1069,6 +1390,7 @@ export class WorkflowEngine {
           summary: result.summary,
           artifacts,
           reviewedCommit: artifacts.reviewed_commit,
+          mergedCommit: artifacts.merged_commit,
           findings: artifacts.findings,
         },
       };
@@ -1139,6 +1461,7 @@ export class WorkflowEngine {
     let activeHandle: ExecutionHandle | undefined;
     let latestResult: TaskResult | undefined;
     let isStopped: boolean | undefined;
+    let blockedReason: string | undefined;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
@@ -1213,9 +1536,12 @@ export class WorkflowEngine {
         case 'run_completed':
           currentStatus = 'completed';
           break;
-        case 'run_blocked':
+        case 'run_blocked': {
           currentStatus = 'blocked';
+          const payload = evt.payload as { reason?: string };
+          blockedReason = payload?.reason;
           break;
+        }
         case 'run_paused':
           currentStatus = 'paused';
           break;
@@ -1266,6 +1592,9 @@ export class WorkflowEngine {
     }
     if (currentStatus === 'paused') {
       summary += ` Rework limit of ${reworkLimit} rounds exhausted. Records preserved.`;
+    }
+    if (currentStatus === 'blocked' && blockedReason) {
+      summary += ` Blocker: ${blockedReason}`;
     }
     if (activeTaskInfo?.execution_status === 'exited' && !latestResult) {
       summary += ` Warning: process exited without submitting a business result.`;
@@ -1464,6 +1793,245 @@ export class WorkflowEngine {
           result: latestResult,
         };
         resumeMessage = `Collected completed task result for task "${activeTaskId}" (outcome: ${latestResult.outcome}).`;
+      } else if (activeStep === 'merge' || currentStep === 'merge') {
+        let mergeStatus: MergeStatusResult;
+        try {
+          mergeStatus = await this.mergeChecker.checkMergeStatus(
+            initialContext.repository,
+            initialContext.issue,
+            initialContext.worktree_path,
+          );
+        } catch (err) {
+          mergeStatus = {
+            exists: false,
+            error: (err as Error).message,
+          };
+        }
+
+        if (mergeStatus.error) {
+          const reconcileEvent: RunEvent = {
+            type: 'task_reconciled',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle,
+              executionStatus: 'uncertain',
+              action: 'uncertain',
+              error: mergeStatus.error,
+            },
+          };
+          await this.appendEvent(runId, reconcileEvent);
+
+          const uncertainEvent: RunEvent = {
+            type: 'run_uncertain',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: activeTaskId,
+              reason: `Interrupted merge status inspection uncertain: ${mergeStatus.error}`,
+            },
+          };
+          await this.appendEvent(runId, uncertainEvent);
+
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle,
+            executionStatus: 'uncertain',
+            action: 'uncertain',
+            error: mergeStatus.error,
+          };
+          resumeMessage = `Interrupted merge inspection uncertain for task "${activeTaskId}": ${mergeStatus.error}. Preserved explicit uncertainty.`;
+        } else if (mergeStatus.merged || mergeStatus.state === 'MERGED') {
+          // Reconcile state as merged without duplicate merge command!
+          const mergedCommit = mergeStatus.mergeCommitSha || 'external-merge-commit';
+          const reconciledResult: TaskResult = {
+            outcome: 'completed',
+            summary: `Reconciled external merge outcome: PR #${initialContext.issue} is confirmed merged on GitHub.`,
+            artifacts: {
+              merged_commit: mergedCommit,
+              reconciled_externally: true,
+            },
+          };
+
+          const resultEvent: RunEvent = {
+            type: 'result_submitted',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              outcome: reconciledResult.outcome,
+              summary: reconciledResult.summary,
+              artifacts: reconciledResult.artifacts,
+            },
+          };
+          await this.appendEvent(runId, resultEvent);
+
+          if (activeHandle) {
+            try {
+              await this.executor.stop(activeHandle);
+              await this.appendEvent(runId, {
+                type: 'task_terminated',
+                run_id: runId,
+                timestamp: new Date().toISOString(),
+                payload: { taskId: activeTaskId, handle: activeHandle, stopped: true },
+              });
+            } catch {
+              // ignore stop error
+            }
+          }
+
+          const stepTransEvent: RunEvent = {
+            type: 'step_transitioned',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              fromStep: 'merge',
+              toStep: 'finalization',
+              outcome: 'completed',
+              reason: 'external_merge_reconciled',
+              mergedCommit,
+              priorTaskId: activeTaskId,
+              summary: reconciledResult.summary,
+              artifacts: reconciledResult.artifacts,
+            },
+          };
+          await this.appendEvent(runId, stepTransEvent);
+
+          const reconcileEvent: RunEvent = {
+            type: 'task_reconciled',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle,
+              executionStatus: 'exited',
+              action: 'collected',
+            },
+          };
+          await this.appendEvent(runId, reconcileEvent);
+
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle,
+            executionStatus: 'exited',
+            action: 'collected',
+            result: reconciledResult,
+          };
+          resumeMessage = `Reconciled external merge outcome: PR #${initialContext.issue} is confirmed merged with commit ${mergedCommit}. Advanced to finalization.`;
+        } else {
+          // PR is not merged yet on GitHub: inspect provider process without duplicating merge
+          let inspection: ExecutionInspection;
+          try {
+            inspection = await this.executor.inspect(activeTaskId);
+          } catch (err) {
+            inspection = {
+              status: 'uncertain',
+              error: (err as Error).message,
+            };
+          }
+
+          if (inspection.status === 'running') {
+            activeHandle = activeHandle ?? inspection.handle ?? {
+              id: `recovered-handle-${activeTaskId}`,
+              taskId: activeTaskId,
+            };
+
+            const reconcileEvent: RunEvent = {
+              type: 'task_reconciled',
+              run_id: runId,
+              timestamp: new Date().toISOString(),
+              payload: {
+                taskId: activeTaskId,
+                step: activeStep,
+                role: activeRole,
+                handle: activeHandle,
+                executionStatus: 'running',
+                action: 'reconnected',
+              },
+            };
+            await this.appendEvent(runId, reconcileEvent);
+
+            reconciledTask = {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle,
+              executionStatus: 'running',
+              action: 'reconnected',
+            };
+            resumeMessage = `Reconnected to running execution for task "${activeTaskId}".`;
+          } else if (inspection.status === 'exited') {
+            reconciledTask = {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle ?? inspection.handle,
+              executionStatus: 'exited',
+              action: 'none',
+              error: 'Merger process exited without completing the merge.',
+            };
+            resumeMessage = `Task "${activeTaskId}" exited without completing merge on GitHub.`;
+          } else if (inspection.status === 'uncertain') {
+            const reconcileEvent: RunEvent = {
+              type: 'task_reconciled',
+              run_id: runId,
+              timestamp: new Date().toISOString(),
+              payload: {
+                taskId: activeTaskId,
+                step: activeStep,
+                role: activeRole,
+                handle: activeHandle ?? inspection.handle,
+                executionStatus: 'uncertain',
+                action: 'uncertain',
+                error: inspection.error,
+              },
+            };
+            await this.appendEvent(runId, reconcileEvent);
+
+            const uncertainEvent: RunEvent = {
+              type: 'run_uncertain',
+              run_id: runId,
+              timestamp: new Date().toISOString(),
+              payload: {
+                taskId: activeTaskId,
+                reason: inspection.error || 'Execution status is uncertain from provider.',
+              },
+            };
+            await this.appendEvent(runId, uncertainEvent);
+
+            reconciledTask = {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle ?? inspection.handle,
+              executionStatus: 'uncertain',
+              action: 'uncertain',
+              error: inspection.error || 'Execution status is uncertain.',
+            };
+            resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${inspection.error ?? 'unknown error'}).`;
+          } else {
+            reconciledTask = {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle,
+              executionStatus: 'not_started',
+              action: 'none',
+            };
+            resumeMessage = `Task "${activeTaskId}" was dispatched in intent but not started. Ready for dispatch.`;
+          }
+        }
       } else {
         // No result submitted yet; inspect provider by stable taskId
         let inspection: ExecutionInspection;

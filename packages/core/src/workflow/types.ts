@@ -464,6 +464,41 @@ export interface ProviderChecker {
 }
 
 /**
+ * Result of inspecting pull request head and merge state on GitHub.
+ */
+export interface MergeStatusResult {
+  /** Whether the pull request was found/resolved. */
+  exists: boolean;
+  /** Current head commit SHA of the pull request branch. */
+  headSha?: string;
+  /** Pull request lifecycle state on GitHub (e.g. 'OPEN', 'MERGED', 'CLOSED'). */
+  state?: 'OPEN' | 'MERGED' | 'CLOSED';
+  /** Whether the pull request is confirmed merged on GitHub. */
+  merged?: boolean;
+  /** Commit SHA resulting from the merge on the target branch, if merged. */
+  mergeCommitSha?: string;
+  /** Diagnostic error or failure message if inspection failed or was uncertain. */
+  error?: string;
+}
+
+/**
+ * External interface for inspecting and verifying PR head revision and merge state.
+ */
+export interface GitHubMergeChecker {
+  /**
+   * Verifies the PR head commit SHA and merge status for a repository and PR or issue.
+   * @param repository The repository in owner/repo format.
+   * @param prOrIssue The PR number, issue number, or branch name.
+   * @param worktreePath Optional local git worktree path.
+   */
+  checkMergeStatus(
+    repository: string,
+    prOrIssue: number | string,
+    worktreePath?: string,
+  ): Promise<MergeStatusResult>;
+}
+
+/**
  * Options for resuming a previously started workflow Run.
  */
 export interface ResumeOptions {

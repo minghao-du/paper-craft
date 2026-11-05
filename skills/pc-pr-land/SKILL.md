@@ -60,8 +60,22 @@ For missing assignment or resume, return to [Orchestrator intake](../pc-orchestr
 5. **Report merge separately.** Verify `gh pr view <N> --json state,mergedAt,mergeCommit`.
    Record the actual merge outcome and commit, including an uncertain command result
    reconciled against GitHub. A queued or auto-merge request is still pending; retain
-   the checkout and revalidate evidence before reporting success. Report `merged; final records pending; cleanup pending`
-   on success. Keep status, worklog, branch and directory intact, record release, and
+   the checkout and revalidate evidence before reporting success. Submit the structured result:
+
+   ```sh
+   pc workflow submit-result --run <run-id> --task <task-id> --outcome completed --summary "Squash merged PR #<N> into main" --artifacts '{"merged_commit":"<merge-commit-sha>"}'
+   ```
+
+   If merge is blocked (conflicts, checks failing), submit outcome `blocked`:
+
+   ```sh
+   pc workflow submit-result --run <run-id> --task <task-id> --outcome blocked --summary "Merge blocked: <reason>" --artifacts '{"merged_commit":""}'
+   ```
+
+   The Engine confirms the actual external GitHub merge state before advancing to `finalization`.
+   If merge execution was interrupted or missing result delivery, `pc workflow resume` inspects
+   external GitHub state directly; an already merged PR advances to finalization without duplicate
+   merge commands. Keep status, worklog, branch and directory intact, record release, and
    return to the orchestrator. The worker next owns final evaluation and records.
 
 ## Cleanup phase
