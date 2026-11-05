@@ -253,6 +253,18 @@ export interface ExecutionInspection {
 }
 
 /**
+ * Result of stopping an agent execution.
+ */
+export interface ExecutionStopResult {
+  /** Whether the process was successfully stopped. */
+  stopped: boolean;
+  /** Whether the stop outcome is uncertain. */
+  uncertain?: boolean;
+  /** Failure or diagnostic message if termination failed. */
+  error?: string;
+}
+
+/**
  * Provider-independent contract for agent execution.
  */
 export interface AgentExecutor {
@@ -265,7 +277,7 @@ export interface AgentExecutor {
   /** Sends a message to a running agent execution. */
   send(handle: ExecutionHandle, message: string): Promise<void>;
   /** Stops a running agent execution and verifies termination. */
-  stop(handle: ExecutionHandle): Promise<{ stopped: boolean; uncertain?: boolean; error?: string }>;
+  stop(handle: ExecutionHandle): Promise<ExecutionStopResult>;
 }
 
 /**

@@ -50,6 +50,8 @@ import {
   DefaultProviderChecker,
 } from './checkers.js';
 import { AgyExecutor } from './executor.js';
+import { WorkflowFiles, type WorktreeOwnerMarker } from './files.js';
+import { TaskExecution } from './execution.js';
 
 /**
  * Computes the deterministic step transition given the current step, outcome, rework state, and workflow definition.
@@ -216,6 +218,10 @@ export interface WorkflowEngineOptions {
   executor?: AgentExecutor;
   /** Checker for verifying PR head revision and GitHub merge status. */
   mergeChecker?: GitHubMergeChecker;
+  /** Files manager for persisting workflow runs and events. */
+  files?: WorkflowFiles;
+  /** Task execution manager for preparing and launching specialist tasks. */
+  taskExecution?: TaskExecution;
 }
 
 /**
@@ -229,6 +235,8 @@ export class WorkflowEngine {
   public readonly providerChecker: ProviderChecker;
   public readonly executor: AgentExecutor;
   public readonly mergeChecker: GitHubMergeChecker;
+  public readonly files: WorkflowFiles;
+  public readonly taskExecution: TaskExecution;
 
   constructor(options?: WorkflowEngineOptions) {
     this.cwd = options?.cwd ?? process.cwd();
@@ -239,6 +247,10 @@ export class WorkflowEngine {
     this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
     this.executor = options?.executor ?? new AgyExecutor();
     this.mergeChecker = options?.mergeChecker ?? new DefaultGitHubMergeChecker();
+    this.files = options?.files ?? new WorkflowFiles(this.storageRoot);
+    this.taskExecution =
+      options?.taskExecution ??
+      new TaskExecution({ files: this.files, executor: this.executor });
   }
 
   /**
@@ -337,23 +349,18 @@ export class WorkflowEngine {
     }
 
     // Check for unfinished Run conflicts for the same repository and issue
-    const runsDir = path.join(this.storageRoot, 'runs');
     try {
-      const runEntries = await fs.readdir(runsDir, { withFileTypes: true });
-      for (const entry of runEntries) {
-        if (!entry.isDirectory()) continue;
-        const entryRunId = entry.name;
-        const eventsPath = path.join(runsDir, entryRunId, 'events.jsonl');
+      const runIds = await this.files.listRunIds();
+      for (const entryRunId of runIds) {
         try {
-          const eventsContent = await fs.readFile(eventsPath, 'utf8');
-          const lines = eventsContent.trim().split('\n').filter(Boolean);
-          if (lines.length === 0) continue;
+          const events = await this.files.loadRun(entryRunId);
+          if (events.length === 0) continue;
 
-          const firstEvent = JSON.parse(lines[0]) as RunEvent;
+          const firstEvent = events[0];
           if (firstEvent.type === 'run_created') {
             const ctx = (firstEvent.payload as { context: RunContext }).context;
             if (ctx.repository === config.repository && ctx.issue === options.issue) {
-              const currentStatus = this.deriveRunStatusFromLines(lines);
+              const currentStatus = this.deriveRunStatusFromEvents(events);
               if (currentStatus !== 'completed') {
                 errors.push(
                   `Active run "${entryRunId}" already exists for issue #${options.issue} in repository "${config.repository}" with status "${currentStatus}". Inspect status with "pc workflow status --run ${entryRunId}" or resume with "pc workflow resume ${entryRunId}" (or recover).`,
@@ -371,10 +378,8 @@ export class WorkflowEngine {
 
     // Check worktree ownership conflict
     const targetWorktree = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
-    const ownerMarkerPath = path.join(targetWorktree, '.pc-execution-owner');
     try {
-      const ownerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
-      const ownerData = JSON.parse(ownerRaw);
+      const ownerData = await this.files.readWorktreeOwner(targetWorktree);
       if (ownerData && ownerData.run_id) {
         errors.push(
           `Target worktree directory "${targetWorktree}" has conflicting ownership marker belonging to "${ownerData.run_id}".`,
@@ -422,20 +427,6 @@ export class WorkflowEngine {
     const resolvedWorktreeRoot = path.resolve(this.cwd, config.worktree_root);
     const worktreePath = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
 
-    // Create worktree directory and claim ownership
-    await fs.mkdir(worktreePath, { recursive: true });
-    const ownerMarker = {
-      run_id: runId,
-      repository: config.repository,
-      issue: options.issue,
-      claimed_at: nowIso,
-    };
-    await fs.writeFile(
-      path.join(worktreePath, '.pc-execution-owner'),
-      JSON.stringify(ownerMarker, null, 2),
-      'utf8',
-    );
-
     const runContext: RunContext = {
       run_id: runId,
       repository: config.repository,
@@ -453,21 +444,7 @@ export class WorkflowEngine {
       roles: JSON.parse(JSON.stringify(roles)),
     };
 
-    // Persist run directory and initial event log
-    const runDir = path.join(this.storageRoot, 'runs', runId);
-    await fs.mkdir(runDir, { recursive: true });
-
-    const initialEvent: RunEvent = {
-      type: 'run_created',
-      run_id: runId,
-      timestamp: nowIso,
-      payload: {
-        context: runContext,
-      },
-    };
-
-    const eventLogPath = path.join(runDir, 'events.jsonl');
-    await fs.writeFile(eventLogPath, `${JSON.stringify(initialEvent)}\n`, 'utf8');
+    await this.files.createRun(runContext);
 
     if (options.orchestratorHandle) {
       const orchEvent: RunEvent = {
@@ -512,28 +489,14 @@ export class WorkflowEngine {
    * Reads all events for a given run from its JSONL event log.
    */
   async readEvents(runId: string): Promise<RunEvent[]> {
-    const eventLogPath = path.join(this.storageRoot, 'runs', runId, 'events.jsonl');
-    let rawLog: string;
-    try {
-      rawLog = await fs.readFile(eventLogPath, 'utf8');
-    } catch {
-      throw new Error(`Workflow run "${runId}" not found or missing event log at: ${eventLogPath}`);
-    }
-    const lines = rawLog.trim().split('\n').filter(Boolean);
-    if (lines.length === 0) {
-      throw new Error(`Workflow run "${runId}" has empty event log.`);
-    }
-    return lines.map((l) => JSON.parse(l) as RunEvent);
+    return this.files.loadRun(runId);
   }
 
   /**
    * Appends an event to the run's JSONL event log.
    */
   async appendEvent(runId: string, event: RunEvent): Promise<void> {
-    const runDir = path.join(this.storageRoot, 'runs', runId);
-    await fs.mkdir(runDir, { recursive: true });
-    const eventLogPath = path.join(runDir, 'events.jsonl');
-    await fs.appendFile(eventLogPath, `${JSON.stringify(event)}\n`, 'utf8');
+    return this.files.record(runId, event);
   }
 
   /**
@@ -932,160 +895,23 @@ export class WorkflowEngine {
       options?.taskId ??
       `task-${runId}-${context.currentStep}-${context.reworkCount}-${randomUUID().slice(0, 6)}`;
 
-    // 1. Prepare dedicated worktree
-    await fs.mkdir(context.worktreePath, { recursive: true });
-
-    // Update or write ownership marker
-    const ownerMarker = {
-      run_id: runId,
-      repository: context.repository,
-      issue: context.issue,
-      task_id: taskId,
-      role: context.stepDefinition.role,
-      claimed_at: new Date().toISOString(),
-    };
-    await fs.writeFile(
-      path.join(context.worktreePath, '.pc-execution-owner'),
-      JSON.stringify(ownerMarker, null, 2),
-      'utf8',
-    );
-
-    // Write initialization.json into the worktree
-    const initData = {
-      run_id: runId,
-      task_id: taskId,
-      role: context.stepDefinition.role,
-      step: context.currentStep,
-      skill: context.roleContract.skill,
-      checkout: context.worktreePath,
-      repository: context.repository,
-      issue: context.issue,
-      shared_requirements: context.sharedRequirements,
-      task_instructions: taskInstructions,
-      inputs: {
-        ...(context.priorEvidence ? { prior_evidence: context.priorEvidence } : {}),
-        ...(context.deliveryArtifacts ? { delivery_artifacts: context.deliveryArtifacts } : {}),
-        ...(options?.inputs ?? {}),
-      },
-      permitted_outcomes: context.roleContract.permitted_outcomes,
-      required_artifacts: context.roleContract.required_artifacts ?? [],
-      prior_evidence: context.priorEvidence,
-      delivery_artifacts: context.deliveryArtifacts,
-    };
-    await fs.writeFile(
-      path.join(context.worktreePath, 'initialization.json'),
-      JSON.stringify(initData, null, 2),
-      'utf8',
-    );
-
-    // 2. Persist dispatch intent event BEFORE launch
-    const intentEvent: RunEvent = {
-      type: 'dispatch_intent',
-      run_id: runId,
-      timestamp: new Date().toISOString(),
-      payload: {
-        taskId,
-        step: context.currentStep,
-        role: context.stepDefinition.role,
-        skill: context.roleContract.skill,
-        taskInstructions,
-        inputs: options?.inputs ?? {},
-        priorEvidence: context.priorEvidence,
-        deliveryArtifacts: context.deliveryArtifacts,
-        worktreePath: context.worktreePath,
-      },
-    };
-    await this.appendEvent(runId, intentEvent);
-
-    // 3. Compose worker prompt
-    const promptLines = [
-      `# Task Assignment: ${context.currentStep} (${context.stepDefinition.role})`,
-      `Run: ${runId}`,
-      `Task: ${taskId}`,
-      `Skill: ${context.roleContract.skill}`,
-      '',
-      '## Shared Requirements',
-      context.sharedRequirements || 'None specified.',
-    ];
-
-    if (context.deliveryArtifacts && Object.keys(context.deliveryArtifacts).length > 0) {
-      promptLines.push('', '## Delivery Artifacts');
-      for (const [key, val] of Object.entries(context.deliveryArtifacts)) {
-        promptLines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
-      }
-    }
-
-    if (context.priorEvidence) {
-      promptLines.push('', '## Prior Evidence & Review Findings');
-      if (context.priorEvidence.evaluatedCommit) {
-        promptLines.push(`Evaluated Commit: ${context.priorEvidence.evaluatedCommit}`);
-      }
-      if (context.priorEvidence.findings) {
-        promptLines.push(`Review Findings:\n${context.priorEvidence.findings}`);
-      }
-      if (context.priorEvidence.priorSummary) {
-        promptLines.push(`Prior Summary: ${context.priorEvidence.priorSummary}`);
-      }
-    }
-
-    promptLines.push(
-      '',
-      '## Task Instructions',
-      taskInstructions,
-      '',
-      '## Permitted Outcomes',
-      context.roleContract.permitted_outcomes.join(', '),
-      '',
-      '## Required Artifacts',
-      (context.roleContract.required_artifacts ?? []).join(', ') || 'None',
-      '',
-      '## Submission Contract',
-      `When finished, submit your result using:`,
-      `pc workflow submit-result --run "${runId}" --task "${taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
-    );
-
-    const prompt = promptLines.join('\n');
-
-    // 4. Launch execution via provider Executor
-    let handle: ExecutionHandle;
-    try {
-      handle = await this.executor.launch(taskId, context.worktreePath, prompt);
-    } catch (err) {
-      const launchErrEvent: RunEvent = {
-        type: 'task_launch_failed',
-        run_id: runId,
-        timestamp: new Date().toISOString(),
-        payload: {
-          taskId,
-          error: (err as Error).message,
-        },
-      };
-      await this.appendEvent(runId, launchErrEvent);
-      throw err;
-    }
-
-    // 5. Persist task_launched event recording the provider handle
-    const launchedEvent: RunEvent = {
-      type: 'task_launched',
-      run_id: runId,
-      timestamp: new Date().toISOString(),
-      payload: {
-        taskId,
-        step: context.currentStep,
-        role: context.stepDefinition.role,
-        handle,
-        launchedAt: new Date().toISOString(),
-      },
-    };
-    await this.appendEvent(runId, launchedEvent);
-
-    return {
+    return this.taskExecution.dispatch({
+      runId,
       taskId,
-      handle,
       step: context.currentStep,
       role: context.stepDefinition.role,
+      skill: context.roleContract.skill,
+      taskInstructions,
+      sharedRequirements: context.sharedRequirements,
       worktreePath: context.worktreePath,
-    };
+      repository: context.repository,
+      issue: context.issue,
+      permittedOutcomes: context.roleContract.permitted_outcomes,
+      requiredArtifacts: context.roleContract.required_artifacts,
+      priorEvidence: context.priorEvidence,
+      deliveryArtifacts: context.deliveryArtifacts,
+      inputs: options?.inputs,
+    });
   }
 
   /**
@@ -1208,15 +1034,9 @@ export class WorkflowEngine {
     }
 
     if (worktreeExists) {
-      const ownerMarkerPath = path.join(worktreePath, '.pc-execution-owner');
-      let ownerMarkerRaw: string | null;
-      try {
-        ownerMarkerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
-      } catch {
-        ownerMarkerRaw = null;
-      }
+      const ownerMarker = await this.files.readWorktreeOwner(worktreePath);
 
-      if (!ownerMarkerRaw) {
+      if (!ownerMarker) {
         const reason = `Cannot clean up worktree: .pc-execution-owner marker is missing at "${worktreePath}". Refusing to destroy unverified directory.`;
         await this.appendEvent(runId, {
           type: 'cleanup_failed',
@@ -1240,13 +1060,6 @@ export class WorkflowEngine {
           error: reason,
           message: `Resource release failed: ${reason}`,
         };
-      }
-
-      let ownerMarker: { run_id?: string };
-      try {
-        ownerMarker = JSON.parse(ownerMarkerRaw);
-      } catch {
-        ownerMarker = {};
       }
 
       if (ownerMarker.run_id !== runId) {
@@ -2031,12 +1844,9 @@ export class WorkflowEngine {
       runId = runIdOrOptions.runId;
     }
 
-    const runsDir = path.join(this.storageRoot, 'runs');
-
     if (!runId) {
       try {
-        const entries = await fs.readdir(runsDir, { withFileTypes: true });
-        const runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        const runDirs = await this.files.listRunIds();
         if (runDirs.length === 0) {
           throw new Error('No workflow runs found.');
         }
@@ -2164,7 +1974,7 @@ export class WorkflowEngine {
       let exitCode: number | undefined;
       let error: string | undefined;
       try {
-        const inspection = await this.executor.inspect(activeTaskId);
+        const inspection = await this.taskExecution.inspect(activeTaskId);
         executionStatus = inspection.status;
         exitCode = inspection.exitCode;
         error = inspection.error;
@@ -2237,12 +2047,9 @@ export class WorkflowEngine {
       runId = runIdOrOptions.runId;
     }
 
-    const runsDir = path.join(this.storageRoot, 'runs');
-
     if (!runId) {
       try {
-        const entries = await fs.readdir(runsDir, { withFileTypes: true });
-        const runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        const runDirs = await this.files.listRunIds();
         if (runDirs.length === 0) {
           throw new Error('No workflow runs found.');
         }
@@ -2262,11 +2069,9 @@ export class WorkflowEngine {
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
 
     // Check worktree ownership safeguards
-    const ownerMarkerPath = path.join(initialContext.worktree_path, '.pc-execution-owner');
     let conflictingOwner: string | undefined;
     try {
-      const ownerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
-      const ownerData = JSON.parse(ownerRaw);
+      const ownerData = await this.files.readWorktreeOwner(initialContext.worktree_path);
       if (ownerData && ownerData.run_id && ownerData.run_id !== runId) {
         conflictingOwner = ownerData.run_id;
       }
@@ -2811,8 +2616,7 @@ export class WorkflowEngine {
 
     // Maintain worktree ownership ONLY if the Run is not completed
     if (currentStatus !== 'completed') {
-      await fs.mkdir(initialContext.worktree_path, { recursive: true });
-      const ownerMarker = {
+      const ownerMarker: WorktreeOwnerMarker = {
         run_id: runId,
         repository: initialContext.repository,
         issue: initialContext.issue,
@@ -2820,11 +2624,7 @@ export class WorkflowEngine {
         role: activeRole ?? initialContext.workflow.steps[currentStep]?.role,
         claimed_at: new Date().toISOString(),
       };
-      await fs.writeFile(
-        ownerMarkerPath,
-        JSON.stringify(ownerMarker, null, 2),
-        'utf8',
-      );
+      await this.files.writeWorktreeOwner(initialContext.worktree_path, ownerMarker);
     }
 
     // Get current scheduling context after reconciliation
@@ -2843,6 +2643,28 @@ export class WorkflowEngine {
       eventsCount: updatedEvents.length,
       message: resumeMessage,
     };
+  }
+
+  private deriveRunStatusFromEvents(events: RunEvent[]): RunStatus {
+    let status: RunStatus = 'pending_dispatch';
+    for (let i = 1; i < events.length; i++) {
+      const evt = events[i];
+      if (evt.type === 'run_completed') {
+        status = 'completed';
+      } else if (evt.type === 'run_blocked') {
+        status = 'blocked';
+      } else if (evt.type === 'run_paused') {
+        status = 'paused';
+      } else if (evt.type === 'run_uncertain') {
+        status = 'uncertain';
+      } else if (evt.type === 'task_reconciled') {
+        const payload = evt.payload as { action?: string };
+        if (payload.action === 'uncertain') status = 'uncertain';
+      } else if (evt.type === 'task_launched' || evt.type === 'dispatch_intent') {
+        status = 'running';
+      }
+    }
+    return status;
   }
 
   private deriveRunStatusFromLines(lines: string[]): RunStatus {
