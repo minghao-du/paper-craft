@@ -67,7 +67,7 @@ export interface RoleDefinitions {
 /**
  * Lifecycle status of an engine Run.
  */
-export type RunStatus = 'pending_dispatch' | 'running' | 'completed' | 'blocked' | 'paused';
+export type RunStatus = 'pending_dispatch' | 'running' | 'completed' | 'blocked' | 'paused' | 'uncertain';
 
 /**
  * Durable append-only event recorded in the run's JSONL event log.
@@ -402,3 +402,67 @@ export interface ProviderChecker {
     error?: string;
   }>;
 }
+
+/**
+ * Options for resuming a previously started workflow Run.
+ */
+export interface ResumeOptions {
+  /** Target Run identifier. If omitted, latest run is selected. */
+  runId?: string;
+  /** Path to workflow configuration file. */
+  configPath?: string;
+}
+
+/**
+ * Action taken by the engine during execution reconciliation on resume.
+ */
+export type ReconciliationAction = 'reconnected' | 'collected' | 'uncertain' | 'none';
+
+/**
+ * Information regarding the active task reconciled during workflow resume.
+ */
+export interface ReconciledTask {
+  /** Stable task identifier bound to the workflow attempt. */
+  taskId: string;
+  /** Workflow step name for the task. */
+  step: string;
+  /** Specialist role assigned to the task. */
+  role: string;
+  /** Provider execution handle if known or recovered. */
+  handle?: ExecutionHandle;
+  /** Process/session execution status from provider inspection. */
+  executionStatus: ExecutionStatus;
+  /** Action taken by the engine during reconciliation. */
+  action: ReconciliationAction;
+  /** Diagnostic error or message if uncertain or failed. */
+  error?: string;
+  /** Submitted task result if available or collected. */
+  result?: TaskResult;
+}
+
+/**
+ * Result returned upon resuming an interrupted workflow Run.
+ */
+export interface ResumeResult {
+  /** Unique Run identifier. */
+  runId: string;
+  /** Target GitHub repository (owner/repo). */
+  repository: string;
+  /** Target GitHub issue number. */
+  issue: number;
+  /** Lifecycle status after reconciliation. */
+  status: RunStatus;
+  /** Active workflow step name. */
+  currentStep: string;
+  /** Assigned physical worktree directory path. */
+  worktreePath: string;
+  /** Restored scheduling context for the orchestrator. */
+  schedulingContext: SchedulingContext;
+  /** Reconciled active task details if a task was in flight or dispatched. */
+  reconciledTask?: ReconciledTask;
+  /** Total count of persisted events in the run's log. */
+  eventsCount: number;
+  /** Human-readable explanation of resume and reconciliation outcome. */
+  message: string;
+}
+

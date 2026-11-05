@@ -150,10 +150,18 @@ describe('AgyExecutor Contract & Process Lifecycle (Ticket #3)', () => {
       const handle = await executor.launch('task-send-1', tmpDir, 'prompt');
       await executor.send(handle, 'hello world');
 
-      // Give Node process a moment to write
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Wait for Node process to write
+      let content = '';
+      for (let i = 0; i < 20; i++) {
+        try {
+          content = await fs.readFile(outputFile, 'utf8');
+          if (content.includes('hello world')) break;
+        } catch {
+          // not written yet
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
 
-      const content = await fs.readFile(outputFile, 'utf8');
       expect(content).toContain('hello world');
 
       await executor.stop(handle);

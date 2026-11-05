@@ -21,6 +21,7 @@ Commands:
   init                     Scaffold default workflow configuration (.pc-workflow.yml)
   start <issue>            Validate preflight gates and start a new workflow Run
   status                   Inspect the current status of a workflow Run
+  resume [runId]           Resume an interrupted workflow Run and reconcile executions
   dispatch [runId]         Dispatch a specialist role task with instructions
   submit-result            Submit structured result for an assigned role task
 
@@ -44,6 +45,10 @@ Status Options:
   --run <runId>            Run identifier to inspect (defaults to latest)
   --config <path>          Path to workflow configuration file
   --detailed               Show full structured context and telemetry
+
+Resume Options:
+  --run <runId>            Run identifier to resume (defaults to latest)
+  --config <path>          Path to workflow configuration file
 
 Dispatch Options:
   --run <runId>            Target workflow Run identifier (or positional arg)
@@ -201,6 +206,63 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
         });
 
         stdout(JSON.stringify(statusResult, null, 2));
+        return 0;
+      }
+
+      case 'resume':
+      case 'recover': {
+        const { values, positionals } = parseArgs({
+          args: args.slice(1),
+          options: {
+            run: { type: 'string' },
+            config: { type: 'string' },
+            help: { type: 'boolean', short: 'h' },
+          },
+          allowPositionals: true,
+        });
+
+        if (values.help) {
+          stdout(USAGE_HELP);
+          return 0;
+        }
+
+        const targetRunId = values.run || positionals[0];
+        const res = await engine.resume(
+          targetRunId
+            ? { runId: targetRunId, configPath: values.config }
+            : values.config
+              ? { configPath: values.config }
+              : undefined,
+        );
+
+        stdout(
+          JSON.stringify(
+            {
+              run_id: res.runId,
+              repository: res.repository,
+              issue: res.issue,
+              status: res.status,
+              step: res.currentStep,
+              worktree: res.worktreePath,
+              events_count: res.eventsCount,
+              reconciled_task: res.reconciledTask
+                ? {
+                    task_id: res.reconciledTask.taskId,
+                    step: res.reconciledTask.step,
+                    role: res.reconciledTask.role,
+                    execution_status: res.reconciledTask.executionStatus,
+                    action: res.reconciledTask.action,
+                    handle: res.reconciledTask.handle,
+                    error: res.reconciledTask.error,
+                    outcome: res.reconciledTask.result?.outcome,
+                  }
+                : undefined,
+              message: res.message,
+            },
+            null,
+            2,
+          ),
+        );
         return 0;
       }
 

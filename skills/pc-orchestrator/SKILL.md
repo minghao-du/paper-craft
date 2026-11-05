@@ -34,7 +34,14 @@ Read the GitHub issue, native parent/dependency metadata, and native sub-Issues 
 pc workflow init --repo owner/repo
 pc workflow start 79 --provider agy --config /absolute/path/.pc-workflow.yml
 pc workflow status --config /absolute/path/.pc-workflow.yml
+pc workflow resume <run-id>
 ```
+
+Resume recovers an interrupted Run explicitly without background daemons:
+- Progress is reconstructed solely from durable `events.jsonl` (never a secondary current-step file).
+- Inspects the provider by stable `taskId` even when an interruption occurred before handle recording (`task_launched`), reconnecting to running processes or collecting durable results.
+- Represents unreconciled execution as uncertainty (`status: uncertain`); never assumes an unknown execution was not started or blindly launches a replacement.
+- Preserves worktree ownership safeguards (`.pc-execution-owner`) and restores `SchedulingContext` for orchestrator scheduling.
 
 Supply additional Requirements with `--requirements <text>` or `--requirements-file <file>` (UTF-8), never both. File contents are captured at intake, so later work does not depend on the source file. Requirements become immutable Run context inherited by every role, retry, and replacement; child-specific assignments add scope without replacing those constraints. Repeated start may omit Requirements to reuse them or supply identical text; different text rejects. For Demo rounds, pass `--demo-round <id>` and `--demo-config <file>` (or bind via the generated workflow config) to apply minimal immutable demo run constraints. Retain the returned Run identity.
 Follow independent startup in [agy procedure](agy-interactive.md).

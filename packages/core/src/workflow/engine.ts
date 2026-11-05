@@ -11,10 +11,15 @@ import type {
   DispatchOptions,
   DispatchResult,
   ExecutionHandle,
+  ExecutionInspection,
+  ExecutionStatus,
   InitOptions,
   IssueChecker,
   PreflightCheckResult,
   ProviderChecker,
+  ReconciledTask,
+  ResumeOptions,
+  ResumeResult,
   RunContext,
   RunEvent,
   RunStatus,
@@ -46,6 +51,16 @@ export class WorkflowPreflightError extends Error {
     super(`Workflow preflight checks failed:\n- ${errors.join('\n- ')}`);
     this.name = 'WorkflowPreflightError';
     this.errors = errors;
+  }
+}
+
+/**
+ * Custom error raised when a worktree has a conflicting ownership claim.
+ */
+export class WorkflowOwnershipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowOwnershipError';
   }
 }
 
@@ -201,7 +216,7 @@ export class WorkflowEngine {
               const currentStatus = this.deriveRunStatusFromLines(lines);
               if (currentStatus !== 'completed') {
                 errors.push(
-                  `Active run "${entryRunId}" already exists for issue #${options.issue} in repository "${config.repository}" with status "${currentStatus}". Inspect status with "pc workflow status --run ${entryRunId}" or recover with "pc workflow recover ${entryRunId}".`,
+                  `Active run "${entryRunId}" already exists for issue #${options.issue} in repository "${config.repository}" with status "${currentStatus}". Inspect status with "pc workflow status --run ${entryRunId}" or resume with "pc workflow resume ${entryRunId}" (or recover).`,
                 );
               }
             }
@@ -379,6 +394,20 @@ export class WorkflowEngine {
           currentStatus = 'running';
           break;
         }
+        case 'task_reconciled': {
+          const payload = evt.payload as {
+            taskId: string;
+            handle?: ExecutionHandle;
+            action: string;
+          };
+          if (payload.handle) {
+            activeHandle = payload.handle;
+          }
+          if (payload.action === 'uncertain') {
+            currentStatus = 'uncertain';
+          }
+          break;
+        }
         case 'result_submitted': {
           const payload = evt.payload as { outcome: string; summary: string; artifacts?: Record<string, unknown> };
           latestResult = {
@@ -396,6 +425,10 @@ export class WorkflowEngine {
           if (payload.reason === 'rework') {
             reworkCount++;
           }
+          activeTaskId = undefined;
+          activeHandle = undefined;
+          latestResult = undefined;
+          currentStatus = 'pending_dispatch';
           break;
         }
         case 'run_completed':
@@ -406,6 +439,9 @@ export class WorkflowEngine {
           break;
         case 'run_paused':
           currentStatus = 'paused';
+          break;
+        case 'run_uncertain':
+          currentStatus = 'uncertain';
           break;
       }
     }
@@ -823,6 +859,20 @@ export class WorkflowEngine {
           currentStatus = 'running';
           break;
         }
+        case 'task_reconciled': {
+          const payload = evt.payload as {
+            taskId: string;
+            handle?: ExecutionHandle;
+            action: string;
+          };
+          if (payload.handle) {
+            activeHandle = payload.handle;
+          }
+          if (payload.action === 'uncertain') {
+            currentStatus = 'uncertain';
+          }
+          break;
+        }
         case 'result_submitted': {
           const payload = evt.payload as {
             taskId: string;
@@ -854,6 +904,10 @@ export class WorkflowEngine {
           if (payload.reason === 'rework') {
             reworkCount++;
           }
+          activeTaskId = undefined;
+          activeHandle = undefined;
+          latestResult = undefined;
+          currentStatus = 'pending_dispatch';
           break;
         }
         case 'run_completed':
@@ -864,6 +918,9 @@ export class WorkflowEngine {
           break;
         case 'run_paused':
           currentStatus = 'paused';
+          break;
+        case 'run_uncertain':
+          currentStatus = 'uncertain';
           break;
       }
     }
@@ -912,6 +969,326 @@ export class WorkflowEngine {
     };
   }
 
+  /**
+   * Resumes a previously started Run by reconstructing its recorded progress exclusively
+   * from its durable event log, reconciling existing agent executions, and restoring
+   * current orchestrator scheduling context.
+   */
+  async resume(runIdOrOptions?: string | ResumeOptions): Promise<ResumeResult> {
+    let runId: string | undefined;
+    if (typeof runIdOrOptions === 'string') {
+      runId = runIdOrOptions;
+    } else if (runIdOrOptions?.runId) {
+      runId = runIdOrOptions.runId;
+    }
+
+    const runsDir = path.join(this.storageRoot, 'runs');
+
+    if (!runId) {
+      try {
+        const entries = await fs.readdir(runsDir, { withFileTypes: true });
+        const runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        if (runDirs.length === 0) {
+          throw new Error('No workflow runs found.');
+        }
+        runDirs.sort().reverse();
+        runId = runDirs[0];
+      } catch (err) {
+        throw new Error(`Failed to locate latest workflow run: ${(err as Error).message}`, { cause: err });
+      }
+    }
+
+    const events = await this.readEvents(runId);
+    const firstEvent = events[0];
+    if (firstEvent.type !== 'run_created') {
+      throw new Error(`First event in log for run "${runId}" must be "run_created".`);
+    }
+
+    const initialContext = (firstEvent.payload as { context: RunContext }).context;
+
+    // Check worktree ownership safeguards
+    const ownerMarkerPath = path.join(initialContext.worktree_path, '.pc-execution-owner');
+    let conflictingOwner: string | undefined;
+    try {
+      const ownerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
+      const ownerData = JSON.parse(ownerRaw);
+      if (ownerData && ownerData.run_id && ownerData.run_id !== runId) {
+        conflictingOwner = ownerData.run_id;
+      }
+    } catch {
+      // Owner marker missing or directory does not exist yet
+    }
+
+    if (conflictingOwner) {
+      throw new WorkflowOwnershipError(
+        `Worktree ownership conflict: directory "${initialContext.worktree_path}" is claimed by run "${conflictingOwner}". Cannot resume run "${runId}".`,
+      );
+    }
+
+    // Reconstruct state from durable event log
+    let currentStatus: RunStatus = 'pending_dispatch';
+    let currentStep = initialContext.current_step;
+
+    let activeTaskId: string | undefined;
+    let activeStep: string | undefined;
+    let activeRole: string | undefined;
+    let activeHandle: ExecutionHandle | undefined;
+    let latestResult: TaskResult | undefined;
+    let isStopped: boolean | undefined;
+
+    for (let i = 1; i < events.length; i++) {
+      const evt = events[i];
+      switch (evt.type) {
+        case 'dispatch_intent': {
+          const payload = evt.payload as { taskId: string; step: string; role: string };
+          activeTaskId = payload.taskId;
+          activeStep = payload.step;
+          activeRole = payload.role;
+          currentStatus = 'running';
+          break;
+        }
+        case 'task_launched': {
+          const payload = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
+          activeTaskId = payload.taskId;
+          activeHandle = payload.handle;
+          activeStep = payload.step;
+          activeRole = payload.role;
+          currentStatus = 'running';
+          break;
+        }
+        case 'task_reconciled': {
+          const payload = evt.payload as {
+            taskId: string;
+            handle?: ExecutionHandle;
+            action: string;
+          };
+          if (payload.handle) {
+            activeHandle = payload.handle;
+          }
+          if (payload.action === 'uncertain') {
+            currentStatus = 'uncertain';
+          }
+          break;
+        }
+        case 'result_submitted': {
+          const payload = evt.payload as {
+            taskId: string;
+            outcome: string;
+            summary: string;
+            artifacts?: Record<string, unknown>;
+          };
+          if (payload.taskId === activeTaskId) {
+            latestResult = {
+              outcome: payload.outcome,
+              summary: payload.summary,
+              artifacts: payload.artifacts,
+            };
+          }
+          break;
+        }
+        case 'task_terminated': {
+          const payload = evt.payload as { taskId: string; stopped: boolean };
+          if (payload.taskId === activeTaskId) {
+            isStopped = payload.stopped;
+          }
+          break;
+        }
+        case 'step_transitioned': {
+          const payload = evt.payload as { toStep?: string };
+          if (payload.toStep) {
+            currentStep = payload.toStep;
+          }
+          activeTaskId = undefined;
+          activeHandle = undefined;
+          latestResult = undefined;
+          currentStatus = 'pending_dispatch';
+          break;
+        }
+        case 'run_completed':
+          currentStatus = 'completed';
+          break;
+        case 'run_blocked':
+          currentStatus = 'blocked';
+          break;
+        case 'run_paused':
+          currentStatus = 'paused';
+          break;
+        case 'run_uncertain':
+          currentStatus = 'uncertain';
+          break;
+      }
+    }
+
+    // Reconcile task execution if one was dispatched
+    let reconciledTask: ReconciledTask | undefined;
+    let resumeMessage = `Run "${runId}" resumed at step "${currentStep}".`;
+
+    if (currentStatus === 'completed' || currentStatus === 'blocked') {
+      resumeMessage = `Run "${runId}" is already ${currentStatus} at step "${currentStep}".`;
+    } else if (activeTaskId && activeStep && activeRole) {
+      if (latestResult) {
+        // Result was already submitted and durable
+        let executionStatus: ExecutionStatus = isStopped ? 'exited' : 'running';
+        try {
+          const inspection = await this.executor.inspect(activeTaskId);
+          executionStatus = inspection.status;
+        } catch {
+          // If inspection fails when result is already durable, keep recorded status
+        }
+
+        reconciledTask = {
+          taskId: activeTaskId,
+          step: activeStep,
+          role: activeRole,
+          handle: activeHandle,
+          executionStatus,
+          action: 'collected',
+          result: latestResult,
+        };
+        resumeMessage = `Collected completed task result for task "${activeTaskId}" (outcome: ${latestResult.outcome}).`;
+      } else {
+        // No result submitted yet; inspect provider by stable taskId
+        let inspection: ExecutionInspection;
+        try {
+          inspection = await this.executor.inspect(activeTaskId);
+        } catch (err) {
+          inspection = {
+            status: 'uncertain',
+            error: (err as Error).message,
+          };
+        }
+
+        if (inspection.status === 'running') {
+          // Reconnect to running execution
+          activeHandle = activeHandle ?? inspection.handle ?? {
+            id: `recovered-handle-${activeTaskId}`,
+            taskId: activeTaskId,
+          };
+
+          const reconcileEvent: RunEvent = {
+            type: 'task_reconciled',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle,
+              executionStatus: 'running',
+              action: 'reconnected',
+            },
+          };
+          await this.appendEvent(runId, reconcileEvent);
+
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle,
+            executionStatus: 'running',
+            action: 'reconnected',
+          };
+          resumeMessage = `Reconnected to running execution for task "${activeTaskId}".`;
+        } else if (inspection.status === 'exited') {
+          // Process exited without submitting a result
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle ?? inspection.handle,
+            executionStatus: 'exited',
+            action: 'none',
+            error: 'Process exited without submitting a result.',
+          };
+          resumeMessage = `Task "${activeTaskId}" exited without submitting a result.`;
+        } else if (inspection.status === 'uncertain') {
+          // Represent unreconciled execution as uncertainty; never assume not started or launch replacement
+          const reconcileEvent: RunEvent = {
+            type: 'task_reconciled',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: activeTaskId,
+              step: activeStep,
+              role: activeRole,
+              handle: activeHandle ?? inspection.handle,
+              executionStatus: 'uncertain',
+              action: 'uncertain',
+              error: inspection.error,
+            },
+          };
+          await this.appendEvent(runId, reconcileEvent);
+
+          const uncertainEvent: RunEvent = {
+            type: 'run_uncertain',
+            run_id: runId,
+            timestamp: new Date().toISOString(),
+            payload: {
+              taskId: activeTaskId,
+              reason: inspection.error || 'Execution status is uncertain from provider.',
+            },
+          };
+          await this.appendEvent(runId, uncertainEvent);
+
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle ?? inspection.handle,
+            executionStatus: 'uncertain',
+            action: 'uncertain',
+            error: inspection.error || 'Execution status is uncertain.',
+          };
+          resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${inspection.error ?? 'unknown error'}).`;
+        } else {
+          // not_started: launch never completed before interruption
+          reconciledTask = {
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            handle: activeHandle,
+            executionStatus: 'not_started',
+            action: 'none',
+          };
+          resumeMessage = `Task "${activeTaskId}" was dispatched in intent but not started. Ready for dispatch.`;
+        }
+      }
+    }
+
+    // Maintain worktree ownership
+    await fs.mkdir(initialContext.worktree_path, { recursive: true });
+    const ownerMarker = {
+      run_id: runId,
+      repository: initialContext.repository,
+      issue: initialContext.issue,
+      task_id: activeTaskId,
+      role: activeRole ?? initialContext.workflow.steps[currentStep]?.role,
+      claimed_at: new Date().toISOString(),
+    };
+    await fs.writeFile(
+      ownerMarkerPath,
+      JSON.stringify(ownerMarker, null, 2),
+      'utf8',
+    );
+
+    // Get current scheduling context after reconciliation
+    const schedulingContext = await this.getSchedulingContext(runId);
+    const updatedEvents = await this.readEvents(runId);
+
+    return {
+      runId,
+      repository: initialContext.repository,
+      issue: initialContext.issue,
+      status: schedulingContext.status,
+      currentStep: schedulingContext.currentStep,
+      worktreePath: initialContext.worktree_path,
+      schedulingContext,
+      reconciledTask,
+      eventsCount: updatedEvents.length,
+      message: resumeMessage,
+    };
+  }
+
   private deriveRunStatusFromLines(lines: string[]): RunStatus {
     let status: RunStatus = 'pending_dispatch';
     for (let i = 1; i < lines.length; i++) {
@@ -920,6 +1297,11 @@ export class WorkflowEngine {
         if (evt.type === 'run_completed') return 'completed';
         if (evt.type === 'run_blocked') return 'blocked';
         if (evt.type === 'run_paused') return 'paused';
+        if (evt.type === 'run_uncertain') return 'uncertain';
+        if (evt.type === 'task_reconciled') {
+          const payload = evt.payload as { action?: string };
+          if (payload.action === 'uncertain') return 'uncertain';
+        }
         if (evt.type === 'task_launched' || evt.type === 'dispatch_intent') {
           status = 'running';
         }
