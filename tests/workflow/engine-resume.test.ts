@@ -320,6 +320,63 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
       expect(resumed.reconciledTask?.error).toContain('Provider process table unreachable');
       expect(mockExecutor.launchedTasks.length).toBe(1);
     });
+
+    it('flags launched task as uncertain when provider inspector returns not_started across a fresh process', async () => {
+      const engine = await createInitializedEngine();
+      const run = await engine.start({ issue: 516 });
+      const dispatch = await engine.dispatch(run.run_id, 'Do work');
+
+      // Task was launched (task_launched event is in log).
+      // Now simulate a fresh process where executor has no in-memory record and returns not_started.
+      mockExecutor.inspectResults.set(dispatch.taskId, {
+        status: 'not_started',
+      });
+
+      const resumed = await engine.resume(run.run_id);
+
+      // Must be flagged uncertain, NOT assumed not_started
+      expect(resumed.status).toBe('uncertain');
+      expect(resumed.reconciledTask?.action).toBe('uncertain');
+      expect(resumed.reconciledTask?.executionStatus).toBe('uncertain');
+      expect(resumed.reconciledTask?.error).toContain('previously launched');
+
+      // CRITICAL: Did NOT blindly launch a replacement task
+      expect(mockExecutor.launchedTasks.length).toBe(1);
+    });
+
+    it('reports not_started when task had only dispatch_intent without task_launched', async () => {
+      const engine = await createInitializedEngine();
+      const run = await engine.start({ issue: 517 });
+
+      // Append dispatch_intent manually without task_launched to simulate crash before launch
+      const taskId = 'task-interrupted-before-launch';
+      await engine.appendEvent(run.run_id, {
+        type: 'dispatch_intent',
+        run_id: run.run_id,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId,
+          step: 'implementation',
+          role: 'worker',
+          skill: 'pc-issue-work',
+          taskInstructions: 'Do work',
+          inputs: {},
+          worktreePath: run.worktree_path,
+        },
+      });
+
+      mockExecutor.inspectResults.set(taskId, {
+        status: 'not_started',
+      });
+
+      const resumed = await engine.resume(run.run_id);
+
+      // Truly not started because launch never completed
+      expect(resumed.reconciledTask?.executionStatus).toBe('not_started');
+      expect(resumed.reconciledTask?.action).toBe('none');
+      expect(resumed.schedulingContext.activeTaskId).toBe(taskId);
+      expect(resumed.schedulingContext.activeHandle).toBeUndefined();
+    });
   });
 
   describe('Result persistence and repeated submission safeguards', () => {

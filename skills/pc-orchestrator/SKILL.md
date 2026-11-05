@@ -22,7 +22,7 @@ Resolve the repository from the authoritative Fleet config and collect or reuse 
 ```text
 Issue: #79
 Provider: agy
-Config: /absolute/path/.epic-config.json
+Config: /absolute/path/.pc-workflow.yml
 Requirements: Keep changes within the requested scope
 ```
 
@@ -167,9 +167,9 @@ Read the persisted Run and inspect status before scheduling after a reconnect. F
 Use [managed recovery](managed-lifecycle.md) for receipt reconciliation, bounded rework, termination verification, and ownership release.
 
 ```bash
-pc workflow orchestrator recover <run-id> --config /absolute/path/.epic-config.json
-pc workflow orchestrator stop <run-id> --config /absolute/path/.epic-config.json
-pc workflow orchestrator release <run-id> --config /absolute/path/.epic-config.json
+pc workflow resume <run-id>
+pc workflow status <run-id>
+pc workflow stop <run-id>
 pc workflow release <run-id>
 ```
 

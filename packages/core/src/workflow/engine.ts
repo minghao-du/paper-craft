@@ -2290,6 +2290,7 @@ export class WorkflowEngine {
     let activeHandle: ExecutionHandle | undefined;
     let latestResult: TaskResult | undefined;
     let isStopped: boolean | undefined;
+    let taskLaunched = false;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
@@ -2302,6 +2303,7 @@ export class WorkflowEngine {
           activeHandle = undefined;
           latestResult = undefined;
           isStopped = false;
+          taskLaunched = false;
           currentStatus = 'running';
           break;
         }
@@ -2311,6 +2313,7 @@ export class WorkflowEngine {
           activeHandle = payload.handle;
           activeStep = payload.step;
           activeRole = payload.role;
+          taskLaunched = true;
           currentStatus = 'running';
           break;
         }
@@ -2635,7 +2638,12 @@ export class WorkflowEngine {
               error: 'Merger process exited without completing the merge.',
             };
             resumeMessage = `Task "${activeTaskId}" exited without completing merge on GitHub.`;
-          } else if (inspection.status === 'uncertain') {
+          } else if (inspection.status === 'uncertain' || (taskLaunched && inspection.status === 'not_started')) {
+            const errorMsg =
+              inspection.error ||
+              (inspection.status === 'not_started'
+                ? 'Execution was previously launched but cannot be reliably reconciled by provider.'
+                : 'Execution status is uncertain from provider.');
             const reconcileEvent: RunEvent = {
               type: 'task_reconciled',
               run_id: runId,
@@ -2647,7 +2655,7 @@ export class WorkflowEngine {
                 handle: activeHandle ?? inspection.handle,
                 executionStatus: 'uncertain',
                 action: 'uncertain',
-                error: inspection.error,
+                error: errorMsg,
               },
             };
             await this.appendEvent(runId, reconcileEvent);
@@ -2658,11 +2666,12 @@ export class WorkflowEngine {
               timestamp: new Date().toISOString(),
               payload: {
                 taskId: activeTaskId,
-                reason: inspection.error || 'Execution status is uncertain from provider.',
+                reason: errorMsg,
               },
             };
             await this.appendEvent(runId, uncertainEvent);
 
+            currentStatus = 'uncertain';
             reconciledTask = {
               taskId: activeTaskId,
               step: activeStep,
@@ -2670,9 +2679,9 @@ export class WorkflowEngine {
               handle: activeHandle ?? inspection.handle,
               executionStatus: 'uncertain',
               action: 'uncertain',
-              error: inspection.error || 'Execution status is uncertain.',
+              error: errorMsg,
             };
-            resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${inspection.error ?? 'unknown error'}).`;
+            resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${errorMsg}).`;
           } else {
             reconciledTask = {
               taskId: activeTaskId,
@@ -2740,8 +2749,13 @@ export class WorkflowEngine {
             error: 'Process exited without submitting a result.',
           };
           resumeMessage = `Task "${activeTaskId}" exited without submitting a result.`;
-        } else if (inspection.status === 'uncertain') {
+        } else if (inspection.status === 'uncertain' || (taskLaunched && inspection.status === 'not_started')) {
           // Represent unreconciled execution as uncertainty; never assume not started or launch replacement
+          const errorMsg =
+            inspection.error ||
+            (inspection.status === 'not_started'
+              ? 'Execution was previously launched but cannot be reliably reconciled by provider.'
+              : 'Execution status is uncertain from provider.');
           const reconcileEvent: RunEvent = {
             type: 'task_reconciled',
             run_id: runId,
@@ -2753,7 +2767,7 @@ export class WorkflowEngine {
               handle: activeHandle ?? inspection.handle,
               executionStatus: 'uncertain',
               action: 'uncertain',
-              error: inspection.error,
+              error: errorMsg,
             },
           };
           await this.appendEvent(runId, reconcileEvent);
@@ -2764,11 +2778,12 @@ export class WorkflowEngine {
             timestamp: new Date().toISOString(),
             payload: {
               taskId: activeTaskId,
-              reason: inspection.error || 'Execution status is uncertain from provider.',
+              reason: errorMsg,
             },
           };
           await this.appendEvent(runId, uncertainEvent);
 
+          currentStatus = 'uncertain';
           reconciledTask = {
             taskId: activeTaskId,
             step: activeStep,
@@ -2776,9 +2791,9 @@ export class WorkflowEngine {
             handle: activeHandle ?? inspection.handle,
             executionStatus: 'uncertain',
             action: 'uncertain',
-            error: inspection.error || 'Execution status is uncertain.',
+            error: errorMsg,
           };
-          resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${inspection.error ?? 'unknown error'}).`;
+          resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${errorMsg}).`;
         } else {
           // not_started: launch never completed before interruption
           reconciledTask = {

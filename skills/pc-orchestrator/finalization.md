@@ -46,7 +46,7 @@ Runner directories retain briefs, logs, and result files. Structured
 specialist receipts contain `head`, `status` (`completed` or `blocked`), `evidence`,
 `blockers`, `scope`, `checks`, `artifacts`, and `limitations`. Explain checks not run.
 Orchestrator records research-only confirmed skips with their reasons. Preserve old rounds and attempts.
-Use `pc workflow orchestrator recover <run>` with the authoritative config to reconcile original receipts,
+Use `pc workflow resume <run>` with the authoritative config to reconcile original receipts,
 verify external outcomes, and resume unfinished post-closure stages without repeating closure, publication, or merge actions.
 
 Post-closure stages run as Managed Dispatches:

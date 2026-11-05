@@ -283,6 +283,50 @@ Present a checklist summary:
 2. Address code review suggestion about X
 ```
 
+### Step 9: Return correlated review result
+
+When operating as a Reviewer within a Managed Run, publish your review evidence through the `submit-result` contract:
+
+For approved PR passing all criteria:
+```bash
+pc workflow submit-result \
+  --run "<run-id>" \
+  --task "<task-id>" \
+  --outcome pass \
+  --summary "All acceptance criteria and quality checks passed" \
+  --artifacts '{"reviewed_commit":"<commit-sha>","findings":"All checks passed cleanly."}'
+```
+
+For PR requiring remediation or rework:
+```bash
+pc workflow submit-result \
+  --run "<run-id>" \
+  --task "<task-id>" \
+  --outcome rework \
+  --summary "Changes requested: found defects or test failures" \
+  --artifacts '{"reviewed_commit":"<commit-sha>","findings":"<detailed defect list and reproduction steps>"}'
+```
+
+If review cannot proceed (conflicts, environment failure, missing dependencies):
+```bash
+pc workflow submit-result \
+  --run "<run-id>" \
+  --task "<task-id>" \
+  --outcome blocked \
+  --summary "Review blocked: <reason>" \
+  --artifacts '{"reviewed_commit":"<commit-sha>","findings":"<blocker details>"}'
+```
+
+The Engine validates:
+1. `run` and `task` match the active assignment.
+2. `outcome` is in `permitted_outcomes` for reviewer (`pass`, `rework`, `blocked`).
+3. `artifacts` satisfies `required_artifacts` (`reviewed_commit`, `findings`).
+
+Upon submission:
+- `pass` transitions the Run to `merge` and retains the approved `evaluatedCommit`.
+- `rework` increments `rework_count`, carries forward `priorEvidence` (the evaluated commit and review findings), and transitions back to `implementation` for worker repair. If `rework_limit` is exceeded, the Run pauses safely.
+- `blocked` marks the Run blocked with retained diagnostic artifacts.
+
 ## Error Handling
 
 - **Not on a branch**: Warn that this should be run from a feature branch

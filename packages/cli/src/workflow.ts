@@ -7,10 +7,17 @@ import * as path from 'node:path';
 import { parseArgs } from 'node:util';
 import { WorkflowEngine } from '../../core/src/workflow/engine.js';
 
+/**
+ * Execution context for invoking workflow CLI commands programmatically.
+ */
 export interface CliContext {
+  /** Working directory for CLI commands. Defaults to process.cwd(). */
   cwd?: string;
+  /** Custom standard output sink. */
   stdout?: (msg: string) => void;
+  /** Custom standard error sink. */
   stderr?: (msg: string) => void;
+  /** Optional WorkflowEngine instance for testing and dependency injection. */
   engine?: WorkflowEngine;
 }
 
@@ -84,15 +91,12 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
   const stderr = ctx?.stderr ?? ((msg: string) => console.error(msg));
   const cwd = ctx?.cwd ?? process.cwd();
 
-  // Normalize args: strip leading 'pc', 'workflow', or 'orchestrator' if passed
+  // Normalize args: strip leading 'pc' or 'workflow' if passed
   const args = [...argv];
   if (args[0] === 'pc') {
     args.shift();
   }
   if (args[0] === 'workflow') {
-    args.shift();
-  }
-  if (args[0] === 'orchestrator') {
     args.shift();
   }
 

@@ -75,6 +75,46 @@ describe('AgyExecutor Contract & Process Lifecycle (Ticket #3)', () => {
       expect(postStopInspection.status).toBe('exited');
     });
 
+    it('reconciles and reconnects across fresh process instance using persistent task marker', async () => {
+      const scriptPath = path.join(tmpDir, 'sleeper-reconnect.js');
+      await fs.writeFile(
+        scriptPath,
+        `
+        process.stdin.resume();
+        setInterval(() => {}, 1000);
+        `,
+        'utf8',
+      );
+
+      const tasksDir = path.join(tmpDir, 'custom-tasks');
+      const executor1 = new AgyExecutor({
+        command: process.execPath,
+        extraArgs: [scriptPath],
+        tasksDir,
+      });
+
+      const handle = await executor1.launch('task-cross-proc', tmpDir, 'prompt');
+      expect(handle.taskId).toBe('task-cross-proc');
+
+      // Now create a fresh executor instance (simulating a separate CLI command or engine process)
+      const executor2 = new AgyExecutor({
+        command: process.execPath,
+        tasksDir,
+        stopGracePeriodMs: 200,
+      });
+
+      const inspection = await executor2.inspect('task-cross-proc');
+      expect(inspection.status).toBe('running');
+      expect(inspection.handle?.taskId).toBe('task-cross-proc');
+
+      // Fresh executor can also stop the process across processes
+      const stopRes = await executor2.stop({ id: 'dummy', taskId: 'task-cross-proc' });
+      expect(stopRes.stopped).toBe(true);
+
+      const postStop = await executor2.inspect('task-cross-proc');
+      expect(postStop.status).toBe('exited');
+    });
+
     it('inspects as exited when process terminates naturally', async () => {
       const scriptPath = path.join(tmpDir, 'quick-exit.js');
       await fs.writeFile(

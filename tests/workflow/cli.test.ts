@@ -111,8 +111,8 @@ describe('Workflow CLI smoke tests (Ticket #2)', () => {
     stdout.length = 0;
     stderr.length = 0;
 
-    // 3. Status command (using 'orchestrator status' alias)
-    const statusCode = await runCli(['workflow', 'orchestrator', 'status'], {
+    // 3. Status command
+    const statusCode = await runCli(['workflow', 'status'], {
       cwd: tmpDir,
       stdout: (msg) => stdout.push(msg),
       stderr: (msg) => stderr.push(msg),
@@ -125,5 +125,18 @@ describe('Workflow CLI smoke tests (Ticket #2)', () => {
     expect(statusOutput.status).toBe('pending_dispatch');
     expect(statusOutput.issue).toBe(123);
     expect(statusOutput.step).toBe('implementation');
+
+    stdout.length = 0;
+    stderr.length = 0;
+
+    // 4. Verify unadvertised compatibility shims (like 'orchestrator') are rejected
+    const invalidShimCode = await runCli(['workflow', 'orchestrator', 'status'], {
+      cwd: tmpDir,
+      stdout: (msg) => stdout.push(msg),
+      stderr: (msg) => stderr.push(msg),
+      engine,
+    });
+    expect(invalidShimCode).toBe(1);
+    expect(stderr.join('\n')).toContain('Unknown command: "orchestrator"');
   });
 });
