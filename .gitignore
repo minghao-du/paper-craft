@@ -1,6 +1,5 @@
 # Private data (not for commit)
 _ignore/
-.agents/
 .beads/
 .last-checkin.json
 /AGENTS.md
