@@ -315,7 +315,7 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
       const statusRes = await engine.status(runContext.run_id);
       expect(statusRes.active_task?.business_outcome).toBe('completed');
       expect(statusRes.active_task?.stopped).toBe(true);
-      expect(statusRes.status).toBe('running'); // Stops at milestone without full Issue completion
+      expect(statusRes.status).toBe('pending_dispatch'); // Stops at milestone, pending next step dispatch
       expect(statusRes.status).not.toBe('completed');
     });
 

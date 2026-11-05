@@ -3,7 +3,6 @@
  * execution dispatch, and result persistence.
  */
 
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -11,8 +10,6 @@ import type {
   DispatchOptions,
   DispatchResult,
   ExecutionHandle,
-  ExecutionInspection,
-  ExecutionStatus,
   GitHubMergeChecker,
   InitOptions,
   IssueChecker,
@@ -50,6 +47,66 @@ import {
   DefaultProviderChecker,
 } from './checkers.js';
 import { AgyExecutor } from './executor.js';
+import {
+  WorkflowCleanupError,
+  WorkflowFiles,
+  WorkflowOwnershipError,
+  type WorktreeOwnerMarker,
+} from './files.js';
+import { TaskExecution } from './execution.js';
+
+export { WorkflowCleanupError, WorkflowOwnershipError };
+
+/**
+ * Canonical, deterministic derivation of RunStatus from recorded RunEvents.
+ * Reused consistently across preflight, scheduling context, status, resume, and stop.
+ *
+ * @param events Array of RunEvents.
+ * @returns Derived RunStatus.
+ */
+export function deriveRunStatus(events: RunEvent[]): RunStatus {
+  let status: RunStatus = 'pending_dispatch';
+  for (let i = 1; i < events.length; i++) {
+    const evt = events[i];
+    switch (evt.type) {
+      case 'dispatch_intent':
+      case 'task_launched':
+        status = 'running';
+        break;
+      case 'task_reconciled': {
+        const payload = evt.payload as { action?: string };
+        if (payload.action === 'uncertain') {
+          status = 'uncertain';
+        } else if (payload.action === 'reconnected') {
+          status = 'running';
+        }
+        break;
+      }
+      case 'step_transitioned': {
+        const payload = evt.payload as { toStep?: string };
+        if (payload.toStep === 'completed') {
+          status = 'completed';
+        } else {
+          status = 'pending_dispatch';
+        }
+        break;
+      }
+      case 'run_paused':
+        status = 'paused';
+        break;
+      case 'run_blocked':
+        status = 'blocked';
+        break;
+      case 'run_uncertain':
+        status = 'uncertain';
+        break;
+      case 'run_completed':
+        status = 'completed';
+        break;
+    }
+  }
+  return status;
+}
 
 /**
  * Computes the deterministic step transition given the current step, outcome, rework state, and workflow definition.
@@ -161,16 +218,6 @@ export class WorkflowPreflightError extends Error {
 }
 
 /**
- * Custom error raised when a worktree has a conflicting ownership claim.
- */
-export class WorkflowOwnershipError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WorkflowOwnershipError';
-  }
-}
-
-/**
  * Custom error raised when review approval is invalidated due to changed PR head revision.
  */
 export class WorkflowReviewInvalidatedError extends Error {
@@ -191,16 +238,6 @@ export class WorkflowMergeVerificationError extends Error {
 }
 
 /**
- * Custom error raised when resource cleanup or preservation verification fails.
- */
-export class WorkflowCleanupError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WorkflowCleanupError';
-  }
-}
-
-/**
  * Constructor options for initializing the WorkflowEngine.
  */
 export interface WorkflowEngineOptions {
@@ -216,6 +253,10 @@ export interface WorkflowEngineOptions {
   executor?: AgentExecutor;
   /** Checker for verifying PR head revision and GitHub merge status. */
   mergeChecker?: GitHubMergeChecker;
+  /** Files manager for persisting workflow runs and events. */
+  files?: WorkflowFiles;
+  /** Task execution manager for preparing and launching specialist tasks. */
+  taskExecution?: TaskExecution;
 }
 
 /**
@@ -229,6 +270,8 @@ export class WorkflowEngine {
   public readonly providerChecker: ProviderChecker;
   public readonly executor: AgentExecutor;
   public readonly mergeChecker: GitHubMergeChecker;
+  public readonly files: WorkflowFiles;
+  public readonly taskExecution: TaskExecution;
 
   constructor(options?: WorkflowEngineOptions) {
     this.cwd = options?.cwd ?? process.cwd();
@@ -239,6 +282,10 @@ export class WorkflowEngine {
     this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
     this.executor = options?.executor ?? new AgyExecutor();
     this.mergeChecker = options?.mergeChecker ?? new DefaultGitHubMergeChecker();
+    this.files = options?.files ?? new WorkflowFiles(this.storageRoot);
+    this.taskExecution =
+      options?.taskExecution ??
+      new TaskExecution({ files: this.files, executor: this.executor });
   }
 
   /**
@@ -269,7 +316,7 @@ export class WorkflowEngine {
     if (options.requirementsFile) {
       const resolvedReqPath = path.resolve(this.cwd, options.requirementsFile);
       try {
-        sharedRequirementsContent = await fs.readFile(resolvedReqPath, 'utf8');
+        sharedRequirementsContent = await this.files.readFile(resolvedReqPath);
       } catch {
         errors.push(`Requirements file not found at: ${resolvedReqPath}`);
       }
@@ -322,38 +369,31 @@ export class WorkflowEngine {
     // Check directory usability
     const resolvedWorktreeRoot = path.resolve(this.cwd, config.worktree_root);
     try {
-      await fs.mkdir(resolvedWorktreeRoot, { recursive: true });
-      await fs.access(resolvedWorktreeRoot, fs.constants.W_OK);
+      await this.files.ensureDirectoryWritable(resolvedWorktreeRoot);
     } catch (err) {
       errors.push(`Worktree root directory "${resolvedWorktreeRoot}" is not usable or writable: ${(err as Error).message}`);
     }
 
     // Check storage root usability
     try {
-      await fs.mkdir(this.storageRoot, { recursive: true });
-      await fs.access(this.storageRoot, fs.constants.W_OK);
+      await this.files.ensureStorageUsable();
     } catch (err) {
       errors.push(`Storage directory "${this.storageRoot}" is not usable or writable: ${(err as Error).message}`);
     }
 
     // Check for unfinished Run conflicts for the same repository and issue
-    const runsDir = path.join(this.storageRoot, 'runs');
     try {
-      const runEntries = await fs.readdir(runsDir, { withFileTypes: true });
-      for (const entry of runEntries) {
-        if (!entry.isDirectory()) continue;
-        const entryRunId = entry.name;
-        const eventsPath = path.join(runsDir, entryRunId, 'events.jsonl');
+      const runIds = await this.files.listRunIds();
+      for (const entryRunId of runIds) {
         try {
-          const eventsContent = await fs.readFile(eventsPath, 'utf8');
-          const lines = eventsContent.trim().split('\n').filter(Boolean);
-          if (lines.length === 0) continue;
+          const events = await this.files.loadRun(entryRunId);
+          if (events.length === 0) continue;
 
-          const firstEvent = JSON.parse(lines[0]) as RunEvent;
+          const firstEvent = events[0];
           if (firstEvent.type === 'run_created') {
             const ctx = (firstEvent.payload as { context: RunContext }).context;
             if (ctx.repository === config.repository && ctx.issue === options.issue) {
-              const currentStatus = this.deriveRunStatusFromLines(lines);
+              const currentStatus = deriveRunStatus(events);
               if (currentStatus !== 'completed') {
                 errors.push(
                   `Active run "${entryRunId}" already exists for issue #${options.issue} in repository "${config.repository}" with status "${currentStatus}". Inspect status with "pc workflow status --run ${entryRunId}" or resume with "pc workflow resume ${entryRunId}" (or recover).`,
@@ -371,10 +411,8 @@ export class WorkflowEngine {
 
     // Check worktree ownership conflict
     const targetWorktree = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
-    const ownerMarkerPath = path.join(targetWorktree, '.pc-execution-owner');
     try {
-      const ownerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
-      const ownerData = JSON.parse(ownerRaw);
+      const ownerData = await this.files.readWorktreeOwner(targetWorktree);
       if (ownerData && ownerData.run_id) {
         errors.push(
           `Target worktree directory "${targetWorktree}" has conflicting ownership marker belonging to "${ownerData.run_id}".`,
@@ -411,7 +449,7 @@ export class WorkflowEngine {
     let sharedRequirements = '';
     if (options.requirementsFile) {
       const resolvedReqPath = path.resolve(this.cwd, options.requirementsFile);
-      sharedRequirements = await fs.readFile(resolvedReqPath, 'utf8');
+      sharedRequirements = await this.files.readFile(resolvedReqPath);
     } else if (options.requirements) {
       sharedRequirements = options.requirements;
     }
@@ -421,20 +459,6 @@ export class WorkflowEngine {
     const provider = options.provider || config.provider || 'agy';
     const resolvedWorktreeRoot = path.resolve(this.cwd, config.worktree_root);
     const worktreePath = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
-
-    // Create worktree directory and claim ownership
-    await fs.mkdir(worktreePath, { recursive: true });
-    const ownerMarker = {
-      run_id: runId,
-      repository: config.repository,
-      issue: options.issue,
-      claimed_at: nowIso,
-    };
-    await fs.writeFile(
-      path.join(worktreePath, '.pc-execution-owner'),
-      JSON.stringify(ownerMarker, null, 2),
-      'utf8',
-    );
 
     const runContext: RunContext = {
       run_id: runId,
@@ -453,21 +477,7 @@ export class WorkflowEngine {
       roles: JSON.parse(JSON.stringify(roles)),
     };
 
-    // Persist run directory and initial event log
-    const runDir = path.join(this.storageRoot, 'runs', runId);
-    await fs.mkdir(runDir, { recursive: true });
-
-    const initialEvent: RunEvent = {
-      type: 'run_created',
-      run_id: runId,
-      timestamp: nowIso,
-      payload: {
-        context: runContext,
-      },
-    };
-
-    const eventLogPath = path.join(runDir, 'events.jsonl');
-    await fs.writeFile(eventLogPath, `${JSON.stringify(initialEvent)}\n`, 'utf8');
+    await this.files.createRun(runContext);
 
     if (options.orchestratorHandle) {
       const orchEvent: RunEvent = {
@@ -512,28 +522,14 @@ export class WorkflowEngine {
    * Reads all events for a given run from its JSONL event log.
    */
   async readEvents(runId: string): Promise<RunEvent[]> {
-    const eventLogPath = path.join(this.storageRoot, 'runs', runId, 'events.jsonl');
-    let rawLog: string;
-    try {
-      rawLog = await fs.readFile(eventLogPath, 'utf8');
-    } catch {
-      throw new Error(`Workflow run "${runId}" not found or missing event log at: ${eventLogPath}`);
-    }
-    const lines = rawLog.trim().split('\n').filter(Boolean);
-    if (lines.length === 0) {
-      throw new Error(`Workflow run "${runId}" has empty event log.`);
-    }
-    return lines.map((l) => JSON.parse(l) as RunEvent);
+    return this.files.loadRun(runId);
   }
 
   /**
    * Appends an event to the run's JSONL event log.
    */
   async appendEvent(runId: string, event: RunEvent): Promise<void> {
-    const runDir = path.join(this.storageRoot, 'runs', runId);
-    await fs.mkdir(runDir, { recursive: true });
-    const eventLogPath = path.join(runDir, 'events.jsonl');
-    await fs.appendFile(eventLogPath, `${JSON.stringify(event)}\n`, 'utf8');
+    return this.files.record(runId, event);
   }
 
   /**
@@ -563,12 +559,11 @@ export class WorkflowEngine {
     }
 
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
-    let currentStatus: RunStatus = 'pending_dispatch';
+    const currentStatus = deriveRunStatus(events);
+    const activeTask = this.taskExecution.getActiveTaskInfo(events);
+
     let currentStep = initialContext.current_step;
     let reworkCount = initialContext.rework_count;
-    let activeTaskId: string | undefined;
-    let activeHandle: ExecutionHandle | undefined;
-    let latestResult: TaskResult | undefined;
     let priorEvidence: PriorEvidence | undefined;
     let deliveryArtifacts: Record<string, unknown> = {};
     let mergedCommit: string | undefined;
@@ -576,34 +571,6 @@ export class WorkflowEngine {
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
       switch (evt.type) {
-        case 'dispatch_intent': {
-          const payload = evt.payload as { taskId: string; step: string };
-          activeTaskId = payload.taskId;
-          latestResult = undefined;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_launched': {
-          const payload = evt.payload as { taskId: string; handle: ExecutionHandle };
-          activeTaskId = payload.taskId;
-          activeHandle = payload.handle;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_reconciled': {
-          const payload = evt.payload as {
-            taskId: string;
-            handle?: ExecutionHandle;
-            action: string;
-          };
-          if (payload.handle) {
-            activeHandle = payload.handle;
-          }
-          if (payload.action === 'uncertain') {
-            currentStatus = 'uncertain';
-          }
-          break;
-        }
         case 'result_submitted': {
           const payload = evt.payload as {
             taskId: string;
@@ -612,11 +579,6 @@ export class WorkflowEngine {
             outcome: string;
             summary: string;
             artifacts?: Record<string, unknown>;
-          };
-          latestResult = {
-            outcome: payload.outcome,
-            summary: payload.summary,
-            artifacts: payload.artifacts,
           };
           if (payload.artifacts) {
             deliveryArtifacts = { ...deliveryArtifacts, ...payload.artifacts };
@@ -643,22 +605,6 @@ export class WorkflowEngine {
           };
           break;
         }
-        case 'task_terminated': {
-          const payload = evt.payload as { taskId: string };
-          if (payload.taskId === activeTaskId) {
-            activeTaskId = undefined;
-            activeHandle = undefined;
-          }
-          break;
-        }
-        case 'task_launch_failed': {
-          const payload = evt.payload as { taskId: string };
-          if (payload.taskId === activeTaskId) {
-            activeTaskId = undefined;
-            activeHandle = undefined;
-          }
-          break;
-        }
         case 'review_invalidated': {
           if (priorEvidence) {
             priorEvidence = {
@@ -680,10 +626,8 @@ export class WorkflowEngine {
           };
           if (payload.toStep === 'completed') {
             currentStep = 'completed';
-            currentStatus = 'completed';
           } else if (payload.toStep) {
             currentStep = payload.toStep;
-            currentStatus = 'pending_dispatch';
           }
           if (payload.reason === 'rework') {
             reworkCount = payload.reworkCount ?? (reworkCount + 1);
@@ -708,21 +652,10 @@ export class WorkflowEngine {
               findings: payload.findings ?? (payload.artifacts?.findings as string | undefined),
             };
           }
-          activeTaskId = undefined;
-          activeHandle = undefined;
           break;
         }
         case 'run_completed':
-          currentStatus = 'completed';
-          break;
-        case 'run_blocked':
-          currentStatus = 'blocked';
-          break;
-        case 'run_paused':
-          currentStatus = 'paused';
-          break;
-        case 'run_uncertain':
-          currentStatus = 'uncertain';
+          currentStep = 'completed';
           break;
       }
     }
@@ -748,9 +681,9 @@ export class WorkflowEngine {
       stepDefinition: stepDefinition ?? { role: '', guidance: '', transitions: {} },
       roleContract,
       sharedRequirements: initialContext.shared_requirements,
-      activeTaskId,
-      activeHandle,
-      latestResult,
+      activeTaskId: activeTask.activeTaskId,
+      activeHandle: activeTask.activeHandle,
+      latestResult: activeTask.lastTask?.latestResult,
       priorEvidence,
       evaluatedCommit: priorEvidence?.evaluatedCommit ?? (deliveryArtifacts.reviewed_commit as string | undefined),
       reviewFindings: priorEvidence?.findings ?? (deliveryArtifacts.findings as string | undefined),
@@ -932,160 +865,23 @@ export class WorkflowEngine {
       options?.taskId ??
       `task-${runId}-${context.currentStep}-${context.reworkCount}-${randomUUID().slice(0, 6)}`;
 
-    // 1. Prepare dedicated worktree
-    await fs.mkdir(context.worktreePath, { recursive: true });
-
-    // Update or write ownership marker
-    const ownerMarker = {
-      run_id: runId,
-      repository: context.repository,
-      issue: context.issue,
-      task_id: taskId,
-      role: context.stepDefinition.role,
-      claimed_at: new Date().toISOString(),
-    };
-    await fs.writeFile(
-      path.join(context.worktreePath, '.pc-execution-owner'),
-      JSON.stringify(ownerMarker, null, 2),
-      'utf8',
-    );
-
-    // Write initialization.json into the worktree
-    const initData = {
-      run_id: runId,
-      task_id: taskId,
-      role: context.stepDefinition.role,
-      step: context.currentStep,
-      skill: context.roleContract.skill,
-      checkout: context.worktreePath,
-      repository: context.repository,
-      issue: context.issue,
-      shared_requirements: context.sharedRequirements,
-      task_instructions: taskInstructions,
-      inputs: {
-        ...(context.priorEvidence ? { prior_evidence: context.priorEvidence } : {}),
-        ...(context.deliveryArtifacts ? { delivery_artifacts: context.deliveryArtifacts } : {}),
-        ...(options?.inputs ?? {}),
-      },
-      permitted_outcomes: context.roleContract.permitted_outcomes,
-      required_artifacts: context.roleContract.required_artifacts ?? [],
-      prior_evidence: context.priorEvidence,
-      delivery_artifacts: context.deliveryArtifacts,
-    };
-    await fs.writeFile(
-      path.join(context.worktreePath, 'initialization.json'),
-      JSON.stringify(initData, null, 2),
-      'utf8',
-    );
-
-    // 2. Persist dispatch intent event BEFORE launch
-    const intentEvent: RunEvent = {
-      type: 'dispatch_intent',
-      run_id: runId,
-      timestamp: new Date().toISOString(),
-      payload: {
-        taskId,
-        step: context.currentStep,
-        role: context.stepDefinition.role,
-        skill: context.roleContract.skill,
-        taskInstructions,
-        inputs: options?.inputs ?? {},
-        priorEvidence: context.priorEvidence,
-        deliveryArtifacts: context.deliveryArtifacts,
-        worktreePath: context.worktreePath,
-      },
-    };
-    await this.appendEvent(runId, intentEvent);
-
-    // 3. Compose worker prompt
-    const promptLines = [
-      `# Task Assignment: ${context.currentStep} (${context.stepDefinition.role})`,
-      `Run: ${runId}`,
-      `Task: ${taskId}`,
-      `Skill: ${context.roleContract.skill}`,
-      '',
-      '## Shared Requirements',
-      context.sharedRequirements || 'None specified.',
-    ];
-
-    if (context.deliveryArtifacts && Object.keys(context.deliveryArtifacts).length > 0) {
-      promptLines.push('', '## Delivery Artifacts');
-      for (const [key, val] of Object.entries(context.deliveryArtifacts)) {
-        promptLines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
-      }
-    }
-
-    if (context.priorEvidence) {
-      promptLines.push('', '## Prior Evidence & Review Findings');
-      if (context.priorEvidence.evaluatedCommit) {
-        promptLines.push(`Evaluated Commit: ${context.priorEvidence.evaluatedCommit}`);
-      }
-      if (context.priorEvidence.findings) {
-        promptLines.push(`Review Findings:\n${context.priorEvidence.findings}`);
-      }
-      if (context.priorEvidence.priorSummary) {
-        promptLines.push(`Prior Summary: ${context.priorEvidence.priorSummary}`);
-      }
-    }
-
-    promptLines.push(
-      '',
-      '## Task Instructions',
-      taskInstructions,
-      '',
-      '## Permitted Outcomes',
-      context.roleContract.permitted_outcomes.join(', '),
-      '',
-      '## Required Artifacts',
-      (context.roleContract.required_artifacts ?? []).join(', ') || 'None',
-      '',
-      '## Submission Contract',
-      `When finished, submit your result using:`,
-      `pc workflow submit-result --run "${runId}" --task "${taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
-    );
-
-    const prompt = promptLines.join('\n');
-
-    // 4. Launch execution via provider Executor
-    let handle: ExecutionHandle;
-    try {
-      handle = await this.executor.launch(taskId, context.worktreePath, prompt);
-    } catch (err) {
-      const launchErrEvent: RunEvent = {
-        type: 'task_launch_failed',
-        run_id: runId,
-        timestamp: new Date().toISOString(),
-        payload: {
-          taskId,
-          error: (err as Error).message,
-        },
-      };
-      await this.appendEvent(runId, launchErrEvent);
-      throw err;
-    }
-
-    // 5. Persist task_launched event recording the provider handle
-    const launchedEvent: RunEvent = {
-      type: 'task_launched',
-      run_id: runId,
-      timestamp: new Date().toISOString(),
-      payload: {
-        taskId,
-        step: context.currentStep,
-        role: context.stepDefinition.role,
-        handle,
-        launchedAt: new Date().toISOString(),
-      },
-    };
-    await this.appendEvent(runId, launchedEvent);
-
-    return {
+    return this.taskExecution.dispatch({
+      runId,
       taskId,
-      handle,
       step: context.currentStep,
       role: context.stepDefinition.role,
+      skill: context.roleContract.skill,
+      taskInstructions,
+      sharedRequirements: context.sharedRequirements,
       worktreePath: context.worktreePath,
-    };
+      repository: context.repository,
+      issue: context.issue,
+      permittedOutcomes: context.roleContract.permitted_outcomes,
+      requiredArtifacts: context.roleContract.required_artifacts,
+      priorEvidence: context.priorEvidence,
+      deliveryArtifacts: context.deliveryArtifacts,
+      inputs: options?.inputs,
+    });
   }
 
   /**
@@ -1196,214 +992,72 @@ export class WorkflowEngine {
       };
     }
 
-    const worktreePath = initialContext.worktree_path;
-
-    // 3. Validate worktree ownership conditions before destructive deletion
-    let worktreeExists: boolean;
-    try {
-      const st = await fs.stat(worktreePath);
-      worktreeExists = st.isDirectory();
-    } catch {
-      worktreeExists = false;
+    // 3. Terminate all remaining owned agent executions (including registered orchestrator) via TaskExecution
+    const teardown = await this.taskExecution.ensureStopped(runId, { all: true, recordTerminated: false });
+    if (!teardown.stopped || teardown.uncertain) {
+      const reason = teardown.error || 'Execution teardown failed or termination was uncertain.';
+      await this.appendEvent(runId, {
+        type: 'cleanup_failed',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: { runId, reason },
+      });
+      await this.appendEvent(runId, {
+        type: 'run_blocked',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: { step: 'finalization', reason },
+      });
+      return {
+        runId,
+        released: false,
+        worktreeRemoved: false,
+        worktreePath: initialContext.worktree_path,
+        terminatedHandles: teardown.terminatedHandles,
+        status: 'blocked',
+        error: reason,
+        message: `Resource release failed: ${reason}`,
+      };
     }
 
-    if (worktreeExists) {
-      const ownerMarkerPath = path.join(worktreePath, '.pc-execution-owner');
-      let ownerMarkerRaw: string | null;
-      try {
-        ownerMarkerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
-      } catch {
-        ownerMarkerRaw = null;
-      }
-
-      if (!ownerMarkerRaw) {
-        const reason = `Cannot clean up worktree: .pc-execution-owner marker is missing at "${worktreePath}". Refusing to destroy unverified directory.`;
-        await this.appendEvent(runId, {
-          type: 'cleanup_failed',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { runId, worktreePath, reason },
-        });
-        await this.appendEvent(runId, {
-          type: 'run_blocked',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { step: 'finalization', reason },
-        });
-        return {
-          runId,
-          released: false,
-          worktreeRemoved: false,
-          worktreePath,
-          terminatedHandles: [],
-          status: 'blocked',
-          error: reason,
-          message: `Resource release failed: ${reason}`,
-        };
-      }
-
-      let ownerMarker: { run_id?: string };
-      try {
-        ownerMarker = JSON.parse(ownerMarkerRaw);
-      } catch {
-        ownerMarker = {};
-      }
-
-      if (ownerMarker.run_id !== runId) {
-        const reason = `Cannot clean up worktree: ownership mismatch. Worktree belongs to run "${ownerMarker.run_id}", not "${runId}". Refusing to destroy foreign worktree.`;
-        await this.appendEvent(runId, {
-          type: 'cleanup_failed',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { runId, worktreePath, reason },
-        });
-        await this.appendEvent(runId, {
-          type: 'run_blocked',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { step: 'finalization', reason },
-        });
-        return {
-          runId,
-          released: false,
-          worktreeRemoved: false,
-          worktreePath,
-          terminatedHandles: [],
-          status: 'blocked',
-          error: reason,
-          message: `Resource release failed: ${reason}`,
-        };
-      }
+    // 4. Validate ownership and safely clean up worktree via WorkflowFiles
+    const worktreeCleanup = await this.files.releaseWorktree(initialContext.worktree_path, runId);
+    if (!worktreeCleanup.released) {
+      const reason = worktreeCleanup.error || 'Failed to clean up worktree.';
+      await this.appendEvent(runId, {
+        type: 'cleanup_failed',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: { runId, worktreePath: initialContext.worktree_path, reason },
+      });
+      await this.appendEvent(runId, {
+        type: 'run_blocked',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        payload: { step: 'finalization', reason },
+      });
+      return {
+        runId,
+        released: false,
+        worktreeRemoved: worktreeCleanup.worktreeRemoved,
+        worktreePath: initialContext.worktree_path,
+        terminatedHandles: teardown.terminatedHandles,
+        status: 'blocked',
+        error: reason,
+        message: `Resource release failed: ${reason}`,
+      };
     }
 
-    // 4. Terminate all remaining owned agent executions (including registered orchestrator)
-    const allHandles: ExecutionHandle[] = [];
-    const handleIdsSeen = new Set<string>();
-
-    for (const evt of events) {
-      if (evt.type === 'task_launched' && evt.payload.handle) {
-        const h = evt.payload.handle as ExecutionHandle;
-        if (!handleIdsSeen.has(h.id)) {
-          handleIdsSeen.add(h.id);
-          allHandles.push(h);
-        }
-      }
-      if (evt.type === 'orchestrator_registered' && evt.payload.handle) {
-        const h = evt.payload.handle as ExecutionHandle;
-        if (!handleIdsSeen.has(h.id)) {
-          handleIdsSeen.add(h.id);
-          allHandles.push(h);
-        }
-      }
-      if (evt.type === 'execution_handle_registered' && evt.payload.handle) {
-        const h = evt.payload.handle as ExecutionHandle;
-        if (!handleIdsSeen.has(h.id)) {
-          handleIdsSeen.add(h.id);
-          allHandles.push(h);
-        }
-      }
-    }
-
-    const terminatedHandles: ExecutionHandle[] = [];
-    for (const handle of allHandles) {
-      try {
-        const stopRes = await this.executor.stop(handle);
-        if (!stopRes.stopped || stopRes.uncertain) {
-          const reason = `Execution handle "${handle.id}" (${handle.taskId}) failed to terminate: ${stopRes.error || 'uncertain termination'}.`;
-          await this.appendEvent(runId, {
-            type: 'cleanup_failed',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: { runId, handle, reason },
-          });
-          await this.appendEvent(runId, {
-            type: 'run_blocked',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: { step: 'finalization', reason },
-          });
-          return {
-            runId,
-            released: false,
-            worktreeRemoved: false,
-            worktreePath,
-            terminatedHandles,
-            status: 'blocked',
-            error: reason,
-            message: `Resource release failed: ${reason}`,
-          };
-        }
-        terminatedHandles.push(handle);
-      } catch (err) {
-        const reason = `Execution handle "${handle.id}" (${handle.taskId}) threw on stop: ${(err as Error).message}.`;
-        await this.appendEvent(runId, {
-          type: 'cleanup_failed',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { runId, handle, reason },
-        });
-        await this.appendEvent(runId, {
-          type: 'run_blocked',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { step: 'finalization', reason },
-        });
-        return {
-          runId,
-          released: false,
-          worktreeRemoved: false,
-          worktreePath,
-          terminatedHandles,
-          status: 'blocked',
-          error: reason,
-          message: `Resource release failed: ${reason}`,
-        };
-      }
-    }
-
-    // 5. Destructive worktree cleanup (if exists)
-    let worktreeRemoved = false;
-    if (worktreeExists) {
-      try {
-        await fs.rm(worktreePath, { recursive: true, force: true });
-        worktreeRemoved = true;
-      } catch (err) {
-        const reason = `Failed to remove worktree at "${worktreePath}": ${(err as Error).message}.`;
-        await this.appendEvent(runId, {
-          type: 'cleanup_failed',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { runId, worktreePath, reason },
-        });
-        await this.appendEvent(runId, {
-          type: 'run_blocked',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: { step: 'finalization', reason },
-        });
-        return {
-          runId,
-          released: false,
-          worktreeRemoved: false,
-          worktreePath,
-          terminatedHandles,
-          status: 'blocked',
-          error: reason,
-          message: `Resource release failed: ${reason}`,
-        };
-      }
-    }
-
-    // 6. Record resources_released and run_completed events
+    // 5. Record resources_released and run_completed events
     await this.appendEvent(runId, {
       type: 'resources_released',
       run_id: runId,
       timestamp: new Date().toISOString(),
       payload: {
         runId,
-        worktreePath,
-        worktreeRemoved,
-        terminatedHandles,
+        worktreePath: initialContext.worktree_path,
+        worktreeRemoved: worktreeCleanup.worktreeRemoved,
+        terminatedHandles: teardown.terminatedHandles,
         releasedAt: new Date().toISOString(),
       },
     });
@@ -1423,9 +1077,9 @@ export class WorkflowEngine {
     return {
       runId,
       released: true,
-      worktreeRemoved,
-      worktreePath,
-      terminatedHandles,
+      worktreeRemoved: worktreeCleanup.worktreeRemoved,
+      worktreePath: initialContext.worktree_path,
+      terminatedHandles: teardown.terminatedHandles,
       status: 'completed',
       message: 'Resources successfully released and Run marked completed.',
     };
@@ -1460,7 +1114,7 @@ export class WorkflowEngine {
     }
 
     // Determine current status and current step
-    let currentStatus: RunStatus = 'running';
+    const currentStatus = deriveRunStatus(events);
     let currentStep = 'implementation';
     for (const evt of events) {
       if (evt.type === 'step_transitioned') {
@@ -1469,10 +1123,6 @@ export class WorkflowEngine {
           currentStep = payload.toStep;
         }
       }
-      if (evt.type === 'run_completed') currentStatus = 'completed';
-      if (evt.type === 'run_blocked') currentStatus = 'blocked';
-      if (evt.type === 'run_paused') currentStatus = 'paused';
-      if (evt.type === 'run_uncertain') currentStatus = 'uncertain';
     }
 
     if (currentStatus === 'completed') {
@@ -1485,77 +1135,17 @@ export class WorkflowEngine {
       };
     }
 
-    // Collect all handles and identify those not yet terminated
-    const handleIdsSeen = new Set<string>();
-    const terminatedHandleIds = new Set<string>();
-    const allHandles: ExecutionHandle[] = [];
-
-    for (const evt of events) {
-      if (evt.type === 'task_terminated' && evt.payload.handle) {
-        terminatedHandleIds.add((evt.payload.handle as ExecutionHandle).id);
-      }
-      if (evt.type === 'task_launched' && evt.payload.handle) {
-        const h = evt.payload.handle as ExecutionHandle;
-        if (!handleIdsSeen.has(h.id)) {
-          handleIdsSeen.add(h.id);
-          allHandles.push(h);
-        }
-      }
-      if (evt.type === 'orchestrator_registered' && evt.payload.handle) {
-        const h = evt.payload.handle as ExecutionHandle;
-        if (!handleIdsSeen.has(h.id)) {
-          handleIdsSeen.add(h.id);
-          allHandles.push(h);
-        }
-      }
-      if (evt.type === 'execution_handle_registered' && evt.payload.handle) {
-        const h = evt.payload.handle as ExecutionHandle;
-        if (!handleIdsSeen.has(h.id)) {
-          handleIdsSeen.add(h.id);
-          allHandles.push(h);
-        }
-      }
-    }
-
-    const activeHandles = allHandles.filter((h) => !terminatedHandleIds.has(h.id));
-    const terminatedHandles: ExecutionHandle[] = [];
-
-    for (const handle of activeHandles) {
-      try {
-        const stopRes = await this.executor.stop(handle);
-        if (!stopRes.stopped || stopRes.uncertain) {
-          const reason = `Execution handle "${handle.id}" (${handle.taskId}) failed to terminate: ${stopRes.error || 'uncertain termination'}.`;
-          return {
-            runId,
-            stopped: false,
-            terminatedHandles,
-            status: currentStatus,
-            error: reason,
-            message: `Failed to stop run "${runId}": ${reason}`,
-          };
-        }
-        terminatedHandles.push(handle);
-        await this.appendEvent(runId, {
-          type: 'task_terminated',
-          run_id: runId,
-          timestamp: new Date().toISOString(),
-          payload: {
-            taskId: handle.taskId,
-            handle,
-            stopped: true,
-          },
-        });
-      } catch (err) {
-        const reason = `Execution handle "${handle.id}" (${handle.taskId}) threw on stop: ${(err as Error).message}.`;
-        return {
-          runId,
-          stopped: false,
-          terminatedHandles,
-          status: currentStatus,
-          error: reason,
-          message: `Failed to stop run "${runId}": ${reason}`,
-        };
-      }
+    const teardown = await this.taskExecution.ensureStopped(runId);
+    if (!teardown.stopped || teardown.uncertain) {
+      const reason = teardown.error || 'Execution failed to terminate cleanly.';
+      return {
+        runId,
+        stopped: false,
+        terminatedHandles: teardown.terminatedHandles,
+        status: currentStatus,
+        error: reason,
+        message: `Failed to stop run "${runId}": ${reason}`,
+      };
     }
 
     const reason = options.reason || 'Manual stop requested by operator';
@@ -1566,7 +1156,7 @@ export class WorkflowEngine {
       payload: {
         step: currentStep,
         reason,
-        terminatedHandles,
+        terminatedHandles: teardown.terminatedHandles,
         stoppedAt: new Date().toISOString(),
       },
     });
@@ -1574,7 +1164,7 @@ export class WorkflowEngine {
     return {
       runId,
       stopped: true,
-      terminatedHandles,
+      terminatedHandles: teardown.terminatedHandles,
       status: 'paused',
       message: `Run "${runId}" stopped successfully. All active executions terminated and Run paused at step "${currentStep}".`,
     };
@@ -1582,8 +1172,8 @@ export class WorkflowEngine {
 
   /**
    * Accepts and validates a specialist role's submitted result.
-   * Validates task ownership, permitted outcomes, and required artifacts before acknowledgement.
-   * Verifies termination of that role execution upon submission.
+   * Delegates result recording, duplicate/conflicting checks, and execution teardown
+   * to TaskExecution, then computes deterministic step transition and records Run progression.
    */
   async submitResult(runId: string, taskId: string, result: TaskResult): Promise<SubmitResultResponse> {
     if (!taskId || typeof taskId !== 'string') {
@@ -1598,25 +1188,19 @@ export class WorkflowEngine {
 
     const events = await this.readEvents(runId);
     const firstEvent = events[0];
+    if (!firstEvent || firstEvent.type !== 'run_created') {
+      throw new Error(`First event in log for run "${runId}" must be "run_created".`);
+    }
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
 
-    // Locate dispatch / task event for taskId
+    // Locate dispatch event for taskId to validate role contract and step transitions
     let taskEvent: RunEvent | undefined;
-    let handle: ExecutionHandle | undefined;
-    let existingResultEvent: RunEvent | undefined;
-
     for (const evt of events) {
       if (evt.type === 'dispatch_intent' && (evt.payload as { taskId: string }).taskId === taskId) {
         taskEvent = evt;
-      }
-      if (evt.type === 'task_launched' && (evt.payload as { taskId: string }).taskId === taskId) {
-        handle = (evt.payload as { handle: ExecutionHandle }).handle;
-      }
-      if (evt.type === 'result_submitted' && (evt.payload as { taskId: string }).taskId === taskId) {
-        existingResultEvent = evt;
+        break;
       }
     }
-
     if (!taskEvent) {
       throw new Error(`Task "${taskId}" not found in run "${runId}".`);
     }
@@ -1627,54 +1211,35 @@ export class WorkflowEngine {
       worktreePath: string;
     };
 
-    // Check if result already submitted for this taskId
-    if (existingResultEvent) {
-      const prior = existingResultEvent.payload as {
-        outcome: string;
-        summary: string;
-        artifacts?: Record<string, unknown>;
-      };
-
-      const normalize = (obj: unknown) => JSON.stringify(obj ?? {});
-      const isIdentical =
-        prior.outcome === result.outcome &&
-        prior.summary === result.summary &&
-        normalize(prior.artifacts) === normalize(result.artifacts);
-
-      if (isIdentical) {
-        return {
-          acknowledged: true,
-          taskId,
-          runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts: result.artifacts ?? {},
-          executionTerminated: true,
-          idempotent: true,
-          message: `Result for task "${taskId}" was already acknowledged (idempotent duplicate submission).`,
-        };
+    // Role contract validation
+    const roleContract = initialContext.roles?.roles?.[taskPayload.role];
+    if (roleContract) {
+      if (!roleContract.permitted_outcomes.includes(result.outcome)) {
+        throw new Error(
+          `Outcome "${result.outcome}" is not permitted for role "${taskPayload.role}". Permitted outcomes: [${roleContract.permitted_outcomes.join(', ')}].`,
+        );
       }
 
-      throw new Error(
-        `Conflicting result submitted for task "${taskId}". A prior result with outcome "${prior.outcome}" is already recorded.`,
-      );
-    }
-
-    // Role contract validation
-    const roleContract = initialContext.roles.roles[taskPayload.role];
-    if (!roleContract) {
+      const required = roleContract.required_artifacts ?? [];
+      const artifacts = result.artifacts ?? {};
+      const missingArtifacts: string[] = [];
+      for (const key of required) {
+        const val = artifacts[key];
+        if (val === undefined || val === null || val === '') {
+          missingArtifacts.push(key);
+        }
+      }
+      if (missingArtifacts.length > 0) {
+        throw new Error(
+          `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
+        );
+      }
+    } else {
       throw new Error(`Role contract for "${taskPayload.role}" is not defined.`);
     }
 
-    if (!roleContract.permitted_outcomes.includes(result.outcome)) {
-      throw new Error(
-        `Outcome "${result.outcome}" is not permitted for role "${taskPayload.role}". Permitted outcomes: [${roleContract.permitted_outcomes.join(', ')}].`,
-      );
-    }
-
-    // Workflow step transitions validation
-    const stepDef = initialContext.workflow.steps[taskPayload.step];
+    // Step definition & transitions validation
+    const stepDef = initialContext.workflow?.steps?.[taskPayload.step];
     if (!stepDef) {
       throw new Error(`Step "${taskPayload.step}" is not defined in workflow definition.`);
     }
@@ -1685,49 +1250,39 @@ export class WorkflowEngine {
       );
     }
 
-    const required = roleContract.required_artifacts ?? [];
-    const artifacts = result.artifacts ?? {};
-    const missingArtifacts: string[] = [];
-    for (const key of required) {
-      const val = artifacts[key];
-      if (val === undefined || val === null || val === '') {
-        missingArtifacts.push(key);
-      }
-    }
-    if (missingArtifacts.length > 0) {
-      throw new Error(
-        `Result submission for role "${taskPayload.role}" is missing required artifact(s): ${missingArtifacts.join(', ')}.`,
-      );
-    }
+    // 1. Delegate task result recording, duplicate/conflicting detection, persistence, and execution teardown to TaskExecution
+    const facts = await this.taskExecution.recordResult({
+      runId,
+      taskId,
+      result,
+    });
 
-    // Determine current rework count from event log
-    let currentReworkCount = initialContext.rework_count;
-    for (const evt of events) {
-      if (evt.type === 'step_transitioned') {
-        const payload = evt.payload as { reason?: string; reworkCount?: number };
-        if (payload.reason === 'rework') {
-          currentReworkCount = payload.reworkCount ?? (currentReworkCount + 1);
-        }
-      }
+    // 2. Handle idempotent resubmission
+    if (facts.idempotent) {
+      return {
+        acknowledged: true,
+        taskId: facts.taskId,
+        runId: facts.runId,
+        step: facts.step,
+        outcome: facts.outcome,
+        summary: facts.summary,
+        artifacts: facts.artifacts,
+        executionTerminated: true,
+        idempotent: true,
+        message: `Result for task "${taskId}" was already acknowledged (idempotent duplicate submission).`,
+      };
     }
 
-    const reworkLimit = initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3;
-    const transition = computeNextStep(
-      taskPayload.step,
-      result.outcome,
-      currentReworkCount,
-      reworkLimit,
-      initialContext.workflow,
-    );
+    const updatedEvents = await this.readEvents(runId);
 
-    // Verify external GitHub merge outcome for merger role
-    if ((taskPayload.role === 'merger' || taskPayload.step === 'merge') && result.outcome === 'completed') {
+    // 3. Verify external GitHub merge outcome for merger role
+    if ((facts.role === 'merger' || facts.step === 'merge') && facts.outcome === 'completed') {
       let mergeStatus: MergeStatusResult;
       try {
         mergeStatus = await this.mergeChecker.checkMergeStatus(
           initialContext.repository,
           initialContext.issue,
-          taskPayload.worktreePath,
+          facts.worktreePath,
         );
       } catch (err) {
         mergeStatus = {
@@ -1737,40 +1292,6 @@ export class WorkflowEngine {
       }
 
       if (mergeStatus.error) {
-        const nowIso = new Date().toISOString();
-        const resultSubmittedEvent: RunEvent = {
-          type: 'result_submitted',
-          run_id: runId,
-          timestamp: nowIso,
-          payload: {
-            taskId,
-            step: taskPayload.step,
-            role: taskPayload.role,
-            outcome: result.outcome,
-            summary: result.summary,
-            artifacts,
-          },
-        };
-        await this.appendEvent(runId, resultSubmittedEvent);
-
-        let executionTerminated = true;
-        if (handle) {
-          const stopRes = await this.executor.stop(handle);
-          executionTerminated = stopRes.stopped;
-          await this.appendEvent(runId, {
-            type: 'task_terminated',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId,
-              handle,
-              stopped: stopRes.stopped,
-              uncertain: stopRes.uncertain,
-              error: stopRes.error,
-            },
-          });
-        }
-
         await this.appendEvent(runId, {
           type: 'run_uncertain',
           run_id: runId,
@@ -1785,58 +1306,24 @@ export class WorkflowEngine {
           acknowledged: true,
           taskId,
           runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts,
-          executionTerminated,
+          step: facts.step,
+          outcome: facts.outcome,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          executionTerminated: facts.executionTerminated,
           transitionStatus: 'uncertain',
           message: `External merge verification uncertain on GitHub: ${mergeStatus.error}. Preserved explicit uncertainty.`,
         };
       }
 
       if (!mergeStatus.merged || mergeStatus.state !== 'MERGED') {
-        const nowIso = new Date().toISOString();
-        const resultSubmittedEvent: RunEvent = {
-          type: 'result_submitted',
-          run_id: runId,
-          timestamp: nowIso,
-          payload: {
-            taskId,
-            step: taskPayload.step,
-            role: taskPayload.role,
-            outcome: result.outcome,
-            summary: result.summary,
-            artifacts,
-          },
-        };
-        await this.appendEvent(runId, resultSubmittedEvent);
-
-        let executionTerminated = true;
-        if (handle) {
-          const stopRes = await this.executor.stop(handle);
-          executionTerminated = stopRes.stopped;
-          await this.appendEvent(runId, {
-            type: 'task_terminated',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId,
-              handle,
-              stopped: stopRes.stopped,
-              uncertain: stopRes.uncertain,
-              error: stopRes.error,
-            },
-          });
-        }
-
         const blockedEvent: RunEvent = {
           type: 'run_blocked',
           run_id: runId,
           timestamp: new Date().toISOString(),
           payload: {
             taskId,
-            step: taskPayload.step,
+            step: facts.step,
             reason: `Merge verification failed: PR #${initialContext.issue} is not merged on GitHub (state: ${mergeStatus.state ?? 'unmerged'}). Premature completion prevented.`,
           },
         };
@@ -1846,56 +1333,38 @@ export class WorkflowEngine {
           acknowledged: true,
           taskId,
           runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts,
-          executionTerminated,
+          step: facts.step,
+          outcome: facts.outcome,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          executionTerminated: facts.executionTerminated,
           transitionStatus: 'blocked',
           message: `Merge verification failed: PR #${initialContext.issue} is not merged on GitHub. Run is blocked.`,
         };
       }
     }
 
-    // Persist result_submitted event
-    const nowIso = new Date().toISOString();
-    const resultSubmittedEvent: RunEvent = {
-      type: 'result_submitted',
-      run_id: runId,
-      timestamp: nowIso,
-      payload: {
-        taskId,
-        step: taskPayload.step,
-        role: taskPayload.role,
-        outcome: result.outcome,
-        summary: result.summary,
-        artifacts,
-      },
-    };
-    await this.appendEvent(runId, resultSubmittedEvent);
-
-    // Verify termination of the role execution
-    let executionTerminated = true;
-    if (handle) {
-      const stopRes = await this.executor.stop(handle);
-      executionTerminated = stopRes.stopped;
-
-      const termEvent: RunEvent = {
-        type: 'task_terminated',
-        run_id: runId,
-        timestamp: new Date().toISOString(),
-        payload: {
-          taskId,
-          handle,
-          stopped: stopRes.stopped,
-          uncertain: stopRes.uncertain,
-          error: stopRes.error,
-        },
-      };
-      await this.appendEvent(runId, termEvent);
+    // 4. Determine current rework count from event log
+    let currentReworkCount = initialContext.rework_count;
+    for (const evt of updatedEvents) {
+      if (evt.type === 'step_transitioned') {
+        const payload = evt.payload as { reason?: string; reworkCount?: number };
+        if (payload.reason === 'rework') {
+          currentReworkCount = payload.reworkCount ?? (currentReworkCount + 1);
+        }
+      }
     }
 
-    // Persist transition events
+    const reworkLimit = initialContext.workflow.rework_limit ?? initialContext.config.rework_limit ?? 3;
+    const transition = computeNextStep(
+      facts.step,
+      facts.outcome,
+      currentReworkCount,
+      reworkLimit,
+      initialContext.workflow,
+    );
+
+    // 5. Persist transition events
     if (transition.status === 'blocked') {
       const blockedEvent: RunEvent = {
         type: 'run_blocked',
@@ -1903,8 +1372,8 @@ export class WorkflowEngine {
         timestamp: new Date().toISOString(),
         payload: {
           taskId,
-          step: taskPayload.step,
-          reason: result.summary,
+          step: facts.step,
+          reason: facts.summary,
         },
       };
       await this.appendEvent(runId, blockedEvent);
@@ -1915,12 +1384,12 @@ export class WorkflowEngine {
         timestamp: new Date().toISOString(),
         payload: {
           taskId,
-          step: taskPayload.step,
+          step: facts.step,
           reason: transition.reason,
           reworkCount: transition.reworkCount,
           reworkLimit,
-          summary: result.summary,
-          artifacts,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
           message: `Rework limit of ${reworkLimit} rounds exhausted. Run paused with preserved records.`,
         },
       };
@@ -1928,8 +1397,8 @@ export class WorkflowEngine {
     } else if (transition.status === 'completed') {
       const releaseRes = await this.releaseRunResources(runId, {
         taskId,
-        summary: result.summary,
-        artifacts,
+        summary: facts.summary,
+        artifacts: facts.artifacts,
       });
 
       if (!releaseRes.released) {
@@ -1937,11 +1406,11 @@ export class WorkflowEngine {
           acknowledged: true,
           taskId,
           runId,
-          step: taskPayload.step,
-          outcome: result.outcome,
-          summary: result.summary,
-          artifacts,
-          executionTerminated,
+          step: facts.step,
+          outcome: facts.outcome,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          executionTerminated: facts.executionTerminated,
           transitionStatus: 'blocked',
           message: `Resource release failed: ${releaseRes.error}. Run is blocked.`,
         };
@@ -1952,14 +1421,14 @@ export class WorkflowEngine {
         run_id: runId,
         timestamp: new Date().toISOString(),
         payload: {
-          fromStep: taskPayload.step,
+          fromStep: facts.step,
           toStep: 'completed',
-          outcome: result.outcome,
+          outcome: facts.outcome,
           reason: transition.reason,
           reworkCount: transition.reworkCount,
           priorTaskId: taskId,
-          summary: result.summary,
-          artifacts,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
         },
       };
       await this.appendEvent(runId, stepTransEvent);
@@ -1968,11 +1437,11 @@ export class WorkflowEngine {
         acknowledged: true,
         taskId,
         runId,
-        step: taskPayload.step,
-        outcome: result.outcome,
-        summary: result.summary,
-        artifacts,
-        executionTerminated,
+        step: facts.step,
+        outcome: facts.outcome,
+        summary: facts.summary,
+        artifacts: facts.artifacts,
+        executionTerminated: facts.executionTerminated,
         nextStep: 'completed',
         transitionStatus: 'completed',
         reworkCount: transition.reworkCount,
@@ -1984,17 +1453,17 @@ export class WorkflowEngine {
         run_id: runId,
         timestamp: new Date().toISOString(),
         payload: {
-          fromStep: taskPayload.step,
+          fromStep: facts.step,
           toStep: transition.nextStep,
-          outcome: result.outcome,
+          outcome: facts.outcome,
           reason: transition.reason,
           reworkCount: transition.reworkCount,
           priorTaskId: taskId,
-          summary: result.summary,
-          artifacts,
-          reviewedCommit: artifacts.reviewed_commit,
-          mergedCommit: artifacts.merged_commit,
-          findings: artifacts.findings,
+          summary: facts.summary,
+          artifacts: facts.artifacts,
+          reviewedCommit: facts.artifacts.reviewed_commit,
+          mergedCommit: facts.artifacts.merged_commit,
+          findings: facts.artifacts.findings,
         },
       };
       await this.appendEvent(runId, stepTransEvent);
@@ -2006,16 +1475,16 @@ export class WorkflowEngine {
       acknowledged: true,
       taskId,
       runId,
-      step: taskPayload.step,
-      outcome: result.outcome,
-      summary: result.summary,
-      artifacts,
-      executionTerminated,
+      step: facts.step,
+      outcome: facts.outcome,
+      summary: facts.summary,
+      artifacts: facts.artifacts,
+      executionTerminated: facts.executionTerminated,
       nextStep: transition.nextStep,
       nextRole,
       transitionStatus: transition.status,
       reworkCount: transition.reworkCount,
-      message: `Result for task "${taskId}" successfully acknowledged. Execution terminated: ${executionTerminated}. Next step: ${transition.nextStep ?? 'none'} (${transition.status}).`,
+      message: `Result for task "${taskId}" successfully acknowledged. Execution terminated: ${facts.executionTerminated}. Next step: ${transition.nextStep ?? 'none'} (${transition.status}).`,
     };
   }
 
@@ -2031,12 +1500,9 @@ export class WorkflowEngine {
       runId = runIdOrOptions.runId;
     }
 
-    const runsDir = path.join(this.storageRoot, 'runs');
-
     if (!runId) {
       try {
-        const entries = await fs.readdir(runsDir, { withFileTypes: true });
-        const runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        const runDirs = await this.files.listRunIds();
         if (runDirs.length === 0) {
           throw new Error('No workflow runs found.');
         }
@@ -2054,78 +1520,16 @@ export class WorkflowEngine {
     }
 
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
-    let currentStatus: RunStatus = 'pending_dispatch';
+    const currentStatus = deriveRunStatus(events);
+    const activeTask = this.taskExecution.getActiveTaskInfo(events);
+
     let currentStep = initialContext.current_step;
     let reworkCount = initialContext.rework_count;
-
-    let activeTaskId: string | undefined;
-    let activeStep: string | undefined;
-    let activeRole: string | undefined;
-    let activeHandle: ExecutionHandle | undefined;
-    let latestResult: TaskResult | undefined;
-    let isStopped: boolean | undefined;
     let blockedReason: string | undefined;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
       switch (evt.type) {
-        case 'dispatch_intent': {
-          const payload = evt.payload as { taskId: string; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          activeHandle = undefined;
-          latestResult = undefined;
-          isStopped = false;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_launched': {
-          const payload = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeHandle = payload.handle;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_reconciled': {
-          const payload = evt.payload as {
-            taskId: string;
-            handle?: ExecutionHandle;
-            action: string;
-          };
-          if (payload.handle) {
-            activeHandle = payload.handle;
-          }
-          if (payload.action === 'uncertain') {
-            currentStatus = 'uncertain';
-          }
-          break;
-        }
-        case 'result_submitted': {
-          const payload = evt.payload as {
-            taskId: string;
-            outcome: string;
-            summary: string;
-            artifacts?: Record<string, unknown>;
-          };
-          if (payload.taskId === activeTaskId) {
-            latestResult = {
-              outcome: payload.outcome,
-              summary: payload.summary,
-              artifacts: payload.artifacts,
-            };
-          }
-          break;
-        }
-        case 'task_terminated': {
-          const payload = evt.payload as { taskId: string; stopped: boolean };
-          if (payload.taskId === activeTaskId) {
-            isStopped = payload.stopped;
-          }
-          break;
-        }
         case 'step_transitioned': {
           const payload = evt.payload as { toStep?: string; reason?: string; reworkCount?: number };
           if (payload.toStep && payload.toStep !== 'completed') {
@@ -2140,31 +1544,24 @@ export class WorkflowEngine {
           break;
         }
         case 'run_completed':
-          currentStatus = 'completed';
           currentStep = 'completed';
           break;
         case 'run_blocked': {
-          currentStatus = 'blocked';
           const payload = evt.payload as { reason?: string };
           blockedReason = payload?.reason;
           break;
         }
-        case 'run_paused':
-          currentStatus = 'paused';
-          break;
-        case 'run_uncertain':
-          currentStatus = 'uncertain';
-          break;
       }
     }
 
     let activeTaskInfo: StatusActiveTask | undefined;
-    if (activeTaskId && activeStep && activeRole) {
+    const targetTask = activeTask.lastTask;
+    if (targetTask) {
       let executionStatus: StatusActiveTask['execution_status'];
       let exitCode: number | undefined;
       let error: string | undefined;
       try {
-        const inspection = await this.executor.inspect(activeTaskId);
+        const inspection = await this.taskExecution.inspect(targetTask.taskId);
         executionStatus = inspection.status;
         exitCode = inspection.exitCode;
         error = inspection.error;
@@ -2174,16 +1571,16 @@ export class WorkflowEngine {
       }
 
       activeTaskInfo = {
-        task_id: activeTaskId,
-        step: activeStep,
-        role: activeRole,
-        handle: activeHandle,
+        task_id: targetTask.taskId,
+        step: targetTask.step,
+        role: targetTask.role,
+        handle: targetTask.handle,
         execution_status: executionStatus,
         exit_code: exitCode,
         error,
-        business_outcome: latestResult?.outcome,
-        result: latestResult,
-        stopped: isStopped,
+        business_outcome: targetTask.latestResult?.outcome,
+        result: targetTask.latestResult,
+        stopped: targetTask.isStopped,
       };
     }
 
@@ -2194,8 +1591,8 @@ export class WorkflowEngine {
     }
     summary += ` for issue #${initialContext.issue}.`;
 
-    if (latestResult) {
-      summary += ` Collected outcome: ${latestResult.outcome}.`;
+    if (activeTaskInfo?.result) {
+      summary += ` Collected outcome: ${activeTaskInfo.result.outcome}.`;
     }
     if (currentStatus === 'paused') {
       summary += ` Rework limit of ${reworkLimit} rounds exhausted. Records preserved.`;
@@ -2203,7 +1600,7 @@ export class WorkflowEngine {
     if (currentStatus === 'blocked' && blockedReason) {
       summary += ` Blocker: ${blockedReason}`;
     }
-    if (activeTaskInfo?.execution_status === 'exited' && !latestResult) {
+    if (activeTaskInfo?.execution_status === 'exited' && !activeTaskInfo.result) {
       summary += ` Warning: process exited without submitting a business result.`;
     }
 
@@ -2237,12 +1634,9 @@ export class WorkflowEngine {
       runId = runIdOrOptions.runId;
     }
 
-    const runsDir = path.join(this.storageRoot, 'runs');
-
     if (!runId) {
       try {
-        const entries = await fs.readdir(runsDir, { withFileTypes: true });
-        const runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+        const runDirs = await this.files.listRunIds();
         if (runDirs.length === 0) {
           throw new Error('No workflow runs found.');
         }
@@ -2262,11 +1656,9 @@ export class WorkflowEngine {
     const initialContext = (firstEvent.payload as { context: RunContext }).context;
 
     // Check worktree ownership safeguards
-    const ownerMarkerPath = path.join(initialContext.worktree_path, '.pc-execution-owner');
     let conflictingOwner: string | undefined;
     try {
-      const ownerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
-      const ownerData = JSON.parse(ownerRaw);
+      const ownerData = await this.files.readWorktreeOwner(initialContext.worktree_path);
       if (ownerData && ownerData.run_id && ownerData.run_id !== runId) {
         conflictingOwner = ownerData.run_id;
       }
@@ -2281,120 +1673,49 @@ export class WorkflowEngine {
     }
 
     // Reconstruct state from durable event log
-    let currentStatus: RunStatus = 'pending_dispatch';
+    let currentStatus: RunStatus = deriveRunStatus(events);
+    const activeTask = this.taskExecution.getActiveTaskInfo(events);
     let currentStep = initialContext.current_step;
-
-    let activeTaskId: string | undefined;
-    let activeStep: string | undefined;
-    let activeRole: string | undefined;
-    let activeHandle: ExecutionHandle | undefined;
-    let latestResult: TaskResult | undefined;
-    let isStopped: boolean | undefined;
-    let taskLaunched = false;
 
     for (let i = 1; i < events.length; i++) {
       const evt = events[i];
-      switch (evt.type) {
-        case 'dispatch_intent': {
-          const payload = evt.payload as { taskId: string; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          activeHandle = undefined;
-          latestResult = undefined;
-          isStopped = false;
-          taskLaunched = false;
-          currentStatus = 'running';
-          break;
+      if (evt.type === 'step_transitioned') {
+        const payload = evt.payload as { toStep?: string };
+        if (payload.toStep && payload.toStep !== 'completed') {
+          currentStep = payload.toStep;
         }
-        case 'task_launched': {
-          const payload = evt.payload as { taskId: string; handle: ExecutionHandle; step: string; role: string };
-          activeTaskId = payload.taskId;
-          activeHandle = payload.handle;
-          activeStep = payload.step;
-          activeRole = payload.role;
-          taskLaunched = true;
-          currentStatus = 'running';
-          break;
-        }
-        case 'task_reconciled': {
-          const payload = evt.payload as {
-            taskId: string;
-            handle?: ExecutionHandle;
-            action: string;
-          };
-          if (payload.handle) {
-            activeHandle = payload.handle;
-          }
-          if (payload.action === 'uncertain') {
-            currentStatus = 'uncertain';
-          }
-          break;
-        }
-        case 'result_submitted': {
-          const payload = evt.payload as {
-            taskId: string;
-            outcome: string;
-            summary: string;
-            artifacts?: Record<string, unknown>;
-          };
-          if (payload.taskId === activeTaskId) {
-            latestResult = {
-              outcome: payload.outcome,
-              summary: payload.summary,
-              artifacts: payload.artifacts,
-            };
-          }
-          break;
-        }
-        case 'task_terminated': {
-          const payload = evt.payload as { taskId: string; stopped: boolean };
-          if (payload.taskId === activeTaskId) {
-            isStopped = payload.stopped;
-          }
-          break;
-        }
-        case 'step_transitioned': {
-          const payload = evt.payload as { toStep?: string };
-          if (payload.toStep && payload.toStep !== 'completed') {
-            currentStep = payload.toStep;
-          }
-          if (payload.toStep === 'completed') {
-            currentStep = 'completed';
-          }
-          break;
-        }
-        case 'run_completed':
-          currentStatus = 'completed';
+        if (payload.toStep === 'completed') {
           currentStep = 'completed';
-          break;
-        case 'run_blocked':
-          currentStatus = 'blocked';
-          break;
-        case 'run_paused':
-          currentStatus = 'paused';
-          break;
-        case 'run_uncertain':
-          currentStatus = 'uncertain';
-          break;
+        }
+      } else if (evt.type === 'run_completed') {
+        currentStep = 'completed';
       }
     }
 
-    // Reconcile task execution if one was dispatched
+    const activeTaskId = activeTask.activeTaskId ?? activeTask.lastTask?.taskId;
+    const activeStep = activeTask.activeStep ?? activeTask.lastTask?.step ?? currentStep;
+    const activeRole =
+      activeTask.activeRole ??
+      activeTask.lastTask?.role ??
+      initialContext.workflow.steps[activeStep]?.role;
+
+    // Check if task result was already received (e.g. saved before interruption)
+    const savedResult = activeTaskId ? await this.taskExecution.getTaskResult(runId, activeTaskId) : null;
+
     let reconciledTask: ReconciledTask | undefined;
     let resumeMessage = `Run "${runId}" resumed at step "${currentStep}".`;
 
     if (currentStatus === 'completed' || currentStatus === 'blocked') {
       resumeMessage = `Run "${runId}" is already ${currentStatus} at step "${currentStep}".`;
     } else if (activeTaskId && activeStep && activeRole) {
-      if (latestResult) {
+      if (savedResult) {
         // Result was already submitted and durable
-        if ((activeStep === 'finalization' || currentStep === 'finalization') && latestResult.outcome === 'completed') {
+        if ((activeStep === 'finalization' || currentStep === 'finalization') && savedResult.outcome === 'completed') {
           // Attempt to reconcile finalization resource release!
           const releaseRes = await this.releaseRunResources(runId, {
             taskId: activeTaskId,
-            summary: latestResult.summary,
-            artifacts: latestResult.artifacts,
+            summary: savedResult.summary,
+            artifacts: savedResult.artifacts,
           });
 
           if (releaseRes.released) {
@@ -2405,11 +1726,11 @@ export class WorkflowEngine {
               payload: {
                 fromStep: activeStep,
                 toStep: 'completed',
-                outcome: latestResult.outcome,
+                outcome: savedResult.outcome,
                 reason: 'finalization_completed',
                 priorTaskId: activeTaskId,
-                summary: latestResult.summary,
-                artifacts: latestResult.artifacts,
+                summary: savedResult.summary,
+                artifacts: savedResult.artifacts,
               },
             });
             currentStatus = 'completed';
@@ -2424,30 +1745,15 @@ export class WorkflowEngine {
             taskId: activeTaskId,
             step: activeStep,
             role: activeRole,
-            handle: activeHandle,
+            handle: activeTask.activeHandle,
             executionStatus: 'exited',
             action: 'collected',
-            result: latestResult,
+            result: savedResult,
           };
         } else {
-          let executionStatus: ExecutionStatus = isStopped ? 'exited' : 'running';
-          try {
-            const inspection = await this.executor.inspect(activeTaskId);
-            executionStatus = inspection.status;
-          } catch {
-            // If inspection fails when result is already durable, keep recorded status
-          }
-
-          reconciledTask = {
-            taskId: activeTaskId,
-            step: activeStep,
-            role: activeRole,
-            handle: activeHandle,
-            executionStatus,
-            action: 'collected',
-            result: latestResult,
-          };
-          resumeMessage = `Collected completed task result for task "${activeTaskId}" (outcome: ${latestResult.outcome}).`;
+          const recon = await this.taskExecution.reconcileExecution(runId, activeTaskId);
+          reconciledTask = recon;
+          resumeMessage = `Collected completed task result for task "${activeTaskId}" (outcome: ${savedResult.outcome}).`;
         }
       } else if (activeStep === 'merge' || currentStep === 'merge') {
         let mergeStatus: MergeStatusResult;
@@ -2465,21 +1771,13 @@ export class WorkflowEngine {
         }
 
         if (mergeStatus.error) {
-          const reconcileEvent: RunEvent = {
-            type: 'task_reconciled',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle,
-              executionStatus: 'uncertain',
-              action: 'uncertain',
-              error: mergeStatus.error,
-            },
-          };
-          await this.appendEvent(runId, reconcileEvent);
+          await this.taskExecution.recordTaskUncertain({
+            runId,
+            taskId: activeTaskId,
+            step: activeStep,
+            role: activeRole,
+            error: mergeStatus.error,
+          });
 
           const uncertainEvent: RunEvent = {
             type: 'run_uncertain',
@@ -2496,11 +1794,12 @@ export class WorkflowEngine {
             taskId: activeTaskId,
             step: activeStep,
             role: activeRole,
-            handle: activeHandle,
+            handle: activeTask.activeHandle,
             executionStatus: 'uncertain',
             action: 'uncertain',
             error: mergeStatus.error,
           };
+          currentStatus = 'uncertain';
           resumeMessage = `Interrupted merge inspection uncertain for task "${activeTaskId}": ${mergeStatus.error}. Preserved explicit uncertainty.`;
         } else if (mergeStatus.merged || mergeStatus.state === 'MERGED') {
           // Reconcile state as merged without duplicate merge command!
@@ -2514,34 +1813,12 @@ export class WorkflowEngine {
             },
           };
 
-          const resultEvent: RunEvent = {
-            type: 'result_submitted',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              outcome: reconciledResult.outcome,
-              summary: reconciledResult.summary,
-              artifacts: reconciledResult.artifacts,
-            },
-          };
-          await this.appendEvent(runId, resultEvent);
-
-          if (activeHandle) {
-            try {
-              await this.executor.stop(activeHandle);
-              await this.appendEvent(runId, {
-                type: 'task_terminated',
-                run_id: runId,
-                timestamp: new Date().toISOString(),
-                payload: { taskId: activeTaskId, handle: activeHandle, stopped: true },
-              });
-            } catch {
-              // ignore stop error
-            }
-          }
+          // Delegate task reconciliation and result recording to TaskExecution
+          reconciledTask = await this.taskExecution.reconcileExternalResult({
+            runId,
+            taskId: activeTaskId,
+            result: reconciledResult,
+          });
 
           const stepTransEvent: RunEvent = {
             type: 'step_transitioned',
@@ -2560,259 +1837,63 @@ export class WorkflowEngine {
           };
           await this.appendEvent(runId, stepTransEvent);
 
-          const reconcileEvent: RunEvent = {
-            type: 'task_reconciled',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle,
-              executionStatus: 'exited',
-              action: 'collected',
-            },
-          };
-          await this.appendEvent(runId, reconcileEvent);
-
-          reconciledTask = {
-            taskId: activeTaskId,
-            step: activeStep,
-            role: activeRole,
-            handle: activeHandle,
-            executionStatus: 'exited',
-            action: 'collected',
-            result: reconciledResult,
-          };
           resumeMessage = `Reconciled external merge outcome: PR #${initialContext.issue} is confirmed merged with commit ${mergedCommit}. Advanced to finalization.`;
         } else {
-          // PR is not merged yet on GitHub: inspect provider process without duplicating merge
-          let inspection: ExecutionInspection;
-          try {
-            inspection = await this.executor.inspect(activeTaskId);
-          } catch (err) {
-            inspection = {
-              status: 'uncertain',
-              error: (err as Error).message,
-            };
-          }
-
-          if (inspection.status === 'running') {
-            activeHandle = activeHandle ?? inspection.handle ?? {
-              id: `recovered-handle-${activeTaskId}`,
-              taskId: activeTaskId,
-            };
-
-            const reconcileEvent: RunEvent = {
-              type: 'task_reconciled',
-              run_id: runId,
-              timestamp: new Date().toISOString(),
-              payload: {
-                taskId: activeTaskId,
-                step: activeStep,
-                role: activeRole,
-                handle: activeHandle,
-                executionStatus: 'running',
-                action: 'reconnected',
-              },
-            };
-            await this.appendEvent(runId, reconcileEvent);
-
-            reconciledTask = {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle,
-              executionStatus: 'running',
-              action: 'reconnected',
-            };
-            resumeMessage = `Reconnected to running execution for task "${activeTaskId}".`;
-          } else if (inspection.status === 'exited') {
-            reconciledTask = {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle ?? inspection.handle,
-              executionStatus: 'exited',
-              action: 'none',
-              error: 'Merger process exited without completing the merge.',
-            };
-            resumeMessage = `Task "${activeTaskId}" exited without completing merge on GitHub.`;
-          } else if (inspection.status === 'uncertain' || (taskLaunched && inspection.status === 'not_started')) {
-            const errorMsg =
-              inspection.error ||
-              (inspection.status === 'not_started'
-                ? 'Execution was previously launched but cannot be reliably reconciled by provider.'
-                : 'Execution status is uncertain from provider.');
-            const reconcileEvent: RunEvent = {
-              type: 'task_reconciled',
-              run_id: runId,
-              timestamp: new Date().toISOString(),
-              payload: {
-                taskId: activeTaskId,
-                step: activeStep,
-                role: activeRole,
-                handle: activeHandle ?? inspection.handle,
-                executionStatus: 'uncertain',
-                action: 'uncertain',
-                error: errorMsg,
-              },
-            };
-            await this.appendEvent(runId, reconcileEvent);
-
+          // PR is not merged yet on GitHub: inspect provider process via TaskExecution without duplicating merge
+          const recon = await this.taskExecution.reconcileExecution(runId, activeTaskId);
+          if (recon.isUncertain) {
             const uncertainEvent: RunEvent = {
               type: 'run_uncertain',
               run_id: runId,
               timestamp: new Date().toISOString(),
               payload: {
                 taskId: activeTaskId,
-                reason: errorMsg,
+                reason: recon.error || 'Execution status is uncertain from provider.',
               },
             };
             await this.appendEvent(runId, uncertainEvent);
-
             currentStatus = 'uncertain';
-            reconciledTask = {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle ?? inspection.handle,
-              executionStatus: 'uncertain',
-              action: 'uncertain',
-              error: errorMsg,
-            };
-            resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${errorMsg}).`;
+            resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${recon.error}).`;
+          } else if (recon.executionStatus === 'running') {
+            resumeMessage = `Reconnected to running execution for task "${activeTaskId}".`;
+          } else if (recon.executionStatus === 'exited') {
+            recon.error = 'Merger process exited without completing the merge.';
+            resumeMessage = `Task "${activeTaskId}" exited without completing merge on GitHub.`;
           } else {
-            reconciledTask = {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle,
-              executionStatus: 'not_started',
-              action: 'none',
-            };
             resumeMessage = `Task "${activeTaskId}" was dispatched in intent but not started. Ready for dispatch.`;
           }
+          reconciledTask = recon;
         }
       } else {
-        // No result submitted yet; inspect provider by stable taskId
-        let inspection: ExecutionInspection;
-        try {
-          inspection = await this.executor.inspect(activeTaskId);
-        } catch (err) {
-          inspection = {
-            status: 'uncertain',
-            error: (err as Error).message,
-          };
-        }
-
-        if (inspection.status === 'running') {
-          // Reconnect to running execution
-          activeHandle = activeHandle ?? inspection.handle ?? {
-            id: `recovered-handle-${activeTaskId}`,
-            taskId: activeTaskId,
-          };
-
-          const reconcileEvent: RunEvent = {
-            type: 'task_reconciled',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle,
-              executionStatus: 'running',
-              action: 'reconnected',
-            },
-          };
-          await this.appendEvent(runId, reconcileEvent);
-
-          reconciledTask = {
-            taskId: activeTaskId,
-            step: activeStep,
-            role: activeRole,
-            handle: activeHandle,
-            executionStatus: 'running',
-            action: 'reconnected',
-          };
-          resumeMessage = `Reconnected to running execution for task "${activeTaskId}".`;
-        } else if (inspection.status === 'exited') {
-          // Process exited without submitting a result
-          reconciledTask = {
-            taskId: activeTaskId,
-            step: activeStep,
-            role: activeRole,
-            handle: activeHandle ?? inspection.handle,
-            executionStatus: 'exited',
-            action: 'none',
-            error: 'Process exited without submitting a result.',
-          };
-          resumeMessage = `Task "${activeTaskId}" exited without submitting a result.`;
-        } else if (inspection.status === 'uncertain' || (taskLaunched && inspection.status === 'not_started')) {
-          // Represent unreconciled execution as uncertainty; never assume not started or launch replacement
-          const errorMsg =
-            inspection.error ||
-            (inspection.status === 'not_started'
-              ? 'Execution was previously launched but cannot be reliably reconciled by provider.'
-              : 'Execution status is uncertain from provider.');
-          const reconcileEvent: RunEvent = {
-            type: 'task_reconciled',
-            run_id: runId,
-            timestamp: new Date().toISOString(),
-            payload: {
-              taskId: activeTaskId,
-              step: activeStep,
-              role: activeRole,
-              handle: activeHandle ?? inspection.handle,
-              executionStatus: 'uncertain',
-              action: 'uncertain',
-              error: errorMsg,
-            },
-          };
-          await this.appendEvent(runId, reconcileEvent);
-
+        // Normal task: inspect provider via TaskExecution
+        const recon = await this.taskExecution.reconcileExecution(runId, activeTaskId);
+        if (recon.isUncertain) {
           const uncertainEvent: RunEvent = {
             type: 'run_uncertain',
             run_id: runId,
             timestamp: new Date().toISOString(),
             payload: {
               taskId: activeTaskId,
-              reason: errorMsg,
+              reason: recon.error || 'Execution status is uncertain from provider.',
             },
           };
           await this.appendEvent(runId, uncertainEvent);
-
           currentStatus = 'uncertain';
-          reconciledTask = {
-            taskId: activeTaskId,
-            step: activeStep,
-            role: activeRole,
-            handle: activeHandle ?? inspection.handle,
-            executionStatus: 'uncertain',
-            action: 'uncertain',
-            error: errorMsg,
-          };
-          resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${errorMsg}).`;
+          resumeMessage = `Unreconciled execution for task "${activeTaskId}": status is uncertain (${recon.error}).`;
+        } else if (recon.executionStatus === 'running') {
+          resumeMessage = `Reconnected to running execution for task "${activeTaskId}".`;
+        } else if (recon.executionStatus === 'exited') {
+          resumeMessage = `Task "${activeTaskId}" exited without submitting a result.`;
         } else {
-          // not_started: launch never completed before interruption
-          reconciledTask = {
-            taskId: activeTaskId,
-            step: activeStep,
-            role: activeRole,
-            handle: activeHandle,
-            executionStatus: 'not_started',
-            action: 'none',
-          };
           resumeMessage = `Task "${activeTaskId}" was dispatched in intent but not started. Ready for dispatch.`;
         }
+        reconciledTask = recon;
       }
     }
 
     // Maintain worktree ownership ONLY if the Run is not completed
     if (currentStatus !== 'completed') {
-      await fs.mkdir(initialContext.worktree_path, { recursive: true });
-      const ownerMarker = {
+      const ownerMarker: WorktreeOwnerMarker = {
         run_id: runId,
         repository: initialContext.repository,
         issue: initialContext.issue,
@@ -2820,11 +1901,7 @@ export class WorkflowEngine {
         role: activeRole ?? initialContext.workflow.steps[currentStep]?.role,
         claimed_at: new Date().toISOString(),
       };
-      await fs.writeFile(
-        ownerMarkerPath,
-        JSON.stringify(ownerMarker, null, 2),
-        'utf8',
-      );
+      await this.files.writeWorktreeOwner(initialContext.worktree_path, ownerMarker);
     }
 
     // Get current scheduling context after reconciliation
@@ -2843,31 +1920,5 @@ export class WorkflowEngine {
       eventsCount: updatedEvents.length,
       message: resumeMessage,
     };
-  }
-
-  private deriveRunStatusFromLines(lines: string[]): RunStatus {
-    let status: RunStatus = 'pending_dispatch';
-    for (let i = 1; i < lines.length; i++) {
-      try {
-        const evt = JSON.parse(lines[i]) as RunEvent;
-        if (evt.type === 'run_completed') {
-          status = 'completed';
-        } else if (evt.type === 'run_blocked') {
-          status = 'blocked';
-        } else if (evt.type === 'run_paused') {
-          status = 'paused';
-        } else if (evt.type === 'run_uncertain') {
-          status = 'uncertain';
-        } else if (evt.type === 'task_reconciled') {
-          const payload = evt.payload as { action?: string };
-          if (payload.action === 'uncertain') status = 'uncertain';
-        } else if (evt.type === 'task_launched' || evt.type === 'dispatch_intent') {
-          status = 'running';
-        }
-      } catch {
-        // ignore parse error in line during quick scan
-      }
-    }
-    return status;
   }
 }
