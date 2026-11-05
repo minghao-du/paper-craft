@@ -1,0 +1,48 @@
+# Private data (not for commit)
+_ignore/
+.agents/
+.beads/
+.last-checkin.json
+AGENTS.md
+.env
+
+site/
+/ISSUE-*.md
+
+# Go build artifacts
+/bip
+build/
+*.exe
+*.test
+*.out
+
+# Python
+.venv/
+*.pyc
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# mkdocs
+site/
+
+# OS
+.DS_Store
+
+# Node.js
+node_modules/
+dist/
+*.tsbuildinfo
+
+/packages/dashboard/web/
+
+# Local Project research state (entire workspace)
+/research-state/
+
+# Local workflow Runtime records and diagnostics
+.runtime/

@@ -1,0 +1,35 @@
+{
+  "name": "paper-craft",
+  "version": "0.1.0",
+  "description": "Agent-first research workflow CLI",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint \"scripts/docs/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "docs:i18n:list": "tsx scripts/docs/docs-i18n.ts list",
+    "docs:i18n:check": "tsx scripts/docs/docs-i18n.ts check",
+    "docs:i18n:record": "tsx scripts/docs/docs-i18n.ts record",
+    "docs:check": "tsx scripts/docs/docs-i18n.ts check"
+  },
+  "packageManager": "pnpm@12.8.1",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^26.6.3",
+    "eslint": "^10.11.0",
+    "prettier": "^3.9.9",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.7.3",
+    "typescript-eslint": "^8.71.0",
+    "unified": "^11.0.5",
+    "vitest": "^5.0.3",
+    "yaml": "^2.9.1"
+  }
+}
