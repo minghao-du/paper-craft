@@ -9,8 +9,7 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 Authoritative writer for the project's shared research state. All writes inside `research-state/` go through this skill, including initialization and migration.
 The calling session or human owns scientific judgments and research direction; this skill checks supporting materials and edits the record. It does not become the research coordinator or authorize experiments. Use the project's language.
 
-This skill can be invoked directly by a human or agent with an update brief, or dispatched automatically by the workflow orchestrator.
-For post-closure or post-merge finalization recording, read [the finalization writing guide](finalization.md).
+This skill can be invoked directly by a human or agent with an update brief.
 
 ## Task Inputs
 
@@ -75,6 +74,4 @@ Return the entry and changed record paths, what was integrated, evidence checked
 
 1. **Updated research records:** Added or modified files under `research-state/` (or designated project home).
 2. **Status report:** Changed record paths, integrated content, evidence status, and any pending contradictions or unresolved decisions.
-3. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the updated record paths, integrated content, and pending questions to the caller.
+3. **Summary:** Report the updated record paths, integrated content, and pending questions to the caller.
