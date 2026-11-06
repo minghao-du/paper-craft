@@ -451,20 +451,17 @@ export interface PreflightCheckResult {
 }
 
 /**
- * External interface for inspecting and verifying GitHub issue accessibility.
+ * Result of inspecting a GitHub issue.
  */
-export interface IssueChecker {
-  /**
-   * Verifies that the requested issue exists and is accessible.
-   * @param repository The repository in owner/repo format.
-   * @param issue The issue number.
-   */
-  checkIssue(repository: string, issue: number): Promise<{
-    exists: boolean;
-    open?: boolean;
-    title?: string;
-    error?: string;
-  }>;
+export interface IssueCheckResult {
+  /** Whether the issue exists and is accessible. */
+  exists: boolean;
+  /** Whether the issue is currently in an open state. */
+  open?: boolean;
+  /** Title of the issue. */
+  title?: string;
+  /** Diagnostic error or failure message if inspection failed. */
+  error?: string;
 }
 
 /**
@@ -497,23 +494,8 @@ export interface MergeStatusResult {
   mergeCommitSha?: string;
   /** Diagnostic error or failure message if inspection failed or was uncertain. */
   error?: string;
-}
-
-/**
- * External interface for inspecting and verifying PR head revision and merge state.
- */
-export interface GitHubMergeChecker {
-  /**
-   * Verifies the PR head commit SHA and merge status for a repository and PR or issue.
-   * @param repository The repository in owner/repo format.
-   * @param prOrIssue The PR number, issue number, or branch name.
-   * @param worktreePath Optional local git worktree path.
-   */
-  checkMergeStatus(
-    repository: string,
-    prOrIssue: number | string,
-    worktreePath?: string,
-  ): Promise<MergeStatusResult>;
+  /** Whether headSha matches the expected head commit SHA (if evaluated). */
+  matchesExpectedHead?: boolean;
 }
 
 /**

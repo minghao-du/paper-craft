@@ -10,13 +10,16 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
 import { runCli } from '../../packages/cli/src/workflow.js';
+import {
+  RepositoryManager,
+  type CheckMergeStatusOptions,
+} from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  GitHubMergeChecker,
-  IssueChecker,
+  IssueCheckResult,
   MergeStatusResult,
   ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
@@ -67,7 +70,7 @@ class ControlledExecutor implements AgentExecutor {
   }
 }
 
-class ControlledMergeChecker implements GitHubMergeChecker {
+class ControlledRepositoryManager extends RepositoryManager {
   public headSha = 'commit-approved-8a8b8c';
   public state: 'OPEN' | 'MERGED' | 'CLOSED' = 'OPEN';
   public merged = false;
@@ -75,20 +78,39 @@ class ControlledMergeChecker implements GitHubMergeChecker {
   public exists = true;
   public error?: string;
 
-  async checkMergeStatus(
-    _repository: string,
+  override async checkIssue(issue: number): Promise<IssueCheckResult> {
+    return {
+      exists: true,
+      open: true,
+      title: `Designated Acceptance Issue #${issue}`,
+    };
+  }
+
+  override async checkMergeStatus(
     _prOrIssue: number | string,
-    _worktreePath?: string,
+    expectedHeadShaOrOptions?: string | CheckMergeStatusOptions,
+    _maybeOptions?: CheckMergeStatusOptions,
   ): Promise<MergeStatusResult> {
     if (this.error) {
       return { exists: false, error: this.error };
     }
+    let expectedHeadSha: string | undefined;
+    if (typeof expectedHeadShaOrOptions === 'string') {
+      expectedHeadSha = expectedHeadShaOrOptions;
+    } else if (typeof expectedHeadShaOrOptions === 'object') {
+      expectedHeadSha = expectedHeadShaOrOptions.expectedHeadSha;
+    }
+
+    const matchesExpectedHead =
+      expectedHeadSha !== undefined ? this.headSha === expectedHeadSha : undefined;
+
     return {
       exists: this.exists,
       headSha: this.headSha,
       state: this.state,
       merged: this.merged,
       mergeCommitSha: this.mergeCommitSha,
+      matchesExpectedHead,
     };
   }
 }
@@ -96,23 +118,14 @@ class ControlledMergeChecker implements GitHubMergeChecker {
 describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)', () => {
   let tmpDir: string;
   let executor: ControlledExecutor;
-  let mergeChecker: ControlledMergeChecker;
-  let issueChecker: IssueChecker;
+  let repositoryManager: ControlledRepositoryManager;
   let providerChecker: ProviderChecker;
   let engine: WorkflowEngine;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-workflow-e2e-'));
     executor = new ControlledExecutor();
-    mergeChecker = new ControlledMergeChecker();
-
-    issueChecker = {
-      checkIssue: async (_repo, issue) => ({
-        exists: true,
-        open: true,
-        title: `Designated Acceptance Issue #${issue}`,
-      }),
-    };
+    repositoryManager = new ControlledRepositoryManager();
 
     providerChecker = {
       check: async () => ({ available: true }),
@@ -121,8 +134,7 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
     engine = new WorkflowEngine({
       cwd: tmpDir,
       executor,
-      mergeChecker,
-      issueChecker,
+      repositoryManager,
       providerChecker,
     });
   });
@@ -244,7 +256,7 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
     expect(mergeContext.priorEvidence?.evaluatedCommit).toBe(approvedSha);
 
     // Merge prerequisite verification passes because PR head matches evaluated commit
-    mergeChecker.headSha = approvedSha;
+    repositoryManager.headSha = approvedSha;
     const mergePrereq = await engine.verifyMergePrerequisites(run.run_id);
     expect(mergePrereq.valid).toBe(true);
     expect(mergePrereq.approvedCommit).toBe(approvedSha);
@@ -260,9 +272,9 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
 
     // Simulate interruption: merger execution in-flight, engine process restarts
     // External GitHub confirms PR was merged with squash commit
-    mergeChecker.state = 'MERGED';
-    mergeChecker.merged = true;
-    mergeChecker.mergeCommitSha = 'commit-merged-squash-9d9e9f';
+    repositoryManager.state = 'MERGED';
+    repositoryManager.merged = true;
+    repositoryManager.mergeCommitSha = 'commit-merged-squash-9d9e9f';
 
     // Resume execution
     const resumeRes = await engine.resume(run.run_id);
@@ -345,8 +357,7 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
     const freshEngine = new WorkflowEngine({
       cwd: tmpDir,
       executor,
-      mergeChecker,
-      issueChecker,
+      repositoryManager,
       providerChecker,
     });
 

@@ -10,13 +10,16 @@ import * as os from 'node:os';
 import {
   WorkflowEngine,
 } from '../../packages/core/src/workflow/engine.js';
+import {
+  RepositoryManager,
+  type CheckMergeStatusOptions,
+} from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  GitHubMergeChecker,
-  IssueChecker,
+  IssueCheckResult,
   MergeStatusResult,
   ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
@@ -67,7 +70,7 @@ class MockExecutor implements AgentExecutor {
   }
 }
 
-class MockMergeChecker implements GitHubMergeChecker {
+class MockRepositoryManager extends RepositoryManager {
   public headSha = 'commit-approved-123';
   public state: 'OPEN' | 'MERGED' | 'CLOSED' = 'MERGED';
   public merged = true;
@@ -75,20 +78,39 @@ class MockMergeChecker implements GitHubMergeChecker {
   public exists = true;
   public error?: string;
 
-  async checkMergeStatus(
-    _repository: string,
+  override async checkIssue(issue: number): Promise<IssueCheckResult> {
+    return {
+      exists: true,
+      open: true,
+      title: `Test Issue #${issue}`,
+    };
+  }
+
+  override async checkMergeStatus(
     _prOrIssue: number | string,
-    _worktreePath?: string,
+    expectedHeadShaOrOptions?: string | CheckMergeStatusOptions,
+    _maybeOptions?: CheckMergeStatusOptions,
   ): Promise<MergeStatusResult> {
     if (this.error) {
       return { exists: false, error: this.error };
     }
+    let expectedHeadSha: string | undefined;
+    if (typeof expectedHeadShaOrOptions === 'string') {
+      expectedHeadSha = expectedHeadShaOrOptions;
+    } else if (typeof expectedHeadShaOrOptions === 'object') {
+      expectedHeadSha = expectedHeadShaOrOptions.expectedHeadSha;
+    }
+
+    const matchesExpectedHead =
+      expectedHeadSha !== undefined ? this.headSha === expectedHeadSha : undefined;
+
     return {
       exists: this.exists,
       headSha: this.headSha,
       state: this.state,
       merged: this.merged,
       mergeCommitSha: this.mergeCommitSha,
+      matchesExpectedHead,
     };
   }
 }
@@ -96,24 +118,16 @@ class MockMergeChecker implements GitHubMergeChecker {
 describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
-  let mockIssueChecker: IssueChecker;
   let mockProviderChecker: ProviderChecker;
-  let mockMergeChecker: MockMergeChecker;
+  let mockRepoManager: MockRepositoryManager;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-finalization-test-'));
     mockExecutor = new MockExecutor();
-    mockIssueChecker = {
-      checkIssue: async (_repo, issue) => ({
-        exists: true,
-        open: true,
-        title: `Test Issue #${issue}`,
-      }),
-    };
     mockProviderChecker = {
       check: async () => ({ available: true }),
     };
-    mockMergeChecker = new MockMergeChecker();
+    mockRepoManager = new MockRepositoryManager();
   });
 
   afterEach(async () => {
@@ -123,10 +137,9 @@ describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
+      repositoryManager: mockRepoManager,
       providerChecker: mockProviderChecker,
       executor: mockExecutor,
-      mergeChecker: mockMergeChecker,
     });
     await engine.init({ repository: 'test-owner/test-repo' });
     return engine;

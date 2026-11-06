@@ -3,12 +3,12 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
+import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  IssueChecker,
   ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
@@ -63,20 +63,20 @@ class ControlledMockExecutor implements AgentExecutor {
 describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
   let tmpDir: string;
   let mockExecutor: ControlledMockExecutor;
-  let mockIssueChecker: IssueChecker;
+  let mockRepoManager: RepositoryManager;
   let mockProviderChecker: ProviderChecker;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-dispatch-test-'));
     mockExecutor = new ControlledMockExecutor();
 
-    mockIssueChecker = {
-      checkIssue: async (_repo: string, issue: number) => ({
+    mockRepoManager = new RepositoryManager({
+      issueInspector: async (_repo: string, issue: number) => ({
         exists: true,
         open: true,
         title: `Issue #${issue} for testing`,
       }),
-    };
+    });
 
     mockProviderChecker = {
       check: async () => ({ available: true }),
@@ -90,7 +90,7 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
+      repositoryManager: mockRepoManager,
       providerChecker: mockProviderChecker,
       executor: mockExecutor,
     });

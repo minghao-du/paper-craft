@@ -4,11 +4,11 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { WorkflowEngine, WorkflowOwnershipError } from '../../packages/core/src/workflow/engine.js';
 import { runCli } from '../../packages/cli/src/workflow.js';
+import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
-  IssueChecker,
   ProviderChecker,
   RunEvent,
 } from '../../packages/core/src/workflow/types.js';
@@ -61,20 +61,20 @@ class ResumeTestMockExecutor implements AgentExecutor {
 describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
   let tmpDir: string;
   let mockExecutor: ResumeTestMockExecutor;
-  let mockIssueChecker: IssueChecker;
+  let mockRepoManager: RepositoryManager;
   let mockProviderChecker: ProviderChecker;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-resume-test-'));
     mockExecutor = new ResumeTestMockExecutor();
 
-    mockIssueChecker = {
-      checkIssue: async (_repo: string, issue: number) => ({
+    mockRepoManager = new RepositoryManager({
+      issueInspector: async (_repo: string, issue: number) => ({
         exists: true,
         open: true,
         title: `Issue #${issue} for resume tests`,
       }),
-    };
+    });
 
     mockProviderChecker = {
       check: async () => ({ available: true }),
@@ -88,7 +88,7 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
+      repositoryManager: mockRepoManager,
       providerChecker: mockProviderChecker,
       executor: mockExecutor,
     });

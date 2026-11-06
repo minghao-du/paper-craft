@@ -21,14 +21,17 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { WorkflowEngine } from '../packages/core/src/workflow/engine.js';
 import { AgyExecutor } from '../packages/core/src/workflow/executor.js';
+import {
+  RepositoryManager,
+  type CheckMergeStatusOptions,
+} from '../packages/core/src/workflow/repository.js';
 import type {
-  GitHubMergeChecker,
-  IssueChecker,
+  IssueCheckResult,
   MergeStatusResult,
   ProviderChecker,
 } from '../packages/core/src/workflow/types.js';
 
-class DemoMergeChecker implements GitHubMergeChecker {
+class DemoRepositoryManager extends RepositoryManager {
   public headSha = 'commit-approved-e2e-8a8b8c';
   public state: 'OPEN' | 'MERGED' | 'CLOSED' = 'OPEN';
   public merged = false;
@@ -36,20 +39,39 @@ class DemoMergeChecker implements GitHubMergeChecker {
   public exists = true;
   public error?: string;
 
-  async checkMergeStatus(
-    _repository: string,
+  override async checkIssue(issue: number): Promise<IssueCheckResult> {
+    return {
+      exists: true,
+      open: true,
+      title: `Workflow MVP: verify complete delivery and recovery with real agy (#${issue})`,
+    };
+  }
+
+  override async checkMergeStatus(
     _prOrIssue: number | string,
-    _worktreePath?: string,
+    expectedHeadShaOrOptions?: string | CheckMergeStatusOptions,
+    maybeOptions?: CheckMergeStatusOptions,
   ): Promise<MergeStatusResult> {
     if (this.error) {
       return { exists: false, error: this.error };
     }
+    let expectedHeadSha: string | undefined;
+    if (typeof expectedHeadShaOrOptions === 'string') {
+      expectedHeadSha = expectedHeadShaOrOptions;
+    } else if (typeof expectedHeadShaOrOptions === 'object') {
+      expectedHeadSha = expectedHeadShaOrOptions.expectedHeadSha;
+    }
+
+    const matchesExpectedHead =
+      expectedHeadSha !== undefined ? this.headSha === expectedHeadSha : undefined;
+
     return {
       exists: this.exists,
       headSha: this.headSha,
       state: this.state,
       merged: this.merged,
       mergeCommitSha: this.mergeCommitSha,
+      matchesExpectedHead,
     };
   }
 }
@@ -77,13 +99,7 @@ async function main() {
   const targetRepository = 'minghao-du/paper-craft';
   const sharedRequirements = 'Workflow MVP live acceptance: verify complete delivery and recovery with real agy (Ticket #8).';
 
-  const mockIssueChecker: IssueChecker = {
-    checkIssue: async (repo, issue) => ({
-      exists: true,
-      open: true,
-      title: `Workflow MVP: verify complete delivery and recovery with real agy (${repo}#${issue})`,
-    }),
-  };
+  const repositoryManager = new DemoRepositoryManager();
 
   const mockProviderChecker: ProviderChecker = {
     check: async (provider) => {
@@ -92,13 +108,10 @@ async function main() {
     },
   };
 
-  const mergeChecker = new DemoMergeChecker();
-
   let engine = new WorkflowEngine({
     cwd: tmpDir,
     executor: agyExecutor,
-    mergeChecker,
-    issueChecker: mockIssueChecker,
+    repositoryManager,
     providerChecker: mockProviderChecker,
   });
 
@@ -202,7 +215,7 @@ async function main() {
   console.log(`  ✓ Retained Evaluated Commit: ${mergeSched.evaluatedCommit}`);
 
   // Verify merge prerequisites
-  mergeChecker.headSha = approvedCommitSha;
+  repositoryManager.headSha = approvedCommitSha;
   const prereqCheck = await engine.verifyMergePrerequisites(run.run_id);
   console.log(`  ✓ Merge prerequisites check: valid=${prereqCheck.valid}, approvedCommit=${prereqCheck.approvedCommit}`);
 
@@ -217,17 +230,16 @@ async function main() {
   // SIMULATE INTERRUPTION
   console.log('  -> [Simulating Interruption] Engine process exits while merger execution is in flight...');
   const mergedCommitSha = 'commit-merged-squash-8a8b8c';
-  mergeChecker.state = 'MERGED';
-  mergeChecker.merged = true;
-  mergeChecker.mergeCommitSha = mergedCommitSha;
+  repositoryManager.state = 'MERGED';
+  repositoryManager.merged = true;
+  repositoryManager.mergeCommitSha = mergedCommitSha;
 
   // Restart engine instance (simulating CLI process restart)
   console.log('  -> [Simulating Recovery] Fresh engine instance invoked: pc workflow resume...');
   const freshEngine = new WorkflowEngine({
     cwd: tmpDir,
     executor: agyExecutor,
-    mergeChecker,
-    issueChecker: mockIssueChecker,
+    repositoryManager,
     providerChecker: mockProviderChecker,
   });
 

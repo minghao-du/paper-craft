@@ -8,7 +8,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { WorkflowEngine } from '../packages/core/src/workflow/engine.js';
 import { AgyExecutor } from '../packages/core/src/workflow/executor.js';
-import type { IssueChecker, ProviderChecker } from '../packages/core/src/workflow/types.js';
+import { RepositoryManager } from '../packages/core/src/workflow/repository.js';
+import type { ProviderChecker } from '../packages/core/src/workflow/types.js';
 
 async function main() {
   console.log('=== Real Agy Dispatch & Collect Round Trip Demonstration ===\n');
@@ -27,13 +28,13 @@ async function main() {
   }
 
   // 2. Initialize Engine with real AgyExecutor
-  const mockIssueChecker: IssueChecker = {
-    checkIssue: async (_repo, issue) => ({
+  const repositoryManager = new RepositoryManager({
+    issueInspector: async (_repo, issue) => ({
       exists: true,
       open: true,
       title: `Demonstration Issue #${issue}`,
     }),
-  };
+  });
 
   const mockProviderChecker: ProviderChecker = {
     check: async (provider) => {
@@ -45,7 +46,7 @@ async function main() {
   const engine = new WorkflowEngine({
     cwd: tmpDir,
     executor: agyExecutor,
-    issueChecker: mockIssueChecker,
+    repositoryManager,
     providerChecker: mockProviderChecker,
   });
 

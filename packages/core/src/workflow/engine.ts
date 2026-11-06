@@ -10,9 +10,7 @@ import type {
   DispatchOptions,
   DispatchResult,
   ExecutionHandle,
-  GitHubMergeChecker,
   InitOptions,
-  IssueChecker,
   MergeStatusResult,
   PreflightCheckResult,
   PriorEvidence,
@@ -42,10 +40,9 @@ import {
   loadWorkflowConfig,
 } from './config.js';
 import {
-  DefaultGitHubMergeChecker,
-  DefaultIssueChecker,
   DefaultProviderChecker,
 } from './checkers.js';
+import { RepositoryManager } from './repository.js';
 import { AgyExecutor } from './executor.js';
 import {
   WorkflowCleanupError,
@@ -245,14 +242,12 @@ export interface WorkflowEngineOptions {
   cwd?: string;
   /** Storage root for durable state and event logs. Defaults to '.paper-craft'. */
   storageRoot?: string;
-  /** Checker for verifying GitHub issue accessibility. */
-  issueChecker?: IssueChecker;
+  /** Repository manager for unified repository, issue, and PR operations. */
+  repositoryManager?: RepositoryManager;
   /** Checker for verifying provider capabilities. */
   providerChecker?: ProviderChecker;
   /** Agent executor instance for launching and managing agent executions. */
   executor?: AgentExecutor;
-  /** Checker for verifying PR head revision and GitHub merge status. */
-  mergeChecker?: GitHubMergeChecker;
   /** Files manager for persisting workflow runs and events. */
   files?: WorkflowFiles;
   /** Task execution manager for preparing and launching specialist tasks. */
@@ -266,10 +261,9 @@ export interface WorkflowEngineOptions {
 export class WorkflowEngine {
   public readonly cwd: string;
   public readonly storageRoot: string;
-  public readonly issueChecker: IssueChecker;
+  public readonly repositoryManager: RepositoryManager;
   public readonly providerChecker: ProviderChecker;
   public readonly executor: AgentExecutor;
-  public readonly mergeChecker: GitHubMergeChecker;
   public readonly files: WorkflowFiles;
   public readonly taskExecution: TaskExecution;
 
@@ -278,10 +272,9 @@ export class WorkflowEngine {
     this.storageRoot = options?.storageRoot
       ? path.resolve(this.cwd, options.storageRoot)
       : path.join(this.cwd, '.paper-craft');
-    this.issueChecker = options?.issueChecker ?? new DefaultIssueChecker();
+    this.repositoryManager = options?.repositoryManager ?? new RepositoryManager({ cwd: this.cwd });
     this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
     this.executor = options?.executor ?? new AgyExecutor();
-    this.mergeChecker = options?.mergeChecker ?? new DefaultGitHubMergeChecker();
     this.files = options?.files ?? new WorkflowFiles(this.storageRoot);
     this.taskExecution =
       options?.taskExecution ??
@@ -354,7 +347,9 @@ export class WorkflowEngine {
     // Check issue accessibility
     if (options.issue > 0) {
       try {
-        const issueCheck = await this.issueChecker.checkIssue(config.repository, options.issue);
+        const issueCheck = await this.repositoryManager.checkIssue(options.issue, {
+          repository: config.repository,
+        });
         if (!issueCheck.exists) {
           errors.push(issueCheck.error || `Issue #${options.issue} not found in repository "${config.repository}".`);
         } else {
@@ -729,10 +724,13 @@ export class WorkflowEngine {
 
     let mergeStatus: MergeStatusResult;
     try {
-      mergeStatus = await this.mergeChecker.checkMergeStatus(
-        context.repository,
+      mergeStatus = await this.repositoryManager.checkMergeStatus(
         context.issue,
-        context.worktreePath,
+        approvedCommit,
+        {
+          repository: context.repository,
+          worktreePath: context.worktreePath,
+        },
       );
     } catch (err) {
       mergeStatus = {
@@ -775,7 +773,7 @@ export class WorkflowEngine {
       };
     }
 
-    if (mergeStatus.headSha !== approvedCommit) {
+    if (mergeStatus.matchesExpectedHead === false || mergeStatus.headSha !== approvedCommit) {
       // PR head has moved: invalidate review approval and transition back to review!
       const invalidEvent: RunEvent = {
         type: 'review_invalidated',
@@ -1279,10 +1277,12 @@ export class WorkflowEngine {
     if ((facts.role === 'merger' || facts.step === 'merge') && facts.outcome === 'completed') {
       let mergeStatus: MergeStatusResult;
       try {
-        mergeStatus = await this.mergeChecker.checkMergeStatus(
-          initialContext.repository,
+        mergeStatus = await this.repositoryManager.checkMergeStatus(
           initialContext.issue,
-          facts.worktreePath,
+          {
+            repository: initialContext.repository,
+            worktreePath: facts.worktreePath,
+          },
         );
       } catch (err) {
         mergeStatus = {
@@ -1758,10 +1758,12 @@ export class WorkflowEngine {
       } else if (activeStep === 'merge' || currentStep === 'merge') {
         let mergeStatus: MergeStatusResult;
         try {
-          mergeStatus = await this.mergeChecker.checkMergeStatus(
-            initialContext.repository,
+          mergeStatus = await this.repositoryManager.checkMergeStatus(
             initialContext.issue,
-            initialContext.worktree_path,
+            {
+              repository: initialContext.repository,
+              worktreePath: initialContext.worktree_path,
+            },
           );
         } catch (err) {
           mergeStatus = {

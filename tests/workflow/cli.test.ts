@@ -80,11 +80,12 @@ describe('Workflow CLI smoke tests (Ticket #2)', () => {
 
     // Create engine with injected mock checkers
     const { WorkflowEngine } = await import('../../packages/core/src/workflow/engine.js');
+    const { RepositoryManager } = await import('../../packages/core/src/workflow/repository.js');
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: {
-        checkIssue: async () => ({ exists: true, open: true, title: 'Mock issue' }),
-      },
+      repositoryManager: new RepositoryManager({
+        issueInspector: async () => ({ exists: true, open: true, title: 'Mock issue' }),
+      }),
       providerChecker: {
         check: async () => ({ available: true }),
       },

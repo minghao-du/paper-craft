@@ -12,12 +12,12 @@ import {
   computeNextStep,
 } from '../../packages/core/src/workflow/engine.js';
 import { DEFAULT_WORKFLOW_DEFINITION } from '../../packages/core/src/workflow/config.js';
+import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  IssueChecker,
   ProviderChecker,
   WorkflowDefinition,
   RoleDefinitions,
@@ -68,19 +68,19 @@ class MockExecutor implements AgentExecutor {
 describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
-  let mockIssueChecker: IssueChecker;
+  let mockRepoManager: RepositoryManager;
   let mockProviderChecker: ProviderChecker;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-review-rework-test-'));
     mockExecutor = new MockExecutor();
-    mockIssueChecker = {
-      checkIssue: async (_repo, issue) => ({
+    mockRepoManager = new RepositoryManager({
+      issueInspector: async (_repo, issue) => ({
         exists: true,
         open: true,
         title: `Test Issue #${issue}`,
       }),
-    };
+    });
     mockProviderChecker = {
       check: async () => ({ available: true }),
     };
@@ -93,7 +93,7 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
+      repositoryManager: mockRepoManager,
       providerChecker: mockProviderChecker,
       executor: mockExecutor,
     });
@@ -569,7 +569,7 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
 
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
+        repositoryManager: mockRepoManager,
         providerChecker: mockProviderChecker,
         executor: mockExecutor,
       });
