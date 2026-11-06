@@ -7,7 +7,7 @@ allowed-tools: Bash, Read
 # /pc-issue-file
 
 Create or update a GitHub issue using a markdown file as the body.
-This skill can be invoked directly by a human or agent with a file path, or dispatched automatically by the workflow orchestrator.
+This skill can be invoked directly by a human or agent with a file path and optional issue context.
 
 ## Task Inputs
 
@@ -92,6 +92,4 @@ Skip this for **update** operations — the file is still the live source for fu
 
 1. **GitHub issue:** Created or updated issue number and URL.
 2. **Draft location:** Location where the draft file was archived (`_ignore/<file>`) or preserved.
-3. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the issue number, URL, operation type, and archived file location to the caller.
+3. **Summary:** Report the issue number, URL, operation type, and archived file location to the caller.

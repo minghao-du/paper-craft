@@ -14,7 +14,7 @@ Skills are the primary interface between humans, agents, and the CLI. Skill docu
 
 ## Quality Gates over Human Review
 
-Automated checks (`/pc-pr-check`, `/pc-pr-review`) loop until all pass. Fix every defect they flag—do not skip, and never use `--no-verify`. But checks themselves must be fast and actionable, not performative ceremony. A suggestion to add content is not a finding of a defect.
+Automated checks (`/pc-pr-review`) loop until all pass. Fix every defect they flag—do not skip, and never use `--no-verify`. But checks themselves must be fast and actionable, not performative ceremony. A suggestion to add content is not a finding of a defect.
 
 ## Fail Fast, Explain Clearly
 

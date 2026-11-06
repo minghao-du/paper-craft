@@ -1,15 +1,15 @@
 ---
 name: pc-issue-next
-description: Draft the next GitHub issue — from a PR follow-up, a focus file, or the current conversation — review it with /pc-issue-check, and submit
+description: Draft the next GitHub issue from a PR follow-up, a focus file, or conversation context
 allowed-tools: Agent, Bash, Read, Edit, Write, Glob, Grep, Skill
 ---
 
 # /pc-issue-next
 
-Draft an issue, quality-check it, and submit — all in one command.
+Draft the next GitHub issue, quality-check it, and produce a clean issue specification file.
 The "next" issue may come from any source: a PR decision, a recorded deferral, an idea raised in conversation, or a topic given inline.
 There is no requirement that a PR exist.
-This skill can be invoked directly by a human or agent with a task prompt or parameters, or dispatched automatically by the workflow orchestrator.
+This skill can be invoked directly by a human or agent with a task prompt or parameters.
 
 ## Usage
 
@@ -39,7 +39,7 @@ Parse `$ARGUMENTS` as whitespace-separated tokens:
 - Extract a PR reference if present (first token that looks like a URL or a `#?NNN` pattern). A PR is optional.
 - Extract `--focus-file <path>` if present and read the file contents as the focus description. Strip leading/trailing whitespace but preserve interior content verbatim. If the file is missing or empty, stop and report the error — do not fall back to candidate-picking.
 
-Duplicate-detection is the caller's responsibility — if called twice with the same focus, two issues will be filed. Callers guard against this by checking the PR for terminal comments or prior follow-up issues before invoking.
+Duplicate-detection is the caller's responsibility — if called twice with the same focus, two issues will be drafted. Callers guard against this by checking the PR for terminal comments or prior follow-up issues before invoking.
 
 Then resolve the source, in this order:
 - If a PR URL or number was given, use it (`gh pr view <arg> --json number,title,body,comments,reviews,baseRefName,headRefName`).
@@ -122,18 +122,13 @@ gh issue list -R <repo> --state open --search "sort:created-desc" \
 ```
 
 If any issue created since the Step 3 check has a title or scope that substantially overlaps the draft, stop — do not file.
-This is the common failure mode when another agent (e.g. a concurrent worker) reached the same "obvious next step" independently while this one was drafting.
+This is the common failure mode when another agent reached the same "obvious next step" independently while this one was drafting.
 Report the collision and ask the user whether to close/link the draft against the existing issue instead of filing a duplicate.
 
-### Step 5: Run /pc-issue-check
+### Step 5: Review the draft and prepare for filing
 
-Invoke the `/pc-issue-check` skill on the drafted file:
-
-```bash
-/pc-issue-check ISSUE-<slug>.md
-```
-
-This will review the issue for completeness (constitution alignment, data paths, algorithm spec, success criteria, vague language, etc.), fix gaps, and submit the issue via `/pc-issue-file`.
+Review the drafted file (or run `/pc-issue-check ISSUE-<slug>.md` if available) to verify completeness and ensure no vague language.
+When the issue is ready to be published, use `/pc-issue-file ISSUE-<slug>.md` (or `gh issue create --body-file ISSUE-<slug>.md`).
 
 ## Quality Requirements & Completion Criteria
 
@@ -141,13 +136,9 @@ This will review the issue for completeness (constitution alignment, data paths,
 2. **Measurable criteria:** Numbered, falsifiable success criteria with concrete quantitative thresholds.
 3. **Explicit boundaries:** Strict "In scope" and "Out of scope" lists preventing creep.
 4. **Duplicate safety:** Pre-drafting and pre-filing duplicate searches confirm no collision with recent open issues.
-5. **Checked and filed:** Issue verified via `/pc-issue-check` and filed verbatim via `/pc-issue-file`.
+5. **Checked draft:** Issue draft created as `ISSUE-<slug>.md` and verified for completeness.
 
 ## Task Outputs
 
-1. **Issue specification draft:** Saved as `ISSUE-<slug>.md` (archived to `_ignore/` upon successful filing).
-2. **GitHub issue:** Created issue number and URL.
-3. **Summary report:** Key criteria, trigger source, and any open questions for user confirmation.
-4. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the issue URL and summary to the caller.
+1. **Issue specification draft:** Saved as `ISSUE-<slug>.md` in the working directory.
+2. **Summary report:** Key criteria, trigger source, drafted file path, and any open questions for user confirmation.
