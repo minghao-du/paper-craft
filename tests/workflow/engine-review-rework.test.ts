@@ -7,18 +7,18 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import {
   WorkflowEngine,
   computeNextStep,
 } from '../../packages/core/src/workflow/engine.js';
 import { DEFAULT_WORKFLOW_DEFINITION } from '../../packages/core/src/workflow/config.js';
+import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  IssueChecker,
-  ProviderChecker,
   WorkflowDefinition,
   RoleDefinitions,
 } from '../../packages/core/src/workflow/types.js';
@@ -68,22 +68,20 @@ class MockExecutor implements AgentExecutor {
 describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
-  let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
+  let mockRepoManager: RepositoryManager;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-review-rework-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new MockExecutor();
-    mockIssueChecker = {
-      checkIssue: async (_repo, issue) => ({
+    mockRepoManager = new RepositoryManager({
+      cwd: tmpDir,
+      issueInspector: async (_repo, issue) => ({
         exists: true,
         open: true,
         title: `Test Issue #${issue}`,
       }),
-    };
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
+    });
   });
 
   afterEach(async () => {
@@ -93,8 +91,7 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
+      repositoryManager: mockRepoManager,
       executor: mockExecutor,
     });
     await engine.init({ repository: 'test-owner/test-repo' });
@@ -569,8 +566,7 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
 
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
         executor: mockExecutor,
       });
 

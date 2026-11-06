@@ -7,18 +7,25 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { initTestGitRepo } from './test-git-helper.js';
+
+const execFileAsync = promisify(execFile);
 import {
   WorkflowEngine,
 } from '../../packages/core/src/workflow/engine.js';
+import {
+  RepositoryManager,
+  type CheckMergeStatusOptions,
+} from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  GitHubMergeChecker,
-  IssueChecker,
+  IssueCheckResult,
   MergeStatusResult,
-  ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
 class MockExecutor implements AgentExecutor {
@@ -67,7 +74,7 @@ class MockExecutor implements AgentExecutor {
   }
 }
 
-class MockMergeChecker implements GitHubMergeChecker {
+class MockRepositoryManager extends RepositoryManager {
   public headSha = 'commit-approved-123';
   public state: 'OPEN' | 'MERGED' | 'CLOSED' = 'MERGED';
   public merged = true;
@@ -75,20 +82,39 @@ class MockMergeChecker implements GitHubMergeChecker {
   public exists = true;
   public error?: string;
 
-  async checkMergeStatus(
-    _repository: string,
+  override async checkIssue(issue: number): Promise<IssueCheckResult> {
+    return {
+      exists: true,
+      open: true,
+      title: `Test Issue #${issue}`,
+    };
+  }
+
+  override async checkMergeStatus(
     _prOrIssue: number | string,
-    _worktreePath?: string,
+    expectedHeadShaOrOptions?: string | CheckMergeStatusOptions,
+    _maybeOptions?: CheckMergeStatusOptions,
   ): Promise<MergeStatusResult> {
     if (this.error) {
       return { exists: false, error: this.error };
     }
+    let expectedHeadSha: string | undefined;
+    if (typeof expectedHeadShaOrOptions === 'string') {
+      expectedHeadSha = expectedHeadShaOrOptions;
+    } else if (typeof expectedHeadShaOrOptions === 'object') {
+      expectedHeadSha = expectedHeadShaOrOptions.expectedHeadSha;
+    }
+
+    const matchesExpectedHead =
+      expectedHeadSha !== undefined ? this.headSha === expectedHeadSha : undefined;
+
     return {
       exists: this.exists,
       headSha: this.headSha,
       state: this.state,
       merged: this.merged,
       mergeCommitSha: this.mergeCommitSha,
+      matchesExpectedHead,
     };
   }
 }
@@ -96,24 +122,13 @@ class MockMergeChecker implements GitHubMergeChecker {
 describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
-  let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
-  let mockMergeChecker: MockMergeChecker;
+  let mockRepoManager: MockRepositoryManager;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-finalization-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new MockExecutor();
-    mockIssueChecker = {
-      checkIssue: async (_repo, issue) => ({
-        exists: true,
-        open: true,
-        title: `Test Issue #${issue}`,
-      }),
-    };
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
-    mockMergeChecker = new MockMergeChecker();
+    mockRepoManager = new MockRepositoryManager({ cwd: tmpDir });
   });
 
   afterEach(async () => {
@@ -123,10 +138,8 @@ describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
+      repositoryManager: mockRepoManager,
       executor: mockExecutor,
-      mergeChecker: mockMergeChecker,
     });
     await engine.init({ repository: 'test-owner/test-repo' });
     return engine;
@@ -264,7 +277,7 @@ describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
     const ownerFile = path.join(sched.worktreePath, '.pc-execution-owner');
     await fs.writeFile(
       ownerFile,
-      JSON.stringify({ run_id: 'other-foreign-run', claimed_at: new Date().toISOString() }),
+      JSON.stringify({ version: '1.0', run_id: 'other-foreign-run', repository: 'test-owner/test-repo' }),
       'utf8',
     );
 
@@ -285,6 +298,35 @@ describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
       .stat(sched.worktreePath)
       .then(() => true)
       .catch(() => false);
+    expect(exists).toBe(true);
+
+    const status = await engine.status(run.run_id);
+    expect(status.status).toBe('blocked');
+  });
+
+  it('engine-controlled release blocks when worktree is dirty with uncommitted changes', async () => {
+    const engine = await createInitializedEngine();
+    const run = await reachFinalization(engine, 409);
+
+    const sched = await engine.getSchedulingContext(run.run_id);
+    const finalizerTask = await engine.dispatch(run.run_id, 'Finalize');
+
+    // Create an uncommitted modified file in the worktree
+    await fs.writeFile(path.join(sched.worktreePath, 'uncommitted-user-work.txt'), 'work in progress', 'utf8');
+
+    const submitRes = await engine.submitResult(run.run_id, finalizerTask.taskId, {
+      outcome: 'completed',
+      summary: 'Preserved archive',
+      artifacts: {
+        release_evidence: { bundle_sha: 'bundle-sha-409', archive_path: '/archives/409.tar.gz' },
+      },
+    });
+
+    expect(submitRes.transitionStatus).toBe('blocked');
+    expect(submitRes.message).toMatch(/dirty|uncommitted/i);
+
+    // Worktree directory and uncommitted work must NOT be deleted
+    const exists = await fs.stat(path.join(sched.worktreePath, 'uncommitted-user-work.txt')).then(() => true).catch(() => false);
     expect(exists).toBe(true);
 
     const status = await engine.status(run.run_id);
@@ -332,6 +374,10 @@ describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
       .then(() => true)
       .catch(() => false);
     expect(exists).toBe(false);
+
+    // Verify Git branch was PRESERVED after release
+    const { stdout: branches } = await execFileAsync('git', ['branch', '--list', `codex/${run.run_id}`], { cwd: tmpDir });
+    expect(branches).toContain(`codex/${run.run_id}`);
 
     // Verify run status is completed
     const status = await engine.status(run.run_id);

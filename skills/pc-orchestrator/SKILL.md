@@ -76,7 +76,7 @@ Dispatch the Worker by providing task instructions; the Engine binds Run identit
 pc workflow dispatch <run-id> --instructions "Implement requested changes adhering to acceptance criteria"
 ```
 
-The Engine persists dispatch intent before launching the specialist role via `AgyExecutor`, records the provider execution handle, and prepares the worktree with `.pc-execution-owner` and `initialization.json`.
+The Engine persists dispatch intent before launching the specialist role via `AgyExecutor`, records the provider execution handle, and prepares the worktree task initialization (`initialization.json`). Dedicated Git worktrees and Run ownership (`.pc-execution-owner`) are established at worktree creation time via `RepositoryManager`.
 
 Specialist roles submit their structured result via the `submit-result` contract:
 
@@ -143,9 +143,9 @@ pc workflow submit-result --run <run-id> --task <task-id> --outcome completed --
 
 Before destroying any worktree or completing the Run:
 1. **Preservation validation:** The Engine verifies that required final records and preservation evidence (`release_evidence`) exist and are valid.
-2. **Ownership verification:** The Engine checks `.pc-execution-owner` inside the worktree to ensure ownership matches the Run. Destructive deletion of foreign or unverified worktrees is strictly blocked.
+2. **Ownership & Git verification:** The Engine checks `.pc-execution-owner` (version 1.0) and Git worktree registration via `RepositoryManager` to ensure ownership matches the Run. Destructive deletion of foreign, unverified, or dirty worktrees is strictly blocked.
 3. **Execution termination:** The Engine verifies termination of all remaining active execution handles (including registered orchestrator sessions) via `AgyExecutor.stop`.
-4. **Engine-controlled cleanup:** The Engine deletes the verified worktree and records `resources_released` and `run_completed` events. Roles do not edit Run state directly.
+4. **Engine-controlled cleanup:** The Engine releases the verified worktree via non-force `git worktree remove` (preserving the `codex/` branch) and records `resources_released` and `run_completed` events. Roles do not edit Run state directly.
 
 Failures in recording, preservation, or cleanup retain actionable diagnostic status, record `cleanup_failed` and `run_blocked`, and do not mark the Run complete.
 

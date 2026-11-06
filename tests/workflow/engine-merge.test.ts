@@ -7,21 +7,23 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import {
   WorkflowEngine,
   WorkflowReviewInvalidatedError,
   WorkflowMergeVerificationError,
 } from '../../packages/core/src/workflow/engine.js';
-import { DefaultGitHubMergeChecker } from '../../packages/core/src/workflow/checkers.js';
+import {
+  RepositoryManager,
+  type CheckMergeStatusOptions,
+} from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  GitHubMergeChecker,
-  IssueChecker,
+  IssueCheckResult,
   MergeStatusResult,
-  ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
 class MockExecutor implements AgentExecutor {
@@ -66,7 +68,7 @@ class MockExecutor implements AgentExecutor {
   }
 }
 
-class MockMergeChecker implements GitHubMergeChecker {
+class MockRepositoryManager extends RepositoryManager {
   public headSha = 'commit-approved-123';
   public state: 'OPEN' | 'MERGED' | 'CLOSED' = 'OPEN';
   public merged = false;
@@ -74,20 +76,39 @@ class MockMergeChecker implements GitHubMergeChecker {
   public exists = true;
   public error?: string;
 
-  async checkMergeStatus(
-    _repository: string,
+  override async checkIssue(issue: number): Promise<IssueCheckResult> {
+    return {
+      exists: true,
+      open: true,
+      title: `Test Issue #${issue}`,
+    };
+  }
+
+  override async checkMergeStatus(
     _prOrIssue: number | string,
-    _worktreePath?: string,
+    expectedHeadShaOrOptions?: string | CheckMergeStatusOptions,
+    _maybeOptions?: CheckMergeStatusOptions,
   ): Promise<MergeStatusResult> {
     if (this.error) {
       return { exists: false, error: this.error };
     }
+    let expectedHeadSha: string | undefined;
+    if (typeof expectedHeadShaOrOptions === 'string') {
+      expectedHeadSha = expectedHeadShaOrOptions;
+    } else if (typeof expectedHeadShaOrOptions === 'object') {
+      expectedHeadSha = expectedHeadShaOrOptions.expectedHeadSha;
+    }
+
+    const matchesExpectedHead =
+      expectedHeadSha !== undefined ? this.headSha === expectedHeadSha : undefined;
+
     return {
       exists: this.exists,
       headSha: this.headSha,
       state: this.state,
       merged: this.merged,
       mergeCommitSha: this.mergeCommitSha,
+      matchesExpectedHead,
     };
   }
 }
@@ -95,24 +116,13 @@ class MockMergeChecker implements GitHubMergeChecker {
 describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
-  let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
-  let mockMergeChecker: MockMergeChecker;
+  let mockRepoManager: MockRepositoryManager;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-merge-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new MockExecutor();
-    mockIssueChecker = {
-      checkIssue: async (_repo, issue) => ({
-        exists: true,
-        open: true,
-        title: `Test Issue #${issue}`,
-      }),
-    };
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
-    mockMergeChecker = new MockMergeChecker();
+    mockRepoManager = new MockRepositoryManager({ cwd: tmpDir });
   });
 
   afterEach(async () => {
@@ -122,10 +132,8 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
+      repositoryManager: mockRepoManager,
       executor: mockExecutor,
-      mergeChecker: mockMergeChecker,
     });
     await engine.init({ repository: 'test-owner/test-repo' });
     return engine;
@@ -167,9 +175,9 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     expect(sched.evaluatedCommit).toBe('commit-approved-123');
 
     // 4. Dispatch merger when current PR head matches approved revision
-    mockMergeChecker.headSha = 'commit-approved-123';
-    mockMergeChecker.state = 'OPEN';
-    mockMergeChecker.merged = false;
+    mockRepoManager.headSha = 'commit-approved-123';
+    mockRepoManager.state = 'OPEN';
+    mockRepoManager.merged = false;
 
     const mergerTask = await engine.dispatch(run.run_id, 'Merge evaluated PR head using squash merge');
     expect(mergerTask.role).toBe('merger');
@@ -187,9 +195,9 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     expect(initJson.prior_evidence.evaluatedCommit).toBe('commit-approved-123');
 
     // 5. Merger completes merge on GitHub
-    mockMergeChecker.state = 'MERGED';
-    mockMergeChecker.merged = true;
-    mockMergeChecker.mergeCommitSha = 'commit-merged-squash-456';
+    mockRepoManager.state = 'MERGED';
+    mockRepoManager.merged = true;
+    mockRepoManager.mergeCommitSha = 'commit-merged-squash-456';
 
     const mergeSubmit = await engine.submitResult(run.run_id, mergerTask.taskId, {
       outcome: 'completed',
@@ -233,9 +241,9 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     });
 
     // 3. New commit pushed to PR before merge dispatch: head is now commit-new-changed-456!
-    mockMergeChecker.headSha = 'commit-new-changed-456';
-    mockMergeChecker.state = 'OPEN';
-    mockMergeChecker.merged = false;
+    mockRepoManager.headSha = 'commit-new-changed-456';
+    mockRepoManager.state = 'OPEN';
+    mockRepoManager.merged = false;
 
     // 4. Attempting to dispatch merger rejects and invalidates review
     await expect(
@@ -289,15 +297,15 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     });
 
     // Step 3: Dispatch merger
-    mockMergeChecker.headSha = 'commit-approved-123';
-    mockMergeChecker.state = 'OPEN';
-    mockMergeChecker.merged = false;
+    mockRepoManager.headSha = 'commit-approved-123';
+    mockRepoManager.state = 'OPEN';
+    mockRepoManager.merged = false;
 
     const mTask = await engine.dispatch(run.run_id, 'Perform merge');
 
     // Step 4: Merger claims completion, but GitHub state is still OPEN (unmerged)!
-    mockMergeChecker.state = 'OPEN';
-    mockMergeChecker.merged = false;
+    mockRepoManager.state = 'OPEN';
+    mockRepoManager.merged = false;
 
     const mergeSubmit = await engine.submitResult(run.run_id, mTask.taskId, {
       outcome: 'completed',
@@ -371,9 +379,9 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     });
 
     // 2. Merger dispatched
-    mockMergeChecker.headSha = 'commit-approved-123';
-    mockMergeChecker.state = 'OPEN';
-    mockMergeChecker.merged = false;
+    mockRepoManager.headSha = 'commit-approved-123';
+    mockRepoManager.state = 'OPEN';
+    mockRepoManager.merged = false;
 
     const mTask = await engine.dispatch(run.run_id, 'Merge PR');
     expect(mockExecutor.launchedTasks).toHaveLength(3);
@@ -381,9 +389,9 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     // 3. Interruption happens: merger process terminates after merging on GitHub,
     // but before calling submitResult
     mockExecutor.taskStatuses.set(mTask.taskId, 'exited');
-    mockMergeChecker.state = 'MERGED';
-    mockMergeChecker.merged = true;
-    mockMergeChecker.mergeCommitSha = 'commit-reconciled-789';
+    mockRepoManager.state = 'MERGED';
+    mockRepoManager.merged = true;
+    mockRepoManager.mergeCommitSha = 'commit-reconciled-789';
 
     // 4. Resume inspects external GitHub state
     const resumeRes = await engine.resume(run.run_id);
@@ -423,16 +431,16 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     });
 
     // 2. Merger dispatched
-    mockMergeChecker.headSha = 'commit-approved-123';
-    mockMergeChecker.state = 'OPEN';
-    mockMergeChecker.merged = false;
+    mockRepoManager.headSha = 'commit-approved-123';
+    mockRepoManager.state = 'OPEN';
+    mockRepoManager.merged = false;
 
     const mTask = await engine.dispatch(run.run_id, 'Merge PR');
 
     // 3. Interrupted and exited without merging
     mockExecutor.taskStatuses.set(mTask.taskId, 'exited');
-    mockMergeChecker.merged = false;
-    mockMergeChecker.state = 'OPEN';
+    mockRepoManager.merged = false;
+    mockRepoManager.state = 'OPEN';
 
     // 4. Resume inspects external state
     const resumeRes = await engine.resume(run.run_id);
@@ -464,14 +472,14 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     });
 
     // Merger dispatched
-    mockMergeChecker.headSha = 'commit-approved-123';
-    mockMergeChecker.state = 'OPEN';
-    mockMergeChecker.merged = false;
+    mockRepoManager.headSha = 'commit-approved-123';
+    mockRepoManager.state = 'OPEN';
+    mockRepoManager.merged = false;
 
     const mTask = await engine.dispatch(run.run_id, 'Merge PR');
 
     // Network / API error during merge submission
-    mockMergeChecker.error = 'GitHub API rate limit exceeded (HTTP 429)';
+    mockRepoManager.error = 'GitHub API rate limit exceeded (HTTP 429)';
 
     const submitRes = await engine.submitResult(run.run_id, mTask.taskId, {
       outcome: 'completed',
@@ -486,10 +494,12 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     expect(st.summary).toContain('uncertain');
   });
 
-  it('DefaultGitHubMergeChecker parses gh pr view and handles error cases cleanly', async () => {
-    const checker = new DefaultGitHubMergeChecker();
+  it('RepositoryManager parses gh pr view and handles error cases cleanly', async () => {
+    const manager = new RepositoryManager();
     // Non-existent repo/PR
-    const res = await checker.checkMergeStatus('non-existent-owner/non-existent-repo', 99999);
+    const res = await manager.checkMergeStatus(99999, {
+      repository: 'non-existent-owner/non-existent-repo',
+    });
     expect(res.exists).toBe(false);
     expect(res.error).toBeDefined();
   });

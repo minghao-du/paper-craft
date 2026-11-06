@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
+import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  IssueChecker,
-  ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
 /**
@@ -63,24 +63,20 @@ class ControlledMockExecutor implements AgentExecutor {
 describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
   let tmpDir: string;
   let mockExecutor: ControlledMockExecutor;
-  let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
+  let mockRepoManager: RepositoryManager;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-dispatch-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new ControlledMockExecutor();
 
-    mockIssueChecker = {
-      checkIssue: async (_repo: string, issue: number) => ({
+    mockRepoManager = new RepositoryManager({
+      issueInspector: async (_repo: string, issue: number) => ({
         exists: true,
         open: true,
         title: `Issue #${issue} for testing`,
       }),
-    };
-
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
+    });
   });
 
   afterEach(async () => {
@@ -90,8 +86,7 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
   async function createInitializedEngine(): Promise<WorkflowEngine> {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
+      repositoryManager: mockRepoManager,
       executor: mockExecutor,
     });
     await engine.init({ repository: 'test-owner/test-repo' });
@@ -152,9 +147,9 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
         'utf8',
       );
       const ownerMarker = JSON.parse(ownerMarkerRaw);
+      expect(ownerMarker.version).toBe('1.0');
       expect(ownerMarker.run_id).toBe(runContext.run_id);
-      expect(ownerMarker.issue).toBe(101);
-      expect(ownerMarker.role).toBe('worker');
+      expect(ownerMarker.repository).toBe(runContext.repository);
 
       const initJsonRaw = await fs.readFile(
         path.join(runContext.worktree_path, 'initialization.json'),

@@ -3,6 +3,7 @@
  * execution dispatch, and result persistence.
  */
 
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -10,13 +11,10 @@ import type {
   DispatchOptions,
   DispatchResult,
   ExecutionHandle,
-  GitHubMergeChecker,
   InitOptions,
-  IssueChecker,
   MergeStatusResult,
   PreflightCheckResult,
   PriorEvidence,
-  ProviderChecker,
   ReconciledTask,
   ReleaseResourcesOptions,
   ReleaseResourcesResult,
@@ -42,17 +40,13 @@ import {
   loadWorkflowConfig,
 } from './config.js';
 import {
-  DefaultGitHubMergeChecker,
-  DefaultIssueChecker,
-  DefaultProviderChecker,
-} from './checkers.js';
-import { AgyExecutor } from './executor.js';
-import {
+  RepositoryManager,
   WorkflowCleanupError,
-  WorkflowFiles,
   WorkflowOwnershipError,
   type WorktreeOwnerMarker,
-} from './files.js';
+} from './repository.js';
+import { createAgentExecutor } from './executor.js';
+import { WorkflowFiles } from './files.js';
 import { TaskExecution } from './execution.js';
 
 export { WorkflowCleanupError, WorkflowOwnershipError };
@@ -245,18 +239,14 @@ export interface WorkflowEngineOptions {
   cwd?: string;
   /** Storage root for durable state and event logs. Defaults to '.paper-craft'. */
   storageRoot?: string;
-  /** Checker for verifying GitHub issue accessibility. */
-  issueChecker?: IssueChecker;
-  /** Checker for verifying provider capabilities. */
-  providerChecker?: ProviderChecker;
+  /** Repository manager for unified repository, issue, and PR operations. */
+  repositoryManager?: RepositoryManager;
   /** Agent executor instance for launching and managing agent executions. */
   executor?: AgentExecutor;
-  /** Checker for verifying PR head revision and GitHub merge status. */
-  mergeChecker?: GitHubMergeChecker;
+  /** Designated provider identifier (e.g. 'agy'). Used when executor is not explicitly provided. */
+  provider?: string;
   /** Files manager for persisting workflow runs and events. */
   files?: WorkflowFiles;
-  /** Task execution manager for preparing and launching specialist tasks. */
-  taskExecution?: TaskExecution;
 }
 
 /**
@@ -266,10 +256,8 @@ export interface WorkflowEngineOptions {
 export class WorkflowEngine {
   public readonly cwd: string;
   public readonly storageRoot: string;
-  public readonly issueChecker: IssueChecker;
-  public readonly providerChecker: ProviderChecker;
+  public readonly repositoryManager: RepositoryManager;
   public readonly executor: AgentExecutor;
-  public readonly mergeChecker: GitHubMergeChecker;
   public readonly files: WorkflowFiles;
   public readonly taskExecution: TaskExecution;
 
@@ -278,14 +266,15 @@ export class WorkflowEngine {
     this.storageRoot = options?.storageRoot
       ? path.resolve(this.cwd, options.storageRoot)
       : path.join(this.cwd, '.paper-craft');
-    this.issueChecker = options?.issueChecker ?? new DefaultIssueChecker();
-    this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
-    this.executor = options?.executor ?? new AgyExecutor();
-    this.mergeChecker = options?.mergeChecker ?? new DefaultGitHubMergeChecker();
+    this.repositoryManager =
+      options?.repositoryManager ?? new RepositoryManager({ cwd: this.cwd });
+    this.executor =
+      options?.executor ?? createAgentExecutor(options?.provider ?? 'agy');
     this.files = options?.files ?? new WorkflowFiles(this.storageRoot);
-    this.taskExecution =
-      options?.taskExecution ??
-      new TaskExecution({ files: this.files, executor: this.executor });
+    this.taskExecution = new TaskExecution({
+      files: this.files,
+      executor: this.executor,
+    });
   }
 
   /**
@@ -340,21 +329,33 @@ export class WorkflowEngine {
     details.repository = config.repository;
     details.worktree_root = config.worktree_root;
 
-    // Check provider availability
+    // Validate provider and check executor availability
     const targetProvider = options.provider || config.provider || 'agy';
+    let providerValid = true;
     try {
-      const provCheck = await this.providerChecker.check(targetProvider);
-      if (!provCheck.available) {
-        errors.push(provCheck.error || `Provider "${targetProvider}" is not available.`);
-      }
+      createAgentExecutor(targetProvider);
     } catch (err) {
-      errors.push(`Provider verification failed: ${(err as Error).message}`);
+      providerValid = false;
+      errors.push((err as Error).message);
+    }
+
+    if (providerValid) {
+      try {
+        const provCheck = await this.executor.check();
+        if (!provCheck.available) {
+          errors.push(provCheck.error || `Provider "${targetProvider}" is not available.`);
+        }
+      } catch (err) {
+        errors.push(`Provider verification failed: ${(err as Error).message}`);
+      }
     }
 
     // Check issue accessibility
     if (options.issue > 0) {
       try {
-        const issueCheck = await this.issueChecker.checkIssue(config.repository, options.issue);
+        const issueCheck = await this.repositoryManager.checkIssue(options.issue, {
+          repository: config.repository,
+        });
         if (!issueCheck.exists) {
           errors.push(issueCheck.error || `Issue #${options.issue} not found in repository "${config.repository}".`);
         } else {
@@ -409,17 +410,36 @@ export class WorkflowEngine {
       // runs dir does not exist yet; no conflicts
     }
 
-    // Check worktree ownership conflict
+    // Check worktree directory and ownership conflict
     const targetWorktree = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
     try {
-      const ownerData = await this.files.readWorktreeOwner(targetWorktree);
-      if (ownerData && ownerData.run_id) {
-        errors.push(
-          `Target worktree directory "${targetWorktree}" has conflicting ownership marker belonging to "${ownerData.run_id}".`,
-        );
+      const st = await fs.stat(targetWorktree);
+      if (st.isDirectory()) {
+        try {
+          const ownerData = await this.repositoryManager.readWorktreeOwner(targetWorktree);
+          if (ownerData && ownerData.run_id) {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" has conflicting ownership marker belonging to "${ownerData.run_id}".`,
+            );
+          } else {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" already exists. Refusing to overwrite or auto-takeover existing directory.`,
+            );
+          }
+        } catch (err) {
+          if (err instanceof WorkflowOwnershipError) {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" has conflicting ownership marker: ${(err as Error).message}`,
+            );
+          } else {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" already exists. Refusing to overwrite or auto-takeover existing directory.`,
+            );
+          }
+        }
       }
     } catch {
-      // Marker does not exist; no conflict
+      // Directory does not exist; no conflict
     }
 
     details.sharedRequirements = sharedRequirementsContent;
@@ -458,7 +478,15 @@ export class WorkflowEngine {
     const nowIso = new Date().toISOString();
     const provider = options.provider || config.provider || 'agy';
     const resolvedWorktreeRoot = path.resolve(this.cwd, config.worktree_root);
-    const worktreePath = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
+    const targetWorktreePath = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
+    const branchName = `codex/${runId}`;
+
+    const wtResult = await this.repositoryManager.createWorktree(runId, {
+      worktreePath: targetWorktreePath,
+      branchName,
+      repository: config.repository,
+      cwd: this.cwd,
+    });
 
     const runContext: RunContext = {
       run_id: runId,
@@ -466,7 +494,7 @@ export class WorkflowEngine {
       issue: options.issue,
       issue_title: preflightResult.details?.issueTitle as string | undefined,
       provider,
-      worktree_path: worktreePath,
+      worktree_path: wtResult.worktreePath,
       created_at: nowIso,
       status: 'pending_dispatch',
       current_step: workflow.initial_step,
@@ -477,7 +505,16 @@ export class WorkflowEngine {
       roles: JSON.parse(JSON.stringify(roles)),
     };
 
-    await this.files.createRun(runContext);
+    try {
+      await this.files.createRun(runContext);
+    } catch (err) {
+      try {
+        await this.repositoryManager.releaseWorktree(wtResult.worktreePath, runId, { cwd: this.cwd });
+      } catch {
+        // Preserve original error
+      }
+      throw err;
+    }
 
     if (options.orchestratorHandle) {
       const orchEvent: RunEvent = {
@@ -729,10 +766,13 @@ export class WorkflowEngine {
 
     let mergeStatus: MergeStatusResult;
     try {
-      mergeStatus = await this.mergeChecker.checkMergeStatus(
-        context.repository,
+      mergeStatus = await this.repositoryManager.checkMergeStatus(
         context.issue,
-        context.worktreePath,
+        approvedCommit,
+        {
+          repository: context.repository,
+          worktreePath: context.worktreePath,
+        },
       );
     } catch (err) {
       mergeStatus = {
@@ -775,7 +815,7 @@ export class WorkflowEngine {
       };
     }
 
-    if (mergeStatus.headSha !== approvedCommit) {
+    if (mergeStatus.matchesExpectedHead === false || mergeStatus.headSha !== approvedCommit) {
       // PR head has moved: invalidate review approval and transition back to review!
       const invalidEvent: RunEvent = {
         type: 'review_invalidated',
@@ -1020,8 +1060,12 @@ export class WorkflowEngine {
       };
     }
 
-    // 4. Validate ownership and safely clean up worktree via WorkflowFiles
-    const worktreeCleanup = await this.files.releaseWorktree(initialContext.worktree_path, runId);
+    // 4. Validate ownership, Git registration, clean state, and safely release worktree via RepositoryManager
+    const worktreeCleanup = await this.repositoryManager.releaseWorktree(
+      initialContext.worktree_path,
+      runId,
+      { cwd: this.cwd },
+    );
     if (!worktreeCleanup.released) {
       const reason = worktreeCleanup.error || 'Failed to clean up worktree.';
       await this.appendEvent(runId, {
@@ -1279,10 +1323,12 @@ export class WorkflowEngine {
     if ((facts.role === 'merger' || facts.step === 'merge') && facts.outcome === 'completed') {
       let mergeStatus: MergeStatusResult;
       try {
-        mergeStatus = await this.mergeChecker.checkMergeStatus(
-          initialContext.repository,
+        mergeStatus = await this.repositoryManager.checkMergeStatus(
           initialContext.issue,
-          facts.worktreePath,
+          {
+            repository: initialContext.repository,
+            worktreePath: facts.worktreePath,
+          },
         );
       } catch (err) {
         mergeStatus = {
@@ -1658,11 +1704,14 @@ export class WorkflowEngine {
     // Check worktree ownership safeguards
     let conflictingOwner: string | undefined;
     try {
-      const ownerData = await this.files.readWorktreeOwner(initialContext.worktree_path);
+      const ownerData = await this.repositoryManager.readWorktreeOwner(initialContext.worktree_path);
       if (ownerData && ownerData.run_id && ownerData.run_id !== runId) {
         conflictingOwner = ownerData.run_id;
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof WorkflowOwnershipError) {
+        throw err;
+      }
       // Owner marker missing or directory does not exist yet
     }
 
@@ -1734,7 +1783,6 @@ export class WorkflowEngine {
               },
             });
             currentStatus = 'completed';
-            currentStep = 'completed';
             resumeMessage = `Resumed and reconciled finalization release for task "${activeTaskId}". Resources released and Run marked completed.`;
           } else {
             currentStatus = 'blocked';
@@ -1758,10 +1806,12 @@ export class WorkflowEngine {
       } else if (activeStep === 'merge' || currentStep === 'merge') {
         let mergeStatus: MergeStatusResult;
         try {
-          mergeStatus = await this.mergeChecker.checkMergeStatus(
-            initialContext.repository,
+          mergeStatus = await this.repositoryManager.checkMergeStatus(
             initialContext.issue,
-            initialContext.worktree_path,
+            {
+              repository: initialContext.repository,
+              worktreePath: initialContext.worktree_path,
+            },
           );
         } catch (err) {
           mergeStatus = {
@@ -1894,14 +1944,11 @@ export class WorkflowEngine {
     // Maintain worktree ownership ONLY if the Run is not completed
     if (currentStatus !== 'completed') {
       const ownerMarker: WorktreeOwnerMarker = {
+        version: '1.0',
         run_id: runId,
         repository: initialContext.repository,
-        issue: initialContext.issue,
-        task_id: activeTaskId,
-        role: activeRole ?? initialContext.workflow.steps[currentStep]?.role,
-        claimed_at: new Date().toISOString(),
       };
-      await this.files.writeWorktreeOwner(initialContext.worktree_path, ownerMarker);
+      await this.repositoryManager.writeWorktreeOwner(initialContext.worktree_path, ownerMarker);
     }
 
     // Get current scheduling context after reconciliation

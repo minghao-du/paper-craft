@@ -2,36 +2,36 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
-import type { IssueChecker, ProviderChecker } from '../../packages/core/src/workflow/types.js';
+import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
+import type { AgentExecutor } from '../../packages/core/src/workflow/types.js';
 
 describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
   let tmpDir: string;
-  let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
+  let mockRepoManager: RepositoryManager;
+  let mockExecutor: AgentExecutor;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-workflow-test-'));
+    await initTestGitRepo(tmpDir);
 
-    mockIssueChecker = {
-      checkIssue: async (_repo: string, issue: number) => {
+    mockRepoManager = new RepositoryManager({
+      cwd: tmpDir,
+      issueInspector: async (_repo: string, issue: number) => {
         if (issue === 404) {
           return { exists: false, error: `Issue #${issue} not found in repository` };
         }
         return { exists: true, open: true, title: `Test issue #${issue}` };
       },
-    };
+    });
 
-    mockProviderChecker = {
-      check: async (provider: string) => {
-        if (provider === 'unsupported') {
-          return { available: false, error: 'Provider "unsupported" is not supported' };
-        }
-        if (provider === 'missing-agy') {
-          return { available: false, error: 'agy executable not found in PATH' };
-        }
-        return { available: true };
-      },
+    mockExecutor = {
+      check: async () => ({ available: true }),
+      launch: async () => ({ id: 'mock-handle', taskId: 'mock-task' }),
+      inspect: async () => ({ status: 'not_started' }),
+      send: async () => {},
+      stop: async () => ({ stopped: true }),
     };
   });
 
@@ -43,8 +43,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('creates default configuration in the target directory', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -65,8 +65,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const customPath = path.join(tmpDir, 'custom', 'workflow.yml');
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init({ configPath: customPath, repository: 'custom-org/custom-repo' });
@@ -81,8 +81,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects configuration missing repository', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       await engine.init({ repository: '' });
@@ -93,8 +93,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects configuration with negative rework limit', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -107,8 +107,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects workflow definition with invalid initial step', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -122,8 +122,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects workflow step referencing unknown role', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -137,8 +137,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects step transition referencing unpermitted outcome', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -153,8 +153,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects step transition to non-existent target step', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -170,30 +170,61 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('fails when Issue does not exist with actionable error', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       await engine.init();
 
       await expect(engine.start({ issue: 404 })).rejects.toThrow(/Issue #404 not found/i);
     });
 
-    it('fails when provider is unavailable with actionable error', async () => {
+    it('fails when provider check fails with actionable error', async () => {
+      const failingExecutor: AgentExecutor = {
+        ...mockExecutor,
+        check: async () => ({
+          available: false,
+          error: 'agy executable not found in PATH',
+        }),
+      };
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: failingExecutor,
       });
       await engine.init();
 
-      await expect(engine.start({ issue: 1, provider: 'missing-agy' })).rejects.toThrow(/agy executable not found in PATH/i);
+      await expect(engine.start({ issue: 1 })).rejects.toThrow(/agy executable not found in PATH/i);
+    });
+
+    it('fails when provider is unsupported with actionable error', async () => {
+      const engine = new WorkflowEngine({
+        cwd: tmpDir,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
+      });
+      await engine.init();
+
+      await expect(engine.start({ issue: 1, provider: 'unsupported' })).rejects.toThrow(/unsupported provider: "unsupported"/i);
+    });
+
+    it('shares the same executor instance between Engine and internal TaskExecution, keeping config and execution consistent', async () => {
+      const engine = new WorkflowEngine({
+        cwd: tmpDir,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
+      });
+      await engine.init();
+
+      const run = await engine.start({ issue: 1 });
+      expect(run.provider).toBe('agy');
+      expect(engine.executor).toBe(mockExecutor);
     });
 
     it('fails when both requirements and requirementsFile are passed', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -207,8 +238,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('fails when requirementsFile does not exist', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -223,8 +254,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects another unfinished Run for the same repository Issue with inspection/recovery guidance', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -240,8 +271,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('rejects when worktree has conflicting ownership marker', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -250,7 +281,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       await fs.mkdir(worktreeDir, { recursive: true });
       await fs.writeFile(
         path.join(worktreeDir, '.pc-execution-owner'),
-        JSON.stringify({ run_id: 'other-run-id', owner: 'other-process', timestamp: new Date().toISOString() }),
+        JSON.stringify({ version: '1.0', run_id: 'other-run-id', repository: 'test-owner/test-repo' }),
       );
 
       await expect(engine.start({ issue: 99 })).rejects.toThrow(/worktree.*conflict.*other-run-id/i);
@@ -261,8 +292,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('captures configuration, workflow, role contracts, and shared requirements snapshot', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       const { configPath } = await engine.init();
 
@@ -297,8 +328,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('reports pending_dispatch reflecting persisted event log', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -322,8 +353,8 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
     it('preflight failure does not write run or report success', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
-        issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        repositoryManager: mockRepoManager,
+        executor: mockExecutor,
       });
       await engine.init();
 

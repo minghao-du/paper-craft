@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "lint": "eslint --no-error-on-unmatched-pattern \"scripts/docs/**/*.ts\" \"packages/**/*.ts\" \"tests/**/*.ts\"",
+    "lint": "eslint --no-error-on-unmatched-pattern \"scripts/**/*.ts\" \"packages/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

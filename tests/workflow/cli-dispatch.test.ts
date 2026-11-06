@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { runCli } from '../../packages/cli/src/workflow.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
-import type { AgentExecutor, ExecutionHandle, ExecutionInspection, IssueChecker, ProviderChecker } from '../../packages/core/src/workflow/types.js';
+import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
+import type { AgentExecutor, ExecutionHandle, ExecutionInspection } from '../../packages/core/src/workflow/types.js';
 
 class MockCliExecutor implements AgentExecutor {
   public launchedTasks: string[] = [];
@@ -36,24 +38,22 @@ describe('Workflow CLI dispatch & submit-result (Ticket #3)', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-cli-dispatch-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new MockCliExecutor();
 
-    const mockIssueChecker: IssueChecker = {
-      checkIssue: async (_repo, issue) => ({
+    const mockRepoManager = new RepositoryManager({
+      cwd: tmpDir,
+      issueInspector: async (_repo, issue) => ({
         exists: true,
         open: true,
         title: `Issue #${issue}`,
       }),
-    };
-    const mockProviderChecker: ProviderChecker = {
-      check: async () => ({ available: true }),
-    };
+    });
 
     mockEngine = new WorkflowEngine({
       cwd: tmpDir,
       executor: mockExecutor,
-      issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
+      repositoryManager: mockRepoManager,
     });
 
     await mockEngine.init({ repository: 'org/repo' });

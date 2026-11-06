@@ -3,12 +3,14 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { runCli } from '../../packages/cli/src/workflow.js';
+import { initTestGitRepo } from './test-git-helper.js';
 
 describe('Workflow CLI smoke tests (Ticket #2)', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-cli-test-'));
+    await initTestGitRepo(tmpDir);
   });
 
   afterEach(async () => {
@@ -80,13 +82,18 @@ describe('Workflow CLI smoke tests (Ticket #2)', () => {
 
     // Create engine with injected mock checkers
     const { WorkflowEngine } = await import('../../packages/core/src/workflow/engine.js');
+    const { RepositoryManager } = await import('../../packages/core/src/workflow/repository.js');
     const engine = new WorkflowEngine({
       cwd: tmpDir,
-      issueChecker: {
-        checkIssue: async () => ({ exists: true, open: true, title: 'Mock issue' }),
-      },
-      providerChecker: {
+      repositoryManager: new RepositoryManager({
+        issueInspector: async () => ({ exists: true, open: true, title: 'Mock issue' }),
+      }),
+      executor: {
         check: async () => ({ available: true }),
+        launch: async () => ({ id: 'mock-handle', taskId: 'mock-task' }),
+        inspect: async () => ({ status: 'not_started' }),
+        send: async () => {},
+        stop: async () => ({ stopped: true }),
       },
     });
 

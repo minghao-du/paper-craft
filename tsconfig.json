@@ -19,7 +19,7 @@
     "isolatedModules": true
   },
   "include": [
-    "scripts/docs/**/*.ts",
+    "scripts/**/*.ts",
     "packages/**/*.ts",
     "tests/**/*.ts"
   ],
