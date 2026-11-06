@@ -163,13 +163,30 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
       expect(initJson.permitted_outcomes).toEqual(['completed', 'blocked']);
       expect(initJson.required_artifacts).toEqual(['diff', 'test_results']);
 
-      // Verify prompt passed to executor contains skill, requirements, and submission instructions
+      // Verify prompt passed to executor contains full task context, inputs, and submission contract
       expect(mockExecutor.launchedTasks.length).toBe(1);
       const launched = mockExecutor.launchedTasks[0];
       expect(launched.taskId).toBe(dispatchResult.taskId);
       expect(launched.prompt).toContain('Skill: pc-issue-work');
+      expect(launched.prompt).toContain('Role: worker');
+      expect(launched.prompt).toContain('Step: implementation');
+      expect(launched.prompt).toContain(`Repository: ${runContext.repository}`);
+      expect(launched.prompt).toContain('Issue: #101');
+      expect(launched.prompt).toContain(`Working Directory: ${runContext.worktree_path}`);
+      expect(launched.prompt).toContain('Implement Ticket #3 dispatch and collect contracts');
       expect(launched.prompt).toContain('Strict TypeScript without any "as" assertions.');
-      expect(launched.prompt).toContain('pc workflow submit-result');
+      expect(launched.prompt).toContain('spec: issue-101-spec');
+      expect(launched.prompt).toContain(`Run ID: ${runContext.run_id}`);
+      expect(launched.prompt).toContain(`Task ID: ${dispatchResult.taskId}`);
+      expect(launched.prompt).toContain('Permitted Outcomes: completed, blocked');
+      expect(launched.prompt).toContain('Required Artifacts: diff, test_results');
+      expect(launched.prompt).toContain(
+        `pc workflow submit-result --run "${runContext.run_id}" --task "${dispatchResult.taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
+      );
+      expect(launched.prompt).toContain('(or --artifacts-file <path-to-json-file> for complex or multi-line outputs)');
+      expect(launched.prompt).toContain(
+        'The top-level dispatch agent is responsible for returning the receipt via this command upon task completion or blockage.',
+      );
 
       // Verify events persisted in log in strict order: run_created -> dispatch_intent -> task_launched
       const events = await engine.readEvents(runContext.run_id);
@@ -196,6 +213,49 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
       expect(events.length).toBe(3);
       expect(events[1].type).toBe('dispatch_intent');
       expect(events[2].type).toBe('task_launch_failed');
+    });
+
+    it('injects prior evidence and delivery artifacts into task prompt during rework dispatch', async () => {
+      const engine = await createInitializedEngine();
+      const runContext = await engine.start({ issue: 120, requirements: 'Ensure strict validation.' });
+
+      // 1. Worker dispatches and completes implementation
+      const workerTask = await engine.dispatch(runContext.run_id, 'Initial implementation');
+      await engine.submitResult(runContext.run_id, workerTask.taskId, {
+        outcome: 'completed',
+        summary: 'Worker done',
+        artifacts: { diff: 'diff-content', test_results: 'pass' },
+      });
+
+      // 2. Reviewer dispatches and requests rework with findings
+      const reviewerTask = await engine.dispatch(runContext.run_id, 'Review changes');
+      await engine.submitResult(runContext.run_id, reviewerTask.taskId, {
+        outcome: 'rework',
+        summary: 'Found regression in edge case',
+        artifacts: {
+          findings: 'Edge case with null input causes unhandled rejection',
+          reviewed_commit: 'abc1234',
+        },
+      });
+
+      // 3. Dispatch rework worker
+      const reworkTask = await engine.dispatch(runContext.run_id, 'Fix reported regression');
+      const launchedRework = mockExecutor.launchedTasks.find((t) => t.taskId === reworkTask.taskId);
+      expect(launchedRework).toBeDefined();
+
+      // Verify prompt contains prior evidence and delivery artifacts from earlier step
+      expect(launchedRework!.prompt).toContain('## Prior Evidence & Review Findings');
+      expect(launchedRework!.prompt).toContain('Evaluated Commit: abc1234');
+      expect(launchedRework!.prompt).toContain('Review Findings:\nEdge case with null input causes unhandled rejection');
+      expect(launchedRework!.prompt).toContain('## Delivery Artifacts');
+      expect(launchedRework!.prompt).toContain('diff: diff-content');
+      expect(launchedRework!.prompt).toContain('## Scheduling Directives');
+      expect(launchedRework!.prompt).toContain(`Run ID: ${runContext.run_id}`);
+      expect(launchedRework!.prompt).toContain(`Task ID: ${reworkTask.taskId}`);
+      expect(launchedRework!.prompt).toContain('(or --artifacts-file <path-to-json-file> for complex or multi-line outputs)');
+      expect(launchedRework!.prompt).toContain(
+        'The top-level dispatch agent is responsible for returning the receipt via this command upon task completion or blockage.',
+      );
     });
   });
 

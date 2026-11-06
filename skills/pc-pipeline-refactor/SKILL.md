@@ -1,23 +1,25 @@
 ---
 name: pc-pipeline-refactor
-description: Refactor existing workflow pipeline directory layouts, remove sequential number prefixes, modularize flat scripts into submodules, mirror results structures, and execute atomic dual-environment path migrations across local and remote HPC.
+description: Refactor existing workflow pipeline directory layouts, remove sequential number prefixes, modularize flat scripts into submodules, mirror results structures, and execute atomic dual-environment path migrations across local and remote HPC
 disable-model-invocation: true
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 ---
 
 # /pc-pipeline-refactor
 
 Refactor existing scientific computing workflows from ad-hoc, flat, or sequentially numbered directory layouts into clean, modular, tiered architectures adhering to [pc-pipeline-snakemake](../pc-pipeline-snakemake/SKILL.md).
 Synchronize all code, rules, configurations, and data assets across local workstations and remote HPC environments without interrupting reproducible execution or losing data.
+This skill can be invoked directly by a human or agent with a target path or task prompt, or dispatched automatically by the workflow orchestrator.
 
-## Post-closure audit invocation
+## Task Inputs
 
-When dispatched by an Orchestrator after verified closure, perform applicability
-and bounded structural audit within the supplied brief.
-Return inspected versions, applicability evidence, classified findings, checks,
-artifacts, blockers and limitations. Required changes remain pending until their
-approved maintenance delivery and verification are complete.
+Before beginning refactoring, ensure the following inputs are available:
+1. **Target pipeline & repository path:** Directory root of the target workflow (e.g. `workflow/`, `Snakefile`, `config/`).
+2. **Refactoring brief & scope:** Specific stages, rules, scripts, or structural debt targeted for migration.
+3. **Compute environment:** Local workstation environment and remote HPC connection details specified in `.paper-craft/compute.md` or configuration.
+4. **Migration ledger template:** Template located at [templates/migration-ledger.md](templates/migration-ledger.md).
 
-## Core Leading Words
+## Core Principles
 
 - **`ledger`**: The explicit source-to-target path mapping that gates every filesystem operation.
   Never move, rename, or delete files without an approved ledger.
@@ -74,7 +76,7 @@ The ledger must specify:
 5. **Sanitization Plan**: Specify obsolete worktrees, dead directories, unpartitioned logs, and retired `.sbatch` scripts scheduled for removal.
 
 **Completion Criterion**:
-The migration ledger is reviewed and confirmed with the user.
+The migration ledger is reviewed and confirmed with the user or caller.
 No file is moved, converted, or deleted until the ledger is settled.
 
 ---
@@ -130,13 +132,13 @@ Verify the changed paths and dependencies through the execution environment and 
 
 Verification steps:
 1. **Small-Data Tests**:
-   - Use the project's small test configuration and representative fixtures to dry-run and execute affected targets. Cover changed imports, includes, input/output paths and dependency edges.
+   - Use the project's small test configuration and representative fixtures to dry-run and execute affected targets. Cover changed imports, includes, input/output paths, and dependency edges.
    - Run relevant unit and smoke tests; follow [Snakemake smoke validation](../pc-pipeline-snakemake/references/smoke.md) for fixtures, execution, and artifact checks.
    - Verify cluster DAG resolution via `uv run snakemake --profile config/profiles/slurm -n` and confirm zero standalone step `.sbatch` scripts remain.
 2. **Production Path Checks**:
-   - Verify the ledger's actual local and remote path mappings, input locations and compatibility symlinks; search active code and configuration for stale references.
+   - Verify the ledger's actual local and remote path mappings, input locations, and compatibility symlinks; search active code and configuration for stale references.
 3. **Risk-Based Expansion**:
-   - Expand DAG checks only for a specific migration risk the fixtures and path checks cannot cover, such as production-only sample discovery or a changed production configuration branch. Record the risk, target and result in the ledger.
+   - Expand DAG checks only for a specific migration risk the fixtures and path checks cannot cover, such as production-only sample discovery or a changed production configuration branch. Record the risk, target, and result in the ledger.
    - Check the affected target or a supported batch first; expand to the full production DAG when that risk requires it, rather than checking every stage by default.
    - If a check stops making progress, identify the bottleneck and remaining question, then narrow it where coverage permits. Continue necessary checks and report unfinished checks as incomplete.
 4. **Git Tree Inspection & Commit**:
@@ -149,6 +151,20 @@ Affected-target small-data runs and relevant tests pass, zero standalone step sb
 Any production DAG checks required by an identified risk pass; record their results and any production behavior not covered by the verification.
 Local Git working tree is clean and synchronized with upstream.
 
-For a managed assignment, use the supplied role contract and Run/task identities
-to submit the required result through `pc workflow submit-result`. Bind evidence
-to the assigned integrated version; the Engine validates acceptance.
+## Quality Requirements & Completion Criteria
+
+1. **Approved ledger gate:** No filesystem operations executed without an explicit, confirmed migration ledger.
+2. **Mirror symmetry:** Strict 1:1 structural symmetry between `workflow/scripts/<stage>/<submodule>/` and `results/<stage>/<submodule>/`.
+3. **Cluster independence:** Zero standalone `.sbatch` scripts or submission loops; all compute steps managed natively via Snakemake executor profiles.
+4. **Data preservation:** No loss of production data or intermediate artifacts; backward compatibility symlinks created where required.
+5. **Verified execution:** Small-data smoke runs pass and DAG dry-run resolves without errors.
+
+## Task Outputs
+
+1. **Migration ledger:** Fully populated and verified `migration-ledger.md`.
+2. **Refactored workflow codebase:** Reorganized rules, scripts, configs, and cluster profiles.
+3. **Git commits:** Clean commits preserving history (`git mv`).
+4. **Verification logs:** Small-data smoke execution output and DAG dry-run logs.
+5. **Receipt / submission:**
+   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
+   - When invoked manually or standalone: report the migration ledger, git diff summary, and verification logs to the caller.
