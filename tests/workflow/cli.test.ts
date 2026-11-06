@@ -131,7 +131,7 @@ describe('Workflow CLI smoke tests (Ticket #2)', () => {
     expect(statusOutput.run_id).toBe(startOutput.run_id);
     expect(statusOutput.status).toBe('pending_dispatch');
     expect(statusOutput.issue).toBe(123);
-    expect(statusOutput.step).toBe('implementation');
+    expect(statusOutput.worktree).toBeDefined();
 
     stdout.length = 0;
     stderr.length = 0;

@@ -211,7 +211,13 @@ export class Run {
     let snapshot: RunSnapshot | null = null;
     try {
       snapshot = await state.read(runId);
-    } catch {
+    } catch (err) {
+      if ((err as Error).message?.includes('Legacy workflow state detected')) {
+        throw err;
+      }
+      if (!(err as Error).message?.includes('not found or missing event log')) {
+        throw err;
+      }
       // New run
     }
 
