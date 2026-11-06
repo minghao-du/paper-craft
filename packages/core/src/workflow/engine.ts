@@ -3,6 +3,7 @@
  * execution dispatch, and result persistence.
  */
 
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -38,14 +39,14 @@ import {
   initWorkflowConfig,
   loadWorkflowConfig,
 } from './config.js';
-import { RepositoryManager } from './repository.js';
-import { createAgentExecutor } from './executor.js';
 import {
+  RepositoryManager,
   WorkflowCleanupError,
-  WorkflowFiles,
   WorkflowOwnershipError,
   type WorktreeOwnerMarker,
-} from './files.js';
+} from './repository.js';
+import { createAgentExecutor } from './executor.js';
+import { WorkflowFiles } from './files.js';
 import { TaskExecution } from './execution.js';
 
 export { WorkflowCleanupError, WorkflowOwnershipError };
@@ -409,17 +410,36 @@ export class WorkflowEngine {
       // runs dir does not exist yet; no conflicts
     }
 
-    // Check worktree ownership conflict
+    // Check worktree directory and ownership conflict
     const targetWorktree = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
     try {
-      const ownerData = await this.files.readWorktreeOwner(targetWorktree);
-      if (ownerData && ownerData.run_id) {
-        errors.push(
-          `Target worktree directory "${targetWorktree}" has conflicting ownership marker belonging to "${ownerData.run_id}".`,
-        );
+      const st = await fs.stat(targetWorktree);
+      if (st.isDirectory()) {
+        try {
+          const ownerData = await this.repositoryManager.readWorktreeOwner(targetWorktree);
+          if (ownerData && ownerData.run_id) {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" has conflicting ownership marker belonging to "${ownerData.run_id}".`,
+            );
+          } else {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" already exists. Refusing to overwrite or auto-takeover existing directory.`,
+            );
+          }
+        } catch (err) {
+          if (err instanceof WorkflowOwnershipError) {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" has conflicting ownership marker: ${(err as Error).message}`,
+            );
+          } else {
+            errors.push(
+              `Target worktree directory "${targetWorktree}" already exists. Refusing to overwrite or auto-takeover existing directory.`,
+            );
+          }
+        }
       }
     } catch {
-      // Marker does not exist; no conflict
+      // Directory does not exist; no conflict
     }
 
     details.sharedRequirements = sharedRequirementsContent;
@@ -458,7 +478,15 @@ export class WorkflowEngine {
     const nowIso = new Date().toISOString();
     const provider = options.provider || config.provider || 'agy';
     const resolvedWorktreeRoot = path.resolve(this.cwd, config.worktree_root);
-    const worktreePath = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
+    const targetWorktreePath = path.resolve(resolvedWorktreeRoot, `issue-${options.issue}`);
+    const branchName = `codex/${runId}`;
+
+    const wtResult = await this.repositoryManager.createWorktree(runId, {
+      worktreePath: targetWorktreePath,
+      branchName,
+      repository: config.repository,
+      cwd: this.cwd,
+    });
 
     const runContext: RunContext = {
       run_id: runId,
@@ -466,7 +494,7 @@ export class WorkflowEngine {
       issue: options.issue,
       issue_title: preflightResult.details?.issueTitle as string | undefined,
       provider,
-      worktree_path: worktreePath,
+      worktree_path: wtResult.worktreePath,
       created_at: nowIso,
       status: 'pending_dispatch',
       current_step: workflow.initial_step,
@@ -477,7 +505,16 @@ export class WorkflowEngine {
       roles: JSON.parse(JSON.stringify(roles)),
     };
 
-    await this.files.createRun(runContext);
+    try {
+      await this.files.createRun(runContext);
+    } catch (err) {
+      try {
+        await this.repositoryManager.releaseWorktree(wtResult.worktreePath, runId, { cwd: this.cwd });
+      } catch {
+        // Preserve original error
+      }
+      throw err;
+    }
 
     if (options.orchestratorHandle) {
       const orchEvent: RunEvent = {
@@ -1023,8 +1060,12 @@ export class WorkflowEngine {
       };
     }
 
-    // 4. Validate ownership and safely clean up worktree via WorkflowFiles
-    const worktreeCleanup = await this.files.releaseWorktree(initialContext.worktree_path, runId);
+    // 4. Validate ownership, Git registration, clean state, and safely release worktree via RepositoryManager
+    const worktreeCleanup = await this.repositoryManager.releaseWorktree(
+      initialContext.worktree_path,
+      runId,
+      { cwd: this.cwd },
+    );
     if (!worktreeCleanup.released) {
       const reason = worktreeCleanup.error || 'Failed to clean up worktree.';
       await this.appendEvent(runId, {
@@ -1663,11 +1704,14 @@ export class WorkflowEngine {
     // Check worktree ownership safeguards
     let conflictingOwner: string | undefined;
     try {
-      const ownerData = await this.files.readWorktreeOwner(initialContext.worktree_path);
+      const ownerData = await this.repositoryManager.readWorktreeOwner(initialContext.worktree_path);
       if (ownerData && ownerData.run_id && ownerData.run_id !== runId) {
         conflictingOwner = ownerData.run_id;
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof WorkflowOwnershipError) {
+        throw err;
+      }
       // Owner marker missing or directory does not exist yet
     }
 
@@ -1739,7 +1783,6 @@ export class WorkflowEngine {
               },
             });
             currentStatus = 'completed';
-            currentStep = 'completed';
             resumeMessage = `Resumed and reconciled finalization release for task "${activeTaskId}". Resources released and Run marked completed.`;
           } else {
             currentStatus = 'blocked';
@@ -1901,14 +1944,11 @@ export class WorkflowEngine {
     // Maintain worktree ownership ONLY if the Run is not completed
     if (currentStatus !== 'completed') {
       const ownerMarker: WorktreeOwnerMarker = {
+        version: '1.0',
         run_id: runId,
         repository: initialContext.repository,
-        issue: initialContext.issue,
-        task_id: activeTaskId,
-        role: activeRole ?? initialContext.workflow.steps[currentStep]?.role,
-        claimed_at: new Date().toISOString(),
       };
-      await this.files.writeWorktreeOwner(initialContext.worktree_path, ownerMarker);
+      await this.repositoryManager.writeWorktreeOwner(initialContext.worktree_path, ownerMarker);
     }
 
     // Get current scheduling context after reconciliation

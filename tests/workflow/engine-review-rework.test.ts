@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import {
   WorkflowEngine,
   computeNextStep,
@@ -71,8 +72,10 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-review-rework-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new MockExecutor();
     mockRepoManager = new RepositoryManager({
+      cwd: tmpDir,
       issueInspector: async (_repo, issue) => ({
         exists: true,
         open: true,

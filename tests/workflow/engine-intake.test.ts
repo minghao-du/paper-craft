@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
 import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
 import type { AgentExecutor } from '../../packages/core/src/workflow/types.js';
@@ -13,8 +14,10 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-workflow-test-'));
+    await initTestGitRepo(tmpDir);
 
     mockRepoManager = new RepositoryManager({
+      cwd: tmpDir,
       issueInspector: async (_repo: string, issue: number) => {
         if (issue === 404) {
           return { exists: false, error: `Issue #${issue} not found in repository` };
@@ -278,7 +281,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       await fs.mkdir(worktreeDir, { recursive: true });
       await fs.writeFile(
         path.join(worktreeDir, '.pc-execution-owner'),
-        JSON.stringify({ run_id: 'other-run-id', owner: 'other-process', timestamp: new Date().toISOString() }),
+        JSON.stringify({ version: '1.0', run_id: 'other-run-id', repository: 'test-owner/test-repo' }),
       );
 
       await expect(engine.start({ issue: 99 })).rejects.toThrow(/worktree.*conflict.*other-run-id/i);

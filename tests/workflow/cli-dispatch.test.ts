@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { runCli } from '../../packages/cli/src/workflow.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
 import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
@@ -37,9 +38,11 @@ describe('Workflow CLI dispatch & submit-result (Ticket #3)', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-cli-dispatch-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new MockCliExecutor();
 
     const mockRepoManager = new RepositoryManager({
+      cwd: tmpDir,
       issueInspector: async (_repo, issue) => ({
         exists: true,
         open: true,

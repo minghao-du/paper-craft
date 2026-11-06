@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
 import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
 import type {
@@ -66,6 +67,7 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-dispatch-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new ControlledMockExecutor();
 
     mockRepoManager = new RepositoryManager({
@@ -145,9 +147,9 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
         'utf8',
       );
       const ownerMarker = JSON.parse(ownerMarkerRaw);
+      expect(ownerMarker.version).toBe('1.0');
       expect(ownerMarker.run_id).toBe(runContext.run_id);
-      expect(ownerMarker.issue).toBe(101);
-      expect(ownerMarker.role).toBe('worker');
+      expect(ownerMarker.repository).toBe(runContext.repository);
 
       const initJsonRaw = await fs.readFile(
         path.join(runContext.worktree_path, 'initialization.json'),

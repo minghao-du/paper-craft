@@ -15,7 +15,7 @@ import type {
   RunEvent,
   TaskResult,
 } from './types.js';
-import type { WorkflowFiles, WorktreeOwnerMarker } from './files.js';
+import type { WorkflowFiles } from './files.js';
 
 /**
  * Facts about the active or most recently dispatched task for a Run.
@@ -197,7 +197,7 @@ export class TaskExecution {
 
   /**
    * Dispatches a single task:
-   * 1. Prepares worktree files (.pc-execution-owner and initialization.json).
+   * 1. Prepares worktree task initialization (initialization.json).
    * 2. Composes worker prompt.
    * 3. Records dispatch_intent event BEFORE external launch.
    * 4. Launches agent executor process.
@@ -208,18 +208,7 @@ export class TaskExecution {
    * @returns DispatchResult containing task facts.
    */
   async dispatch(params: TaskDispatchParams): Promise<DispatchResult> {
-    const nowIso = new Date().toISOString();
-
-    // 1. Prepare dedicated worktree files via WorkflowFiles
-    const ownerMarker: WorktreeOwnerMarker = {
-      run_id: params.runId,
-      repository: params.repository,
-      issue: params.issue,
-      task_id: params.taskId,
-      role: params.role,
-      claimed_at: nowIso,
-    };
-
+    // 1. Prepare task initialization file via WorkflowFiles
     const initData: Record<string, unknown> = {
       run_id: params.runId,
       task_id: params.taskId,
@@ -242,7 +231,7 @@ export class TaskExecution {
       delivery_artifacts: params.deliveryArtifacts,
     };
 
-    await this.files.prepareTaskFiles(params.worktreePath, ownerMarker, initData);
+    await this.files.prepareTaskFiles(params.worktreePath, initData);
 
     // 2. Compose worker prompt
     const prompt = this.composeWorkerPrompt(params);

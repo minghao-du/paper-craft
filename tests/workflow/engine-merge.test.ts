@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import {
   WorkflowEngine,
   WorkflowReviewInvalidatedError,
@@ -119,8 +120,9 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-merge-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new MockExecutor();
-    mockRepoManager = new MockRepositoryManager();
+    mockRepoManager = new MockRepositoryManager({ cwd: tmpDir });
   });
 
   afterEach(async () => {

@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
 import { runCli } from '../../packages/cli/src/workflow.js';
 import {
@@ -122,6 +123,7 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-workflow-e2e-'));
+    await initTestGitRepo(tmpDir);
     executor = new ControlledExecutor();
     repositoryManager = new ControlledRepositoryManager();
 
@@ -160,8 +162,9 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
     const ownerFile = path.join(run.worktree_path, '.pc-execution-owner');
     expect(await fs.stat(ownerFile).then(() => true)).toBe(true);
     const ownerContent = JSON.parse(await fs.readFile(ownerFile, 'utf8'));
+    expect(ownerContent.version).toBe('1.0');
     expect(ownerContent.run_id).toBe(run.run_id);
-    expect(ownerContent.issue).toBe(8);
+    expect(ownerContent.repository).toBe('minghao-du/paper-craft');
 
     // 3. Worker Implementation: Scheduling Context & Dispatch
     const workerContext = await engine.getSchedulingContext(run.run_id);

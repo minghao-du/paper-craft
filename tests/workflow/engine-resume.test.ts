@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { initTestGitRepo } from './test-git-helper.js';
 import { WorkflowEngine, WorkflowOwnershipError } from '../../packages/core/src/workflow/engine.js';
 import { runCli } from '../../packages/cli/src/workflow.js';
 import { RepositoryManager } from '../../packages/core/src/workflow/repository.js';
@@ -64,9 +65,11 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-resume-test-'));
+    await initTestGitRepo(tmpDir);
     mockExecutor = new ResumeTestMockExecutor();
 
     mockRepoManager = new RepositoryManager({
+      cwd: tmpDir,
       issueInspector: async (_repo: string, issue: number) => ({
         exists: true,
         open: true,
@@ -424,7 +427,7 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
       const ownerMarkerPath = path.join(run.worktree_path, '.pc-execution-owner');
       await fs.writeFile(
         ownerMarkerPath,
-        JSON.stringify({ run_id: 'other-foreign-run-999', claimed_at: new Date().toISOString() }),
+        JSON.stringify({ version: '1.0', run_id: 'other-foreign-run-999', repository: 'test-owner/test-repo' }),
         'utf8',
       );
 
@@ -445,6 +448,7 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
       const ownerRaw = await fs.readFile(ownerMarkerPath, 'utf8');
       const ownerData = JSON.parse(ownerRaw);
       expect(ownerData.run_id).toBe(run.run_id);
+      expect(ownerData.version).toBe('1.0');
     });
   });
 

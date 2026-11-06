@@ -1,10 +1,33 @@
 /**
- * @fileoverview RepositoryManager: unified entrypoint for repository, issue, and PR operations.
+ * @fileoverview RepositoryManager: unified entrypoint for repository, issue, PR, and Git worktree operations.
  */
 
 import { inspectGitHubIssue } from './repository/issue.js';
 import { inspectGitHubPR } from './repository/pr.js';
+import {
+  createGitWorktree,
+  releaseGitWorktree,
+  readWorktreeOwner,
+  writeWorktreeOwner,
+  WorkflowOwnershipError,
+  WorkflowCleanupError,
+  type CreateWorktreeOptions,
+  type ReleaseWorktreeOptions,
+  type ReleaseWorktreeResult,
+  type WorktreeCreationResult,
+  type WorktreeOwnerMarker,
+} from './repository/worktree.js';
 import type { IssueCheckResult, MergeStatusResult } from './types.js';
+
+export {
+  WorkflowOwnershipError,
+  WorkflowCleanupError,
+  type CreateWorktreeOptions,
+  type ReleaseWorktreeOptions,
+  type ReleaseWorktreeResult,
+  type WorktreeCreationResult,
+  type WorktreeOwnerMarker,
+};
 
 /**
  * Options for checking a GitHub issue.
@@ -48,11 +71,28 @@ export interface RepositoryManagerOptions {
     prOrIssue: number | string,
     worktreePath?: string,
   ) => Promise<MergeStatusResult>;
+  /**
+   * Internal hook for creating worktrees. Used primarily for testing.
+   * @internal
+   */
+  worktreeCreator?: (
+    runId: string,
+    options?: CreateWorktreeOptions,
+  ) => Promise<WorktreeCreationResult>;
+  /**
+   * Internal hook for releasing worktrees. Used primarily for testing.
+   * @internal
+   */
+  worktreeReleaser?: (
+    worktreePath: string,
+    expectedRunId: string,
+    options?: ReleaseWorktreeOptions,
+  ) => Promise<ReleaseWorktreeResult>;
 }
 
 /**
  * RepositoryManager provides a unified entrypoint for repository operations,
- * managing issue verification and PR merge status checks.
+ * managing issue verification, PR merge status checks, and Git worktree lifecycles.
  */
 export class RepositoryManager {
   public readonly repository?: string;
@@ -63,12 +103,23 @@ export class RepositoryManager {
     prOrIssue: number | string,
     worktreePath?: string,
   ) => Promise<MergeStatusResult>;
+  private readonly worktreeCreator: (
+    runId: string,
+    options?: CreateWorktreeOptions,
+  ) => Promise<WorktreeCreationResult>;
+  private readonly worktreeReleaser: (
+    worktreePath: string,
+    expectedRunId: string,
+    options?: ReleaseWorktreeOptions,
+  ) => Promise<ReleaseWorktreeResult>;
 
   constructor(options?: RepositoryManagerOptions) {
     this.repository = options?.repository;
     this.cwd = options?.cwd;
     this.issueInspector = options?.issueInspector ?? inspectGitHubIssue;
     this.prInspector = options?.prInspector ?? inspectGitHubPR;
+    this.worktreeCreator = options?.worktreeCreator ?? createGitWorktree;
+    this.worktreeReleaser = options?.worktreeReleaser ?? releaseGitWorktree;
   }
 
   /**
@@ -137,5 +188,64 @@ export class RepositoryManager {
     }
 
     return result;
+  }
+
+  /**
+   * Creates a dedicated Git worktree for a Run from HEAD on a new codex/ branch.
+   * Fails explicitly if directory or branch already exists; does not overwrite or auto-takeover.
+   *
+   * @param runId Unique Run identifier.
+   * @param options Optional creation options including worktreePath, worktreeRoot, branchName, and repository.
+   */
+  async createWorktree(
+    runId: string,
+    options?: CreateWorktreeOptions,
+  ): Promise<WorktreeCreationResult> {
+    const effectiveOptions: CreateWorktreeOptions = {
+      cwd: this.cwd,
+      repository: this.repository,
+      ...options,
+    };
+    return this.worktreeCreator(runId, effectiveOptions);
+  }
+
+  /**
+   * Validates run ownership and Git worktree registration, confirms clean working state,
+   * and removes the worktree using non-force git worktree remove. Preserves the branch.
+   *
+   * @param worktreePath Path to the worktree to release.
+   * @param expectedRunId Run identifier expected to own the worktree.
+   * @param options Optional release options.
+   */
+  async releaseWorktree(
+    worktreePath: string,
+    expectedRunId: string,
+    options?: ReleaseWorktreeOptions,
+  ): Promise<ReleaseWorktreeResult> {
+    const effectiveOptions: ReleaseWorktreeOptions = {
+      cwd: this.cwd,
+      ...options,
+    };
+    return this.worktreeReleaser(worktreePath, expectedRunId, effectiveOptions);
+  }
+
+  /**
+   * Reads and parses the .pc-execution-owner marker from a worktree directory.
+   * Returns null if missing; throws WorkflowOwnershipError if corrupt or legacy format.
+   *
+   * @param worktreePath Path to the worktree directory.
+   */
+  async readWorktreeOwner(worktreePath: string): Promise<WorktreeOwnerMarker | null> {
+    return readWorktreeOwner(worktreePath);
+  }
+
+  /**
+   * Writes the version 1.0 .pc-execution-owner marker to a worktree directory.
+   *
+   * @param worktreePath Path to the worktree directory.
+   * @param marker Version 1.0 ownership marker.
+   */
+  async writeWorktreeOwner(worktreePath: string, marker: WorktreeOwnerMarker): Promise<void> {
+    return writeWorktreeOwner(worktreePath, marker);
   }
 }

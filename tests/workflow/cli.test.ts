@@ -3,12 +3,14 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { runCli } from '../../packages/cli/src/workflow.js';
+import { initTestGitRepo } from './test-git-helper.js';
 
 describe('Workflow CLI smoke tests (Ticket #2)', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-cli-test-'));
+    await initTestGitRepo(tmpDir);
   });
 
   afterEach(async () => {

@@ -1,63 +1,24 @@
 /**
  * @fileoverview Unified storage layout and files management for workflow runs,
- * events persistence, requirement snapshots, and worktree ownership markers.
+ * events persistence, requirement snapshots, and task initialization files.
  */
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { RunContext, RunEvent } from './types.js';
+import {
+  WorkflowOwnershipError,
+  WorkflowCleanupError,
+  type ReleaseWorktreeResult,
+  type WorktreeOwnerMarker,
+} from './repository.js';
 
-/**
- * Custom error raised when a worktree has a conflicting ownership claim.
- */
-export class WorkflowOwnershipError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WorkflowOwnershipError';
-  }
-}
-
-/**
- * Custom error raised when resource cleanup or preservation verification fails.
- */
-export class WorkflowCleanupError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WorkflowCleanupError';
-  }
-}
-
-/**
- * Result returned by WorkflowFiles after validating ownership and releasing a worktree.
- */
-export interface ReleaseWorktreeResult {
-  /** Whether the release verification and cleanup completed successfully. */
-  released: boolean;
-  /** Whether the worktree directory existed and was deleted. */
-  worktreeRemoved: boolean;
-  /** Target worktree directory path. */
-  worktreePath: string;
-  /** Error message if cleanup failed or ownership check was violated. */
-  error?: string;
-}
-
-/**
- * Ownership marker recorded in `.pc-execution-owner` to claim worktree authority.
- */
-export interface WorktreeOwnerMarker {
-  /** Unique Run identifier owning this worktree. */
-  run_id: string;
-  /** Repository in owner/repo format. */
-  repository: string;
-  /** Target issue number. */
-  issue: number;
-  /** Active task ID if assigned. */
-  task_id?: string;
-  /** Active specialist role if assigned. */
-  role?: string;
-  /** ISO timestamp when ownership was claimed or updated. */
-  claimed_at: string;
-}
+export {
+  WorkflowOwnershipError,
+  WorkflowCleanupError,
+  type ReleaseWorktreeResult,
+  type WorktreeOwnerMarker,
+};
 
 /**
  * Options for configuring WorkflowFiles storage.
@@ -68,8 +29,8 @@ export interface WorkflowFilesOptions {
 }
 
 /**
- * Manages run documents, requirement snapshots, event persistence, and worktree ownership markers.
- * Files does not evaluate business progression or execution rules.
+ * Manages run documents, requirement snapshots, event persistence, and task initialization files.
+ * Files does not evaluate business progression or execution rules, and does not operate Git worktrees.
  */
 export class WorkflowFiles {
   public readonly storageRoot: string;
@@ -103,13 +64,6 @@ export class WorkflowFiles {
   }
 
   /**
-   * Returns the path to the .pc-execution-owner marker file for a worktree.
-   */
-  getWorktreeOwnerPath(worktreePath: string): string {
-    return path.join(worktreePath, '.pc-execution-owner');
-  }
-
-  /**
    * Returns the path to the initialization.json file for a worktree.
    */
   getTaskInitializationPath(worktreePath: string): string {
@@ -140,21 +94,12 @@ export class WorkflowFiles {
 
   /**
    * Creates the initial Run documents:
-   * - Claims worktree ownership by writing .pc-execution-owner
    * - Creates the run directory
    * - Persists the initial run_created event snapshot into events.jsonl
    *
    * @param context The RunContext to record.
    */
   async createRun(context: RunContext): Promise<void> {
-    const ownerMarker: WorktreeOwnerMarker = {
-      run_id: context.run_id,
-      repository: context.repository,
-      issue: context.issue,
-      claimed_at: context.created_at,
-    };
-    await this.writeWorktreeOwner(context.worktree_path, ownerMarker);
-
     const runDir = this.getRunDir(context.run_id);
     await fs.mkdir(runDir, { recursive: true });
 
@@ -185,34 +130,6 @@ export class WorkflowFiles {
   }
 
   /**
-   * Reads and parses the .pc-execution-owner marker from a worktree directory.
-   * Returns null if the marker does not exist or cannot be read.
-   *
-   * @param worktreePath Path to the worktree directory.
-   */
-  async readWorktreeOwner(worktreePath: string): Promise<WorktreeOwnerMarker | null> {
-    const ownerPath = this.getWorktreeOwnerPath(worktreePath);
-    try {
-      const raw = await fs.readFile(ownerPath, 'utf8');
-      return JSON.parse(raw) as WorktreeOwnerMarker;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Writes the .pc-execution-owner marker to claim or update worktree ownership.
-   *
-   * @param worktreePath Path to the worktree directory.
-   * @param marker The ownership marker data to write.
-   */
-  async writeWorktreeOwner(worktreePath: string, marker: WorktreeOwnerMarker): Promise<void> {
-    await fs.mkdir(worktreePath, { recursive: true });
-    const ownerPath = this.getWorktreeOwnerPath(worktreePath);
-    await fs.writeFile(ownerPath, JSON.stringify(marker, null, 2), 'utf8');
-  }
-
-  /**
    * Writes initialization.json into the target worktree.
    *
    * @param worktreePath Path to the worktree directory.
@@ -225,20 +142,19 @@ export class WorkflowFiles {
   }
 
   /**
-   * Prepares all task-specific files in the worktree:
-   * - Updates worktree ownership marker (.pc-execution-owner)
-   * - Writes initialization context (initialization.json)
+   * Prepares task-specific files in the worktree:
+   * Writes initialization context (initialization.json).
    *
    * @param worktreePath Path to the worktree directory.
-   * @param marker Worktree ownership marker data.
-   * @param initData Task initialization data payload.
+   * @param initDataOrMarker Task initialization data or legacy marker parameter.
+   * @param maybeInitData Task initialization data when called with legacy 3-parameter form.
    */
   async prepareTaskFiles(
     worktreePath: string,
-    marker: WorktreeOwnerMarker,
-    initData: Record<string, unknown>,
+    initDataOrMarker: Record<string, unknown>,
+    maybeInitData?: Record<string, unknown>,
   ): Promise<void> {
-    await this.writeWorktreeOwner(worktreePath, marker);
+    const initData = maybeInitData ?? initDataOrMarker;
     await this.writeTaskInitialization(worktreePath, initData);
   }
 
@@ -253,67 +169,6 @@ export class WorkflowFiles {
       return entries.filter((e) => e.isDirectory()).map((e) => e.name);
     } catch {
       return [];
-    }
-  }
-
-  /**
-   * Validates worktree ownership and safely removes the worktree directory,
-   * while strictly preserving permanent event records in the storage root.
-   *
-   * @param worktreePath Path to the worktree to clean up.
-   * @param expectedRunId Run identifier expected to own the worktree.
-   * @returns Facts describing whether release succeeded and whether the worktree was removed.
-   */
-  async releaseWorktree(worktreePath: string, expectedRunId: string): Promise<ReleaseWorktreeResult> {
-    let worktreeExists: boolean;
-    try {
-      const st = await fs.stat(worktreePath);
-      worktreeExists = st.isDirectory();
-    } catch {
-      worktreeExists = false;
-    }
-
-    if (!worktreeExists) {
-      return {
-        released: true,
-        worktreeRemoved: false,
-        worktreePath,
-      };
-    }
-
-    const ownerMarker = await this.readWorktreeOwner(worktreePath);
-    if (!ownerMarker) {
-      return {
-        released: false,
-        worktreeRemoved: false,
-        worktreePath,
-        error: `Cannot clean up worktree: .pc-execution-owner marker is missing at "${worktreePath}". Refusing to destroy unverified directory.`,
-      };
-    }
-
-    if (ownerMarker.run_id !== expectedRunId) {
-      return {
-        released: false,
-        worktreeRemoved: false,
-        worktreePath,
-        error: `Cannot clean up worktree: ownership mismatch. Worktree belongs to run "${ownerMarker.run_id}", not "${expectedRunId}". Refusing to destroy foreign worktree.`,
-      };
-    }
-
-    try {
-      await fs.rm(worktreePath, { recursive: true, force: true });
-      return {
-        released: true,
-        worktreeRemoved: true,
-        worktreePath,
-      };
-    } catch (err) {
-      return {
-        released: false,
-        worktreeRemoved: false,
-        worktreePath,
-        error: `Failed to remove worktree at "${worktreePath}": ${(err as Error).message}.`,
-      };
     }
   }
 
