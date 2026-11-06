@@ -136,7 +136,39 @@ describe('Workflow CLI smoke tests (Ticket #2)', () => {
     stdout.length = 0;
     stderr.length = 0;
 
-    // 4. Verify unadvertised compatibility shims (like 'orchestrator') are rejected
+    // 4. Record and view plan via CLI
+    stdout.length = 0;
+    stderr.length = 0;
+
+    const planCode = await runCli(['workflow', 'plan', startOutput.run_id, '--plan', JSON.stringify({ steps: ['step1', 'step2'] })], {
+      cwd: tmpDir,
+      stdout: (msg) => stdout.push(msg),
+      stderr: (msg) => stderr.push(msg),
+      engine,
+    });
+    expect(planCode).toBe(0);
+    const planOutput = JSON.parse(stdout.join('\n'));
+    expect(planOutput.recorded).toBe(true);
+    expect(planOutput.plan).toEqual({ steps: ['step1', 'step2'] });
+
+    stdout.length = 0;
+    stderr.length = 0;
+
+    // View recorded plan
+    const viewPlanCode = await runCli(['workflow', 'plan', startOutput.run_id], {
+      cwd: tmpDir,
+      stdout: (msg) => stdout.push(msg),
+      stderr: (msg) => stderr.push(msg),
+      engine,
+    });
+    expect(viewPlanCode).toBe(0);
+    const viewPlanOutput = JSON.parse(stdout.join('\n'));
+    expect(viewPlanOutput.plan).toEqual({ steps: ['step1', 'step2'] });
+
+    stdout.length = 0;
+    stderr.length = 0;
+
+    // 5. Verify unadvertised compatibility shims (like 'orchestrator') are rejected
     const invalidShimCode = await runCli(['workflow', 'orchestrator', 'status'], {
       cwd: tmpDir,
       stdout: (msg) => stdout.push(msg),

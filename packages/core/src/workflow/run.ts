@@ -47,6 +47,8 @@ export interface OpenRunOptions {
   provider?: string;
   /** Custom AgentExecutor instance (e.g. for testing with ControlledExecutor). */
   executor?: AgentExecutor;
+  /** If true, force re-allocating/preparing the git worktree even if the Run is already completed. */
+  reallocateWorktree?: boolean;
 }
 
 /**
@@ -221,13 +223,22 @@ export class Run {
       // New run
     }
 
-    // Prepare or verify worktree with 1.0 owner marker
-    const wtInfo = await worktree.prepare(runId, {
-      worktreePath: options.worktreePath ?? snapshot?.worktreePath,
-      worktreeRoot: options.worktreeRoot,
-      branchName: options.branchName,
-      repository: options.repository ?? snapshot?.repository,
-    });
+    let worktreePath = options.worktreePath ?? snapshot?.worktreePath;
+    if (snapshot?.status === 'completed' && !options.reallocateWorktree) {
+      // Completed run: worktree was retired; do not unconditionally recreate git worktree
+      if (!worktreePath) {
+        worktreePath = path.join(cwd, '.paper-craft', 'worktrees', runId);
+      }
+    } else {
+      // Prepare or verify worktree with 1.0 owner marker
+      const wtInfo = await worktree.prepare(runId, {
+        worktreePath,
+        worktreeRoot: options.worktreeRoot,
+        branchName: options.branchName,
+        repository: options.repository ?? snapshot?.repository,
+      });
+      worktreePath = wtInfo.worktreePath;
+    }
 
     if (!snapshot) {
       snapshot = await state.apply(runId, {
@@ -237,7 +248,7 @@ export class Run {
           repository: options.repository,
           issue: options.issue,
           goal: options.goal,
-          worktreePath: wtInfo.worktreePath,
+          worktreePath,
           provider: options.provider ?? 'agy',
         },
       });
@@ -251,7 +262,7 @@ export class Run {
 
     return new Run({
       runId,
-      worktreePath: wtInfo.worktreePath,
+      worktreePath,
       assignments,
       execution,
       worktree,
@@ -455,23 +466,20 @@ export class Run {
       };
     }
 
-    const executionObs = await this.execution.inspect(targetTaskId);
+    const task = snapshot.tasks.get(targetTaskId);
+    const wt = task?.worktreePath ?? this.worktreePath;
+    const executionObs = await this.execution.inspect(targetTaskId, wt);
 
     // Check if result already submitted in durable state
     let result = snapshot.results.get(targetTaskId);
 
-    // If no submitted result yet, check if worker wrote result.json in worktree
-    if (!result) {
-      const task = snapshot.tasks.get(targetTaskId);
-      const wt = task?.worktreePath ?? this.worktreePath;
-      const resultPath = path.join(wt, 'result.json');
+    // If no submitted result yet, check if execution observed a valid raw receipt
+    if (!result && executionObs.rawReceipt) {
       try {
-        const rawResult = await fs.readFile(resultPath, 'utf8');
-        const parsed = JSON.parse(rawResult);
-        const subResult = await this.submitResult(targetTaskId, parsed);
+        const subResult = await this.submitResult(targetTaskId, executionObs.rawReceipt);
         result = subResult.result;
       } catch {
-        // result.json not written or not ready yet
+        // Raw receipt was invalid or could not be submitted
       }
     }
 

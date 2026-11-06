@@ -217,6 +217,25 @@ describe('Issue Work, PR Land, and Rework Dispatch (#32)', () => {
       });
       expect(validRework.acknowledged).toBe(true);
       expect(validRework.result.outcome).toBe('rework_needed');
+      expect(validRework.result.artifacts?.evaluatedCommit).toBe('deadbeef112233');
+      expect(validRework.result.artifacts?.previousHeadSha).toBe('deadbeef112233');
+
+      // Normalization also works when previousHeadSha is passed
+      const reworkTask2 = await run.dispatch({
+        taskType: 'pc-pr-land',
+        instructions: 'Deliver another PR attempt',
+      });
+      const validRework2 = await run.submitResult(reworkTask2.taskId, {
+        outcome: 'rework_needed',
+        summary: 'Review failed with previousHeadSha',
+        artifacts: {
+          merged: false,
+          findings: 'Tests failed on edge cases',
+          previousHeadSha: 'feedface445566',
+        },
+      });
+      expect(validRework2.result.artifacts?.evaluatedCommit).toBe('feedface445566');
+      expect(validRework2.result.artifacts?.previousHeadSha).toBe('feedface445566');
     });
   });
 
