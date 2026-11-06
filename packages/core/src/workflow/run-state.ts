@@ -8,13 +8,10 @@
 import * as path from 'node:path';
 import type {
   ExecutionHandle,
-  RoleDefinitions,
   RunContext,
   RunEvent,
   RunStatus,
   TaskResult,
-  WorkflowConfig,
-  WorkflowDefinition,
 } from './types.js';
 import { WorkflowFiles } from './files.js';
 
@@ -255,6 +252,31 @@ function runPolicy(snapshot: RunSnapshot | null, operation: RunOperation): void 
  * Private pure function: folds append-only events into a materialized RunSnapshot.
  */
 function runView(events: RunEvent[]): RunSnapshot {
+  for (const event of events) {
+    const rawPayload = (event.payload ?? {}) as Record<string, unknown>;
+    const payload = (rawPayload.context ?? rawPayload) as Record<string, unknown>;
+
+    const isLegacy =
+      event.type === 'task_dispatched' ||
+      event.type === 'step_transition' ||
+      'step' in rawPayload ||
+      'role' in rawPayload ||
+      'step' in payload ||
+      'role' in payload ||
+      'current_step' in payload ||
+      ('workflow' in payload &&
+        payload.workflow &&
+        typeof payload.workflow === 'object' &&
+        'steps' in (payload.workflow as Record<string, unknown>)) ||
+      Boolean(payload.workflow_definition);
+
+    if (isLegacy) {
+      throw new Error(
+        `Legacy workflow state detected for run "${event.run_id}". Old stored state cannot be silently interpreted as new Run semantics.`,
+      );
+    }
+  }
+
   const snapshot: RunSnapshot = {
     runId: '',
     status: 'pending_dispatch',
@@ -486,12 +508,7 @@ export class RunState {
         worktree_path: operation.context.worktreePath ?? '',
         created_at: newEvent.timestamp,
         status: 'pending_dispatch',
-        current_step: 'initial',
-        rework_count: 0,
-        shared_requirements: '',
-        config: {} as unknown as WorkflowConfig,
-        workflow: {} as unknown as WorkflowDefinition,
-        roles: {} as unknown as RoleDefinitions,
+        goal: operation.context.goal,
         ...operation.context,
       } as unknown as RunContext);
       events = [newEvent];

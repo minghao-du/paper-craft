@@ -1,7 +1,15 @@
 /**
- * @fileoverview End-to-end integration test suite for Ticket #8:
- * Verify complete delivery and recovery with deterministic execution.
- * Retains routine deterministic tests without live model calls.
+ * @fileoverview End-to-end integration test suite for Ticket #35 & Spec #29:
+ * Verifies complete orchestrator delivery procedure through Run:
+ * 1) pc-issue-plan (planning & decomposition)
+ * 2) pc-issue-work (implementation & verification)
+ * 3) pc-pr-land with rework dispatch back to pc-issue-work linking predecessor findings
+ * 4) pc-pr-land landing approved PR
+ * 5) pc-issue-verify (overall acceptance verification against goal)
+ * 6) pc-pipeline-refactor (pipeline file reorganization preserving invariance)
+ * 7) pc-pr-land re-delivery for pipeline changes
+ * 8) pc-research-state (final research records and reproduction entry points)
+ * 9) run.finish (verified teardown and safe release)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -9,19 +17,13 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { initTestGitRepo } from './test-git-helper.js';
-import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
+import { Run } from '../../packages/core/src/workflow/run.js';
 import { runCli } from '../../packages/cli/src/workflow.js';
-import {
-  RepositoryManager,
-  type CheckMergeStatusOptions,
-} from '../../packages/core/src/workflow/repository.js';
 import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  IssueCheckResult,
-  MergeStatusResult,
 } from '../../packages/core/src/workflow/types.js';
 
 class ControlledExecutor implements AgentExecutor {
@@ -44,7 +46,7 @@ class ControlledExecutor implements AgentExecutor {
     this.launchedTasks.push({ taskId, workingDirectory, prompt });
     this.taskStatuses.set(taskId, 'running');
     return {
-      id: `handle-${taskId}`,
+      id: `handle-${taskId}-${this.launchedTasks.length}`,
       taskId,
     };
   }
@@ -70,416 +72,467 @@ class ControlledExecutor implements AgentExecutor {
   }
 }
 
-class ControlledRepositoryManager extends RepositoryManager {
-  public headSha = 'commit-approved-8a8b8c';
-  public state: 'OPEN' | 'MERGED' | 'CLOSED' = 'OPEN';
-  public merged = false;
-  public mergeCommitSha?: string;
-  public exists = true;
-  public error?: string;
-
-  override async checkIssue(issue: number): Promise<IssueCheckResult> {
-    return {
-      exists: true,
-      open: true,
-      title: `Designated Acceptance Issue #${issue}`,
-    };
-  }
-
-  override async checkMergeStatus(
-    _prOrIssue: number | string,
-    expectedHeadShaOrOptions?: string | CheckMergeStatusOptions,
-    _maybeOptions?: CheckMergeStatusOptions,
-  ): Promise<MergeStatusResult> {
-    if (this.error) {
-      return { exists: false, error: this.error };
-    }
-    let expectedHeadSha: string | undefined;
-    if (typeof expectedHeadShaOrOptions === 'string') {
-      expectedHeadSha = expectedHeadShaOrOptions;
-    } else if (typeof expectedHeadShaOrOptions === 'object') {
-      expectedHeadSha = expectedHeadShaOrOptions.expectedHeadSha;
-    }
-
-    const matchesExpectedHead =
-      expectedHeadSha !== undefined ? this.headSha === expectedHeadSha : undefined;
-
-    return {
-      exists: this.exists,
-      headSha: this.headSha,
-      state: this.state,
-      merged: this.merged,
-      mergeCommitSha: this.mergeCommitSha,
-      matchesExpectedHead,
-    };
-  }
-}
-
-describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)', () => {
+describe('Orchestrator End-to-End Delivery & Run Decoupling (#35)', () => {
   let tmpDir: string;
+  let repoDir: string;
+  let storageRoot: string;
   let executor: ControlledExecutor;
-  let repositoryManager: ControlledRepositoryManager;
-  let engine: WorkflowEngine;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-workflow-e2e-'));
-    await initTestGitRepo(tmpDir);
+    repoDir = path.join(tmpDir, 'repo');
+    storageRoot = path.join(tmpDir, 'storage');
+    await fs.mkdir(repoDir, { recursive: true });
+    await fs.mkdir(storageRoot, { recursive: true });
+    await initTestGitRepo(repoDir);
     executor = new ControlledExecutor();
-    repositoryManager = new ControlledRepositoryManager();
-
-    engine = new WorkflowEngine({
-      cwd: tmpDir,
-      executor,
-      repositoryManager,
-    });
   });
 
   afterEach(async () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('delivers an acceptance issue through complete lifecycle: worker -> review -> merge interruption & resume -> finalization & resource release', async () => {
-    // 1. Initialization
-    const initRes = await engine.init({
+  it('delivers an acceptance issue through complete 6-step default flow with rework dispatch and safe finish', async () => {
+    // 1. Open Run
+    const run = await Run.open({
+      runId: 'run-e2e-complete',
       repository: 'minghao-du/paper-craft',
-      provider: 'agy',
-    });
-    expect(initRes.configPath).toBe(path.join(tmpDir, '.pc-workflow.yml'));
-
-    // 2. Start Run with immutable requirements
-    const sharedRequirements = 'Verify complete delivery and recovery with real agy (Ticket #8).';
-    const run = await engine.start({
-      issue: 8,
-      requirements: sharedRequirements,
+      issue: 35,
+      goal: 'Switch orchestrator default workflow and remove legacy state machine',
+      repoRoot: repoDir,
+      worktreeRoot: repoDir,
+      storageRoot,
+      executor,
     });
 
-    expect(run.run_id).toBeDefined();
-    expect(run.status).toBe('pending_dispatch');
-    expect(run.current_step).toBe('implementation');
-    expect(run.worktree_path).toBe(path.join(tmpDir, '.worktrees', 'issue-8'));
+    expect(run.runId).toBe('run-e2e-complete');
+    expect(run.worktreePath).toBeDefined();
 
-    // Verify worktree ownership safeguard
-    const ownerFile = path.join(run.worktree_path, '.pc-execution-owner');
-    expect(await fs.stat(ownerFile).then(() => true)).toBe(true);
-    const ownerContent = JSON.parse(await fs.readFile(ownerFile, 'utf8'));
-    expect(ownerContent.version).toBe('1.0');
-    expect(ownerContent.run_id).toBe(run.run_id);
-    expect(ownerContent.repository).toBe('minghao-du/paper-craft');
+    // Step 1: Planning & Decomposition (pc-issue-plan)
+    const planTask = await run.dispatch({
+      taskType: 'pc-issue-plan',
+      instructions: 'Analyze requirements and decompose if needed',
+      inputs: {
+        issue: 35,
+        issueTitle: 'Switch orchestrator to Run',
+        issueBody: 'Spec #29 final ticket',
+        goal: 'Complete Ticket #35',
+      },
+    });
 
-    // 3. Worker Implementation: Scheduling Context & Dispatch
-    const workerContext = await engine.getSchedulingContext(run.run_id);
-    expect(workerContext.currentStep).toBe('implementation');
-    expect(workerContext.stepDefinition.role).toBe('worker');
-    expect(workerContext.roleContract.skill).toBe('pc-issue-work');
-    expect(workerContext.roleContract.permitted_outcomes).toContain('completed');
-    expect(workerContext.roleContract.required_artifacts).toEqual(['diff', 'test_results']);
-    expect(workerContext.sharedRequirements).toBe(sharedRequirements);
-
-    const workerDispatch = await engine.dispatch(
-      run.run_id,
-      'Implement Issue #8 changes according to acceptance criteria',
-    );
-    expect(workerDispatch.taskId).toBeDefined();
-    expect(workerDispatch.step).toBe('implementation');
-    expect(workerDispatch.role).toBe('worker');
+    expect(planTask.taskType).toBe('pc-issue-plan');
     expect(executor.launchedTasks.length).toBe(1);
 
-    // Verify task initialization context written to worktree
-    const initFile = path.join(run.worktree_path, 'initialization.json');
-    expect(await fs.stat(initFile).then(() => true)).toBe(true);
-    const initContent = JSON.parse(await fs.readFile(initFile, 'utf8'));
-    expect(initContent.run_id).toBe(run.run_id);
-    expect(initContent.task_id).toBe(workerDispatch.taskId);
-    expect(initContent.shared_requirements).toBe(sharedRequirements);
-
-    // Worker submissions: missing required artifacts rejected
-    await expect(
-      engine.submitResult(run.run_id, workerDispatch.taskId, {
-        outcome: 'completed',
-        summary: 'Incomplete implementation',
-        artifacts: { diff: 'some diff' }, // missing test_results
-      }),
-    ).rejects.toThrow('missing required artifact(s): test_results');
-
-    // Valid worker submission
-    const workerResult = await engine.submitResult(run.run_id, workerDispatch.taskId, {
-      outcome: 'completed',
-      summary: 'Implemented end-to-end changes with all checks passing',
+    await run.submitResult(planTask.taskId, {
+      outcome: 'decomposed',
+      summary: 'Decomposed into subtasks in dependency order',
       artifacts: {
-        diff: 'diff --git a/e2e.ts b/e2e.ts\n+e2e test verified',
-        test_results: 'All 98 test suites passed',
-      },
-    });
-
-    expect(workerResult.acknowledged).toBe(true);
-    expect(workerResult.executionTerminated).toBe(true);
-    expect(workerResult.nextStep).toBe('review');
-    expect(workerResult.transitionStatus).toBe('running');
-
-    // 4. Reviewer Evaluation: Scheduling Context & Dispatch
-    const reviewContext = await engine.getSchedulingContext(run.run_id);
-    expect(reviewContext.currentStep).toBe('review');
-    expect(reviewContext.stepDefinition.role).toBe('reviewer');
-    expect(reviewContext.roleContract.skill).toBe('pc-pr-review');
-    expect(reviewContext.roleContract.required_artifacts).toEqual(['reviewed_commit', 'findings']);
-
-    const reviewDispatch = await engine.dispatch(
-      run.run_id,
-      'Review worker diff and test results against criteria',
-    );
-    expect(reviewDispatch.step).toBe('review');
-    expect(reviewDispatch.role).toBe('reviewer');
-
-    // Reviewer approves revision with pass
-    const approvedSha = 'commit-approved-8a8b8c';
-    const reviewResult = await engine.submitResult(run.run_id, reviewDispatch.taskId, {
-      outcome: 'pass',
-      summary: 'Reviewed and approved changes. All acceptance criteria satisfied.',
-      artifacts: {
-        reviewed_commit: approvedSha,
-        findings: 'Clean implementation, no defects detected.',
-      },
-    });
-
-    expect(reviewResult.acknowledged).toBe(true);
-    expect(reviewResult.executionTerminated).toBe(true);
-    expect(reviewResult.nextStep).toBe('merge');
-
-    // 5. Interruption & Resume during Merge step
-    const mergeContext = await engine.getSchedulingContext(run.run_id);
-    expect(mergeContext.currentStep).toBe('merge');
-    expect(mergeContext.stepDefinition.role).toBe('merger');
-    expect(mergeContext.priorEvidence?.evaluatedCommit).toBe(approvedSha);
-
-    // Merge prerequisite verification passes because PR head matches evaluated commit
-    repositoryManager.headSha = approvedSha;
-    const mergePrereq = await engine.verifyMergePrerequisites(run.run_id);
-    expect(mergePrereq.valid).toBe(true);
-    expect(mergePrereq.approvedCommit).toBe(approvedSha);
-
-    // Dispatch merger task
-    const mergerDispatch = await engine.dispatch(
-      run.run_id,
-      `Merge reviewed revision ${approvedSha} into main`,
-    );
-    expect(mergerDispatch.step).toBe('merge');
-    expect(mergerDispatch.role).toBe('merger');
-    const mergerTaskId = mergerDispatch.taskId;
-
-    // Simulate interruption: merger execution in-flight, engine process restarts
-    // External GitHub confirms PR was merged with squash commit
-    repositoryManager.state = 'MERGED';
-    repositoryManager.merged = true;
-    repositoryManager.mergeCommitSha = 'commit-merged-squash-9d9e9f';
-
-    // Resume execution
-    const resumeRes = await engine.resume(run.run_id);
-    expect(resumeRes.runId).toBe(run.run_id);
-    expect(resumeRes.reconciledTask).toBeDefined();
-    expect(resumeRes.reconciledTask?.taskId).toBe(mergerTaskId);
-    expect(resumeRes.reconciledTask?.step).toBe('merge');
-    expect(resumeRes.reconciledTask?.action).toBe('collected');
-    expect(resumeRes.currentStep).toBe('finalization');
-    expect(resumeRes.message).toContain('Reconciled external merge outcome');
-
-    // Verify no duplicate tasks were dispatched
-    expect(executor.launchedTasks.filter((t) => t.taskId === mergerTaskId).length).toBe(1);
-
-    // 6. Finalization: Preservation & Resource Release
-    const finalContext = await engine.getSchedulingContext(run.run_id);
-    expect(finalContext.currentStep).toBe('finalization');
-    expect(finalContext.stepDefinition.role).toBe('finalizer');
-    expect(finalContext.roleContract.skill).toBe('pc-pr-land');
-    expect(finalContext.roleContract.required_artifacts).toEqual(['release_evidence']);
-
-    // Finalizer inherits all accumulated evidence
-    expect(finalContext.mergedCommit).toBe('commit-merged-squash-9d9e9f');
-    expect(finalContext.evaluatedCommit).toBe(approvedSha);
-    expect(finalContext.sharedRequirements).toBe(sharedRequirements);
-
-    const finalizerDispatch = await engine.dispatch(
-      run.run_id,
-      'Preserve final delivery records and generate release evidence',
-    );
-    expect(finalizerDispatch.step).toBe('finalization');
-
-    // Finalizer submits completed result with release evidence
-    const finalSubmit = await engine.submitResult(run.run_id, finalizerDispatch.taskId, {
-      outcome: 'completed',
-      summary: 'Preserved delivery records and created git bundle archive.',
-      artifacts: {
-        release_evidence: {
-          preserved: true,
-          bundle: 'paper-craft-issue-8.bundle',
-          bundleSha: 'bundle-sha256-verified-12345',
+        plan: {
+          tasks: [
+            { title: 'Subtask 1: Implement feature', brief: 'Code changes', blockedBy: [] },
+          ],
         },
       },
     });
 
-    expect(finalSubmit.acknowledged).toBe(true);
-    expect(finalSubmit.nextStep).toBe('completed');
-    expect(finalSubmit.transitionStatus).toBe('completed');
+    // Step 2: Implementation (pc-issue-work)
+    const workTask = await run.dispatch({
+      taskType: 'pc-issue-work',
+      instructions: 'Implement feature in worktree with test coverage',
+      inputs: {
+        issue: 35,
+        issueTitle: 'Switch orchestrator to Run',
+        taskBrief: 'Deliver code changes and tests',
+      },
+    });
 
-    // 7. Verify Resource Release & Complete Run State
-    const finalStatus = await engine.status(run.run_id);
-    expect(finalStatus.status).toBe('completed');
-    expect(finalStatus.step).toBe('completed');
+    expect(workTask.taskType).toBe('pc-issue-work');
+    expect(executor.launchedTasks.length).toBe(2);
 
-    // Physical worktree has been cleanly deleted
-    const worktreeExists = await fs.stat(run.worktree_path).then(() => true).catch(() => false);
-    expect(worktreeExists).toBe(false);
+    await run.submitResult(workTask.taskId, {
+      outcome: 'completed',
+      summary: 'Delivered initial changes and test suites',
+      artifacts: {
+        diff: 'diff --git a/core.ts b/core.ts\n+export const ready = true;',
+        testResults: 'All 15 tests passed',
+      },
+    });
 
-    // All execution handles were terminated
-    expect(executor.stoppedHandles.length).toBeGreaterThanOrEqual(4);
+    // Step 3: Landing & Review (pc-pr-land) -> reports rework_needed
+    const landTask1 = await run.dispatch({
+      taskType: 'pc-pr-land',
+      instructions: 'Create PR, run review checks, and merge if passing',
+      inputs: {
+        branch: 'feat/ticket-35',
+        baseBranch: 'main',
+        issue: 35,
+        evaluatedCommit: 'sha-first-attempt',
+      },
+    });
 
-    // 8. Idempotent Release on Completed Run
-    const repeatedRelease = await engine.releaseRunResources(run.run_id);
-    expect(repeatedRelease.released).toBe(true);
-    expect(repeatedRelease.status).toBe('completed');
-    expect(repeatedRelease.worktreeRemoved).toBe(false); // already removed
+    expect(landTask1.taskType).toBe('pc-pr-land');
+    expect(executor.launchedTasks.length).toBe(3);
+
+    await run.submitResult(landTask1.taskId, {
+      outcome: 'rework_needed',
+      summary: 'Code review found a missing edge case in error handling',
+      artifacts: {
+        merged: false,
+        findings: 'Error handling in observe() needs null-check for empty taskId',
+        evaluatedCommit: 'sha-first-attempt',
+      },
+    });
+
+    // Step 4: Repair task dispatched back to pc-issue-work linking predecessor findings
+    const repairTask = await run.dispatch({
+      taskType: 'pc-issue-work',
+      instructions: 'Fix the null-check in observe() identified during PR review',
+      predecessorResultId: landTask1.taskId,
+      inputs: {
+        issue: 35,
+        issueTitle: 'Switch orchestrator to Run (repair)',
+        taskBrief: 'Address review findings',
+      },
+    });
+
+    expect(repairTask.taskType).toBe('pc-issue-work');
+    expect(executor.launchedTasks.length).toBe(4);
+
+    // Verify prompt injected predecessor findings and constraints
+    const repairPrompt = executor.launchedTasks[3].prompt;
+    expect(repairPrompt).toContain('Predecessor Findings & Repair Context');
+    expect(repairPrompt).toContain('Error handling in observe() needs null-check');
+
+    await run.submitResult(repairTask.taskId, {
+      outcome: 'completed',
+      summary: 'Added null-check and verified all tests pass',
+      artifacts: {
+        diff: 'diff --git a/core.ts b/core.ts\n+if (!taskId) return null;',
+        testResults: 'All 16 tests passed',
+      },
+    });
+
+    // Step 5: Fresh pc-pr-land task to land the repaired code
+    const landTask2 = await run.dispatch({
+      taskType: 'pc-pr-land',
+      instructions: 'Create PR, run review checks, and merge if passing',
+      inputs: {
+        branch: 'feat/ticket-35',
+        baseBranch: 'main',
+        issue: 35,
+        evaluatedCommit: 'sha-repaired-commit',
+      },
+    });
+
+    expect(landTask2.taskType).toBe('pc-pr-land');
+    expect(executor.launchedTasks.length).toBe(5);
+
+    await run.submitResult(landTask2.taskId, {
+      outcome: 'landed',
+      summary: 'Review passed and PR successfully merged',
+      artifacts: {
+        merged: true,
+        prNumber: 42,
+        prUrl: 'https://github.com/minghao-du/paper-craft/pull/42',
+        mergedCommit: 'sha-merged-42',
+      },
+    });
+
+    // Step 6: Integrated Acceptance Verification (pc-issue-verify)
+    const verifyTask = await run.dispatch({
+      taskType: 'pc-issue-verify',
+      instructions: 'Verify overall delivery against original objective',
+      inputs: {
+        originalObjective: 'Switch orchestrator default workflow and remove legacy state machine',
+        acceptanceCriteria: ['Task sequence customizable in text', 'Legacy state machine removed'],
+        deliveryEvidence: [
+          {
+            issue: 35,
+            commitSha: 'sha-merged-42',
+            prUrl: 'https://github.com/minghao-du/paper-craft/pull/42',
+            summary: 'Landed PR 42 with verified review',
+          },
+        ],
+      },
+    });
+
+    expect(verifyTask.taskType).toBe('pc-issue-verify');
+    expect(executor.launchedTasks.length).toBe(6);
+
+    await run.submitResult(verifyTask.taskId, {
+      outcome: 'verified',
+      summary: 'All acceptance criteria verified against delivered evidence',
+      artifacts: {
+        evaluatedHead: 'sha-merged-42',
+        evidence: 'Tests pass and criteria fulfilled',
+      },
+    });
+
+    // Step 7: Pipeline File Reorganization (pc-pipeline-refactor)
+    const refactorTask = await run.dispatch({
+      taskType: 'pc-pipeline-refactor',
+      instructions: 'Organize touched workflow files while maintaining scientific invariance',
+      inputs: {
+        scope: ['packages/core/src/workflow/'],
+        migrationInstructions: 'Remove legacy shims and organize exports',
+      },
+    });
+
+    expect(refactorTask.taskType).toBe('pc-pipeline-refactor');
+    expect(executor.launchedTasks.length).toBe(7);
+
+    await run.submitResult(refactorTask.taskId, {
+      outcome: 'completed',
+      summary: 'Cleaned up imports and verified invariants',
+      artifacts: {
+        changedFiles: ['packages/core/src/workflow/engine.ts'],
+        verificationEvidence: 'Scientific invariance verified',
+      },
+    });
+
+    // Step 8: Re-delivery of pipeline changes (pc-pr-land)
+    const landTask3 = await run.dispatch({
+      taskType: 'pc-pr-land',
+      instructions: 'Deliver pipeline reorganization changes',
+      inputs: {
+        branch: 'feat/ticket-35-refactor',
+        baseBranch: 'main',
+        issue: 35,
+        evaluatedCommit: 'sha-refactor-commit',
+      },
+    });
+
+    expect(landTask3.taskType).toBe('pc-pr-land');
+    expect(executor.launchedTasks.length).toBe(8);
+
+    await run.submitResult(landTask3.taskId, {
+      outcome: 'landed',
+      summary: 'Merged pipeline refactor changes',
+      artifacts: {
+        merged: true,
+        prNumber: 43,
+        prUrl: 'https://github.com/minghao-du/paper-craft/pull/43',
+        mergedCommit: 'sha-merged-43',
+      },
+    });
+
+    // Step 9: Final Research Records (pc-research-state)
+    const researchTask = await run.dispatch({
+      taskType: 'pc-research-state',
+      instructions: 'Record research state, artifact locations, and reproduction entry points',
+      inputs: {
+        deliveryEvidence: { pr42: 'landed', pr43: 'landed' },
+        reproductionEntryPoints: ['npm test', 'npm run typecheck'],
+        artifactLocations: ['packages/core/src/workflow/'],
+        brief: 'Ticket 35 delivery complete',
+      },
+    });
+
+    expect(researchTask.taskType).toBe('pc-research-state');
+    expect(executor.launchedTasks.length).toBe(9);
+
+    await run.submitResult(researchTask.taskId, {
+      outcome: 'recorded',
+      summary: 'Updated research state in nexus repo',
+      artifacts: {
+        updatedRecords: ['research-state/ticket-35.json'],
+      },
+    });
+
+    // Step 10: Complete Run and safely retire worktree
+    const finishRes = await run.finish({
+      conclusion: 'Issue #35 completed and verified across all default workflow stages',
+      evidence: ['sha-merged-42', 'sha-merged-43'],
+    });
+
+    expect(finishRes.completed).toBe(true);
+    expect(finishRes.worktreeRetired).toBe(true);
+    expect(finishRes.status).toBe('completed');
+
+    // Confirm state reflects all 9 tasks with distinct conversations
+    const obs = await run.observe();
+    expect(obs.status).toBe('completed');
+    expect(obs.snapshot.tasks.size).toBe(9);
+    expect(executor.launchedTasks.length).toBe(9);
   });
 
   it('demonstrates task interruption and reconnection to live process without duplicating execution', async () => {
-    await engine.init({ repository: 'minghao-du/paper-craft' });
-    const run = await engine.start({ issue: 88 });
-
-    const dispatch = await engine.dispatch(run.run_id, 'Start in-flight task');
-    expect(dispatch.taskId).toBeDefined();
-
-    // The task is still running in provider
-    executor.taskStatuses.set(dispatch.taskId, 'running');
-
-    // Process restarts and invokes resume
-    const freshEngine = new WorkflowEngine({
-      cwd: tmpDir,
+    const run = await Run.open({
+      runId: 'run-e2e-interrupt',
+      repository: 'minghao-du/paper-craft',
+      issue: 35,
+      goal: 'Verify recovery and deduplication',
+      repoRoot: repoDir,
+      worktreeRoot: repoDir,
+      storageRoot,
       executor,
-      repositoryManager,
     });
 
-    const resumeRes = await freshEngine.resume(run.run_id);
-    expect(resumeRes.reconciledTask?.taskId).toBe(dispatch.taskId);
-    expect(resumeRes.reconciledTask?.executionStatus).toBe('running');
-    expect(resumeRes.reconciledTask?.action).toBe('reconnected');
-    expect(resumeRes.message).toContain(`Reconnected to running execution for task "${dispatch.taskId}"`);
+    const task = await run.dispatch({
+      taskType: 'pc-issue-work',
+      instructions: 'Run work that will be interrupted',
+    });
 
-    // No duplicate task was launched
+    // Simulate interruption: process still running in executor
+    // Second dispatch with same taskId must return existing task idempotently
+    const duplicateDispatch = await run.dispatch({
+      taskId: task.taskId,
+      taskType: 'pc-issue-work',
+      instructions: 'Run work that will be interrupted',
+    });
+
+    expect(duplicateDispatch.taskId).toBe(task.taskId);
+    expect(duplicateDispatch.handle.id).toBe(task.handle.id);
+    // Executor was not called a second time
     expect(executor.launchedTasks.length).toBe(1);
+
+    // Reconnect to Run from fresh instance
+    const freshRun = await Run.open({
+      runId: 'run-e2e-interrupt',
+      repoRoot: repoDir,
+      worktreeRoot: repoDir,
+      storageRoot,
+      executor,
+    });
+
+    const obs = await freshRun.observe();
+    expect(obs.status).toBe('running');
+    expect(obs.activeTaskId).toBe(task.taskId);
   });
 
   it('executes stop to pause active execution and resume recovers cleanly', async () => {
-    await engine.init({ repository: 'minghao-du/paper-craft' });
-    const run = await engine.start({ issue: 89 });
-
-    const dispatch = await engine.dispatch(run.run_id, 'Run task to be stopped');
-    expect(executor.taskStatuses.get(dispatch.taskId)).toBe('running');
-
-    // Stop execution
-    const stopRes = await engine.stop({
-      runId: run.run_id,
-      reason: 'Testing manual pause and termination',
+    const run = await Run.open({
+      runId: 'run-e2e-stop',
+      repository: 'minghao-du/paper-craft',
+      issue: 35,
+      goal: 'Verify stop and resume',
+      repoRoot: repoDir,
+      worktreeRoot: repoDir,
+      storageRoot,
+      executor,
     });
 
+    const task = await run.dispatch({
+      taskType: 'pc-issue-work',
+      instructions: 'Long running task to be stopped',
+    });
+
+    const stopRes = await run.stop('Operator requested pause');
     expect(stopRes.stopped).toBe(true);
     expect(stopRes.status).toBe('paused');
-    expect(stopRes.terminatedHandles.length).toBe(1);
-    expect(executor.taskStatuses.get(dispatch.taskId)).toBe('exited');
+    expect(executor.stoppedHandles.length).toBe(1);
+    expect(executor.stoppedHandles[0].taskId).toBe(task.taskId);
 
-    // Check status reflects paused state
-    const status = await engine.status(run.run_id);
-    expect(status.status).toBe('paused');
-
-    // Resume recovers the paused state
-    const resumeRes = await engine.resume(run.run_id);
-    expect(resumeRes.runId).toBe(run.run_id);
-    expect(resumeRes.currentStep).toBe('implementation');
+    // Dispatches while paused are rejected
+    await expect(
+      run.dispatch({
+        taskType: 'pc-issue-work',
+        instructions: 'Should fail while paused',
+      }),
+    ).rejects.toThrow(/paused/i);
   });
 
   it('runs complete CLI workflow lifecycle end-to-end', async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
 
-    const runCmd = async (argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
-      stdout.length = 0;
-      stderr.length = 0;
-      const code = await runCli(argv, {
-        cwd: tmpDir,
-        engine,
-        stdout: (msg) => stdout.push(msg),
-        stderr: (msg) => stderr.push(msg),
-      });
-      return {
-        code,
-        stdout: stdout.join('\n'),
-        stderr: stderr.join('\n'),
-      };
-    };
+    // 1. Init workflow
+    const initExit = await runCli(['workflow', 'init', '--repo', 'test-org/test-repo'], {
+      cwd: repoDir,
+      stdout: (m) => stdout.push(m),
+      stderr: (m) => stderr.push(m),
+    });
+    expect(initExit).toBe(0);
 
-    // 1. init
-    const initRes = await runCmd(['workflow', 'init', '--repo', 'minghao-du/paper-craft']);
-    expect(initRes.code).toBe(0);
-    expect(initRes.stdout).toContain('Initialized workflow configuration');
+    // 2. Open Run
+    stdout.length = 0;
+    const openExit = await runCli(['workflow', 'open', '35', '--goal', 'CLI E2E Goal'], {
+      cwd: repoDir,
+      executor,
+      stdout: (m) => stdout.push(m),
+      stderr: (m) => stderr.push(m),
+    });
+    expect(openExit).toBe(0);
+    const openOutput = JSON.parse(stdout.join('\n'));
+    expect(openOutput.run_id).toBeDefined();
+    expect(openOutput.status).toBe('pending_dispatch');
 
-    // 2. start
-    const startRes = await runCmd([
-      'workflow',
-      'start',
-      '8',
-      '--requirements',
-      'CLI End-to-End Delivery Verification',
-    ]);
-    expect(startRes.code).toBe(0);
-    const startPayload = JSON.parse(startRes.stdout);
-    const runId = startPayload.run_id;
-    expect(runId).toBeDefined();
+    // 3. Dispatch task via CLI
+    stdout.length = 0;
+    const dispatchExit = await runCli(
+      [
+        'workflow',
+        'dispatch',
+        openOutput.run_id,
+        '--task-type',
+        'pc-issue-work',
+        '--instructions',
+        'Implement via CLI',
+      ],
+      {
+        cwd: repoDir,
+        executor,
+        stdout: (m) => stdout.push(m),
+        stderr: (m) => stderr.push(m),
+      },
+    );
+    expect(dispatchExit).toBe(0);
+    const dispatchOutput = JSON.parse(stdout.join('\n'));
+    expect(dispatchOutput.taskId).toBeDefined();
 
-    // 3. status with positional runId
-    const statusRes = await runCmd(['workflow', 'status', runId]);
-    expect(statusRes.code).toBe(0);
-    const statusPayload = JSON.parse(statusRes.stdout);
-    expect(statusPayload.run_id).toBe(runId);
-    expect(statusPayload.status).toBe('pending_dispatch');
+    // 4. Submit result via CLI
+    stdout.length = 0;
+    const submitExit = await runCli(
+      [
+        'workflow',
+        'submit-result',
+        '--run',
+        openOutput.run_id,
+        '--task',
+        dispatchOutput.taskId,
+        '--outcome',
+        'completed',
+        '--summary',
+        'Implementation completed via CLI',
+        '--artifacts',
+        JSON.stringify({ diff: 'cli diff', testResults: 'pass' }),
+      ],
+      {
+        cwd: repoDir,
+        executor,
+        stdout: (m) => stdout.push(m),
+        stderr: (m) => stderr.push(m),
+      },
+    );
+    expect(submitExit).toBe(0);
 
-    // 4. dispatch worker
-    const dispatchRes = await runCmd([
-      'workflow',
-      'dispatch',
-      runId,
-      '--instructions',
-      'Implement changes for issue 8 via CLI',
-    ]);
-    expect(dispatchRes.code).toBe(0);
-    const dispatchPayload = JSON.parse(dispatchRes.stdout);
-    const taskId = dispatchPayload.taskId;
-    expect(taskId).toBeDefined();
+    // 5. Observe via CLI
+    stdout.length = 0;
+    const observeExit = await runCli(['workflow', 'observe', openOutput.run_id], {
+      cwd: repoDir,
+      executor,
+      stdout: (m) => stdout.push(m),
+      stderr: (m) => stderr.push(m),
+    });
+    expect(observeExit).toBe(0);
+    const observeOutput = JSON.parse(stdout.join('\n'));
+    expect(observeOutput.status).toBe('pending_dispatch');
+    expect(observeOutput.has_submitted_result).toBe(true);
 
-    // 5. submit-result worker
-    const submitRes = await runCmd([
-      'workflow',
-      'submit-result',
-      '--run',
-      runId,
-      '--task',
-      taskId,
-      '--outcome',
-      'completed',
-      '--summary',
-      'Worker completed implementation',
-      '--artifacts',
-      JSON.stringify({ diff: 'cli diff', test_results: 'cli passed' }),
-    ]);
-    expect(submitRes.code).toBe(0);
-
-    // 6. stop command
-    const stopRes = await runCmd(['workflow', 'stop', runId, '--reason', 'Operator inspection']);
-    expect(stopRes.code).toBe(0);
-    const stopPayload = JSON.parse(stopRes.stdout);
-    expect(stopPayload.status).toBe('paused');
-
-    // 7. resume command
-    const resumeRes = await runCmd(['workflow', 'resume', runId]);
-    expect(resumeRes.code).toBe(0);
-    const resumePayload = JSON.parse(resumeRes.stdout);
-    expect(resumePayload.run_id).toBe(runId);
-    expect(resumePayload.step).toBe('review');
+    // 6. Finish via CLI
+    stdout.length = 0;
+    const finishExit = await runCli(
+      ['workflow', 'finish', openOutput.run_id, '--conclusion', 'Delivered via CLI'],
+      {
+        cwd: repoDir,
+        executor,
+        stdout: (m) => stdout.push(m),
+        stderr: (m) => stderr.push(m),
+      },
+    );
+    expect(finishExit).toBe(0);
+    const finishOutput = JSON.parse(stdout.join('\n'));
+    expect(finishOutput.completed).toBe(true);
+    expect(finishOutput.status).toBe('completed');
   });
 });

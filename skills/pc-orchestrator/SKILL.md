@@ -5,112 +5,105 @@ description: Schedule Issue delivery through configured role contracts and workf
 
 # /pc-orchestrator
 
-The Orchestrator supplies scoped assignments and coordinates execution. The Engine
-owns state transitions, result validation, execution ownership and resource release.
-Specialists own their implementation and professional judgments.
+The Orchestrator defines the task sequence in text, decides task assignments, executors,
+predecessor result linkages, and repair dispatches. Execution support (`Run`) prepares
+inputs according to task contracts, starts independent agent conversations in dedicated
+worktrees, validates submissions, and ensures verified resource cleanup and recovery.
+Specialist skills own their implementation and professional judgments without knowledge of
+the scheduling protocol.
 
-## Role contracts
+## Run Interface & Task Contracts
 
-Use the Run's captured `role_definitions` and `workflow_definition` as authority.
-They define each step's responsibility (`guidance`), assigned role, skill, permitted
-outcomes, required artifacts and input artifacts. Resolve these from the supplied
-Run context; for intake, read the authoritative config and its referenced definitions.
-Keep the captured definitions for an existing Run rather than substituting later config edits.
-
-Dispatch the current step through one interface:
+The Orchestrator interacts exclusively with the `Run` interface:
 
 ```bash
-pc workflow dispatch <run-id> --instructions-file <assignment-file>
-```
+# Open or allocate a Run
+pc workflow open <issue> --provider agy
 
-The assignment states the objective, scope, acceptance criteria and relevant prior
-findings. Preserve immutable shared requirements. The Engine selects the current
-role, binds its skill and inputs, supplies its workspace, and assembles the full task prompt—injecting
-the runtime identity (run/task ID), permitted outcomes, required artifacts, and the exact
-`pc workflow submit-result` command. The top-level dispatch agent executes the skill procedure
-and returns the receipt upon task completion or blockage. The Orchestrator need not load specialist
-procedures or prescribe how to perform their work.
+# Dispatch an isolated task
+pc workflow dispatch <run-id> --task-type <task-type> --instructions-file <instructions-file>
 
-The returned task identity identifies the execution to observe. Specialists return
-`outcome`, `summary` and required `artifacts` through `pc workflow submit-result` as directed
-by the injected prompt contract. Only Engine-acknowledged results and recorded transitions authorize
-subsequent work; chat replies and process exit alone do not establish completion.
+# Observe execution observation and validated result
+pc workflow observe <run-id>
 
-Use the current scheduling context when supplied by the Engine. From the CLI,
-inspect `pc workflow status <run-id>` for the recorded step, Run status and latest
-task result. Refresh this view after dispatch, a result, or recovery.
+# Submit structured result for an assigned task
+pc workflow submit-result --run <run-id> --task <task-id> --outcome <outcome> --summary <summary> --artifacts <json>
 
-**Done:** Every assignment targets the Engine's current step and configured role,
-with its scope and required evidence identified.
-
-## Workflow
-
-### 1. Resolve or start the Run
-
-Resolve the issue, repository, config and authorized scope. Read the issue's
-acceptance criteria, parent context and open dependencies. A child request covers
-only that child; unresolved prerequisites block dispatch.
-
-For an assigned Run, verify its identity and use its supplied context. Follow any
-assignment-specific initialization instructions before scheduling; invalid context
-is an error, not permission to start a replacement Run.
-
-For a new Run, initialize configuration only when absent, then start:
-
-```bash
-pc workflow init --repo <owner/repo>
-pc workflow start <issue> --provider agy --config <config>
-```
-
-Pass additional constraints with either `--requirements <text>` or
-`--requirements-file <file>`. Retain the returned Run identity and definitions.
-If an unfinished Run already owns this issue, inspect and resume that Run.
-
-**Done:** One identified Run owns the authorized scope and its requirements.
-
-### 2. Shared Issue Delivery
-
-Follow the Run's workflow definition, beginning at its recorded current step.
-The default sequence is implementation → review → merge → finalization; configured
-transitions determine the actual sequence, including rework and blocked outcomes.
-
-1. Inspect status and resolve prerequisites before allocation. Existing in-flight
-   or uncertain execution must be reconciled before another dispatch.
-2. Compose and dispatch the current role's assignment through the common interface.
-3. Observe its structured result and refresh status. For a recorded rework
-   transition, carry the review findings and evaluated revision into the repair
-   assignment while preserving the original scope.
-4. Dispatch the next step only after the Engine records that transition. A failed
-   gate, paused Run or exhausted rework budget requires resolving the reported
-   blocker rather than choosing a substitute step or resetting the budget.
-
-Planning, decomposition and integrated acceptance may be scheduled only when the
-Run's definitions and available interfaces support them. Missing roles or steps
-are a workflow limitation to report, not permission to invent a dispatch API or
-start sibling deliveries outside the authorized scope.
-
-**Done:** The Engine records completion with required delivery and release evidence.
-A merged PR alone does not complete delivery.
-
-### 3. Recover, stop or release
-
-```bash
-pc workflow status <run-id>
-pc workflow resume <run-id>
+# Stop active executions and pause Run
 pc workflow stop <run-id> --reason <reason>
-pc workflow release <run-id>
+
+# Reconnect and reconcile interrupted Run
+pc workflow resume <run-id>
+
+# Finish Run and safely retire worktree
+pc workflow finish <run-id> --conclusion <conclusion>
 ```
 
-Use `resume` to reconcile interrupted execution and results before continuing from
-the recorded step. Unknown execution remains occupied; elapsed time does not
-justify a replacement or repeating an external action.
+The Orchestrator supplies only the task type, instructions, predecessor result references,
+and supplementary constraints. Professional inputs, delivery requirements, and output schemas
+are prepared by pinned task contracts (version `1.0`) across 5 directly dispatched skills
+supporting 6 task types:
 
-Use `stop` when halting work. Use `release` to finish or retry eligible resource
-release after finalization. Follow returned blockers through these interfaces;
-leave ownership checks, preservation and cleanup to the Engine and assigned role.
+1. `pc-issue-plan` (planning & decomposition mode)
+2. `pc-issue-work` (implementation & testing mode)
+3. `pc-pr-land` (PR creation, review invocation, commit assertion & landing)
+4. `pc-issue-verify` (`pc-issue-plan` integrated acceptance verification mode)
+5. `pc-pipeline-refactor` (pipeline file reorganization maintaining scientific invariance)
+6. `pc-research-state` (final research records, artifacts, and reproduction entries)
 
-Report the actual Run status, accepted outcome, remaining blockers and resource
-release status. Retain the Run identity for inspection and recovery.
+Every dispatched task spawns a completely fresh agent conversation—including repair/rework
+tasks and consecutive assignments. No session state is shared across task dispatches.
 
-**Done:** Completion and release are verified, or outstanding work is explicitly
-reported with its recorded blocker and next recovery action.
+## Default Delivery Procedure
+
+The workflow sequence is an editable reference in text below, not hardcoded in scripts or
+automatic state machine transitions. The Orchestrator may adjust task orders, repeat tasks,
+or skip unneeded steps without modifying execution code.
+
+### 1. Planning & Decomposition (`pc-issue-plan`)
+Invoke `pc-issue-plan` with the target issue and goal. If decomposed into sub-issues,
+record the task dependency plan in Run:
+- When outcome is `direct`: proceed directly to single-issue delivery.
+- When outcome is `decomposed`: schedule sub-issues in topological dependency order.
+
+### 2. Issue Delivery Loop (for each issue in dependency order)
+For each target issue:
+1. **Implementation (`pc-issue-work`)**: Dispatch task to implement changes and verify with tests.
+   Specialist delivers code changes and test results in worktree; does not create a PR.
+2. **Landing & Merge (`pc-pr-land`)**: Dispatch task to create/update PR, invoke `pc-pr-review`,
+   verify head commit, and land onto base branch.
+3. **Rework Handling**: If `pc-pr-land` reports `rework_needed`, the Orchestrator explicitly
+   dispatches a repair task to `pc-issue-work`, referencing the predecessor task ID and review
+   findings (`--predecessor <taskId>`). The repaired code is then re-evaluated by a fresh `pc-pr-land`.
+
+### 3. Integrated Acceptance Verification (`pc-issue-verify`)
+Invoke `pc-issue-plan` in verification mode with `originalObjective`, `acceptanceCriteria`,
+and aggregated `deliveryEvidence`. If gaps remain, the Orchestrator explicitly dispatches
+repair tasks back to step 2.
+
+### 4. Pipeline File Reorganization (`pc-pipeline-refactor`)
+Invoke `pc-pipeline-refactor` scoped strictly to the files involved in the delivered changes.
+**Scientific Invariance**: Reorganization must strictly preserve scientific methods, computation
+logic, numerical results, and conclusions. If computational logic changes are required, it must
+report `out_of_scope`.
+
+### 5. Re-delivery on Pipeline Changes (`pc-pr-land`)
+If `pc-pipeline-refactor` produced file changes (`changedFiles` is non-empty), dispatch a fresh
+`pc-pr-land` task to deliver and merge the refactored files.
+
+### 6. Final Research Records (`pc-research-state`)
+Invoke `pc-research-state` to record updated research records, artifact locations, and
+reproduction entry points in the nexus repository.
+
+### 7. Run Completion & Teardown (`pc workflow finish`)
+Verify all tasks have exited, confirm worktree is clean, and invoke `pc workflow finish` to safely
+retire the worktree and record overall completion evidence.
+
+## Recovery & Lifecycle Discipline
+
+- **Deduplication**: Repeated dispatch requests for the same task ID return the existing task
+  idempotently; no duplicate agent conversations are launched.
+- **Uncertain States**: If process state or launch confirmation is unconfirmed, report `uncertain`
+  conservatively; never blindly relaunch or create duplicate worktrees.
+- **Safe Teardown**: Worktrees with uncommitted changes or active processes cannot be deleted.
+  All evidence and snapshots remain durably preserved in append-only event logs.

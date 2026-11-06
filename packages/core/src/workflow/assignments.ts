@@ -433,8 +433,10 @@ export class Assignments {
 
       const hasTestEvidence = Boolean(
         artifacts.testResults ||
+          artifacts.test_results ||
           artifacts.verificationEvidence ||
           res.testResults ||
+          res.test_results ||
           res.verificationEvidence,
       );
       if (!hasTestEvidence) {

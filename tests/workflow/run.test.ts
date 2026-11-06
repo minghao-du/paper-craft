@@ -403,4 +403,135 @@ describe('Run Dispatch & Observation (#30)', () => {
       }),
     ).rejects.toThrow(/not found/i);
   });
+
+  it('executes a non-default task sequence through Run without code changes', async () => {
+    const run = await Run.open({
+      runId: 'run-custom-sequence',
+      repository: 'test-owner/test-repo',
+      issue: 202,
+      repoRoot: repoDir,
+      worktreeRoot: repoDir,
+      storageRoot,
+      executor,
+    });
+
+    // Custom non-default order:
+    // 1. pc-pipeline-refactor (reorganization first)
+    const task1 = await run.dispatch({
+      taskType: 'pc-pipeline-refactor',
+      instructions: 'Reorganize pipeline scripts first',
+      inputs: {
+        scope: ['scripts/'],
+        migrationInstructions: 'Clean up script layout',
+      },
+    });
+    expect(task1.taskType).toBe('pc-pipeline-refactor');
+    await run.submitResult(task1.taskId, {
+      outcome: 'completed',
+      summary: 'Reorganized pipeline layout',
+      artifacts: {
+        changedFiles: ['scripts/helper.ts'],
+        verificationEvidence: 'lint and tests pass',
+      },
+    });
+
+    // 2. pc-issue-plan (planning breakdown after refactor)
+    const task2 = await run.dispatch({
+      taskType: 'pc-issue-plan',
+      instructions: 'Decompose feature into units',
+      inputs: {
+        issue: 202,
+        issueTitle: 'Feature 202',
+        issueBody: 'Description',
+        goal: 'Complete 202',
+      },
+    });
+    expect(task2.taskType).toBe('pc-issue-plan');
+    await run.submitResult(task2.taskId, {
+      outcome: 'decomposed',
+      summary: 'Decomposed into 2 subtasks',
+      artifacts: {
+        plan: {
+          tasks: [{ title: 'Subtask 1', brief: 'Do part 1', blockedBy: [] }],
+        },
+      },
+    });
+
+    // 3. pc-research-state (record intermediate research before implementation)
+    const task3 = await run.dispatch({
+      taskType: 'pc-research-state',
+      instructions: 'Record state snapshot',
+      inputs: {
+        deliveryEvidence: { plan: 'ready' },
+        reproductionEntryPoints: ['npm test'],
+        artifactLocations: ['docs/plan.md'],
+        brief: 'Planning recorded',
+      },
+    });
+    expect(task3.taskType).toBe('pc-research-state');
+    await run.submitResult(task3.taskId, {
+      outcome: 'recorded',
+      summary: 'State successfully recorded',
+      artifacts: {
+        updatedRecords: ['research-state/plan.json'],
+      },
+    });
+
+    const obs = await run.observe();
+    expect(obs.status).toBe('pending_dispatch');
+    expect(obs.snapshot.tasks.size).toBe(3);
+    const taskTypes = Array.from(obs.snapshot.tasks.values()).map((t) => t.taskType);
+    expect(taskTypes).toEqual([
+      'pc-pipeline-refactor',
+      'pc-issue-plan',
+      'pc-research-state',
+    ]);
+  });
+
+  it('rejects legacy stored workflow state and refuses to interpret old state as new Run semantics', async () => {
+    const legacyRunId = 'run-legacy-format-test';
+    const runDir = path.join(storageRoot, 'runs', legacyRunId);
+    await fs.mkdir(runDir, { recursive: true });
+
+    // Emulate a legacy events.jsonl from WorkflowEngine with old step transition events
+    const legacyEvents = [
+      {
+        type: 'run_created',
+        run_id: legacyRunId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          step: 'implementation',
+          role: 'worker',
+          workflow: { initial_step: 'implementation', steps: {} },
+        },
+      },
+      {
+        type: 'task_dispatched',
+        run_id: legacyRunId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          taskId: 'task-legacy-1',
+          step: 'implementation',
+          role: 'worker',
+        },
+      },
+    ];
+
+    await fs.writeFile(
+      path.join(runDir, 'events.jsonl'),
+      legacyEvents.map((e) => JSON.stringify(e)).join('\n') + '\n',
+      'utf8',
+    );
+
+    // Reading or opening this Run must fail explicitly
+    await expect(
+      Run.open({
+        runId: legacyRunId,
+        repoRoot: repoDir,
+        worktreeRoot: repoDir,
+        storageRoot,
+        executor,
+      }),
+    ).rejects.toThrow(/legacy workflow state detected/i);
+  });
 });
