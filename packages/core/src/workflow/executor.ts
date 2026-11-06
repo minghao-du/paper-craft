@@ -393,3 +393,22 @@ export class AgyExecutor implements AgentExecutor {
     };
   }
 }
+
+/**
+ * Factory for creating an AgentExecutor based on provider name.
+ * Currently supports 'agy'. Throws an error for unknown or unsupported providers.
+ *
+ * @param provider Provider identifier (e.g. 'agy').
+ * @param options Optional configuration options for the AgyExecutor.
+ * @returns Configured AgentExecutor instance.
+ */
+export function createAgentExecutor(
+  provider: string,
+  options?: AgyExecutorOptions,
+): AgentExecutor {
+  if (provider === 'agy') {
+    return new AgyExecutor(options);
+  }
+  throw new Error(`Unsupported provider: "${provider}". Only "agy" is currently supported.`);
+}
+

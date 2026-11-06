@@ -465,20 +465,6 @@ export interface IssueCheckResult {
 }
 
 /**
- * External interface for verifying agent execution provider availability.
- */
-export interface ProviderChecker {
-  /**
-   * Verifies that the provider is installed, accessible, and has required capabilities.
-   * @param provider The provider identifier (e.g. 'agy').
-   */
-  check(provider: string): Promise<{
-    available: boolean;
-    error?: string;
-  }>;
-}
-
-/**
  * Result of inspecting pull request head and merge state on GitHub.
  */
 export interface MergeStatusResult {

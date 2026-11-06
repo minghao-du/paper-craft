@@ -14,7 +14,6 @@ import type {
   MergeStatusResult,
   PreflightCheckResult,
   PriorEvidence,
-  ProviderChecker,
   ReconciledTask,
   ReleaseResourcesOptions,
   ReleaseResourcesResult,
@@ -39,11 +38,8 @@ import {
   initWorkflowConfig,
   loadWorkflowConfig,
 } from './config.js';
-import {
-  DefaultProviderChecker,
-} from './checkers.js';
 import { RepositoryManager } from './repository.js';
-import { AgyExecutor } from './executor.js';
+import { createAgentExecutor } from './executor.js';
 import {
   WorkflowCleanupError,
   WorkflowFiles,
@@ -244,14 +240,12 @@ export interface WorkflowEngineOptions {
   storageRoot?: string;
   /** Repository manager for unified repository, issue, and PR operations. */
   repositoryManager?: RepositoryManager;
-  /** Checker for verifying provider capabilities. */
-  providerChecker?: ProviderChecker;
   /** Agent executor instance for launching and managing agent executions. */
   executor?: AgentExecutor;
+  /** Designated provider identifier (e.g. 'agy'). Used when executor is not explicitly provided. */
+  provider?: string;
   /** Files manager for persisting workflow runs and events. */
   files?: WorkflowFiles;
-  /** Task execution manager for preparing and launching specialist tasks. */
-  taskExecution?: TaskExecution;
 }
 
 /**
@@ -262,7 +256,6 @@ export class WorkflowEngine {
   public readonly cwd: string;
   public readonly storageRoot: string;
   public readonly repositoryManager: RepositoryManager;
-  public readonly providerChecker: ProviderChecker;
   public readonly executor: AgentExecutor;
   public readonly files: WorkflowFiles;
   public readonly taskExecution: TaskExecution;
@@ -272,13 +265,15 @@ export class WorkflowEngine {
     this.storageRoot = options?.storageRoot
       ? path.resolve(this.cwd, options.storageRoot)
       : path.join(this.cwd, '.paper-craft');
-    this.repositoryManager = options?.repositoryManager ?? new RepositoryManager({ cwd: this.cwd });
-    this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
-    this.executor = options?.executor ?? new AgyExecutor();
+    this.repositoryManager =
+      options?.repositoryManager ?? new RepositoryManager({ cwd: this.cwd });
+    this.executor =
+      options?.executor ?? createAgentExecutor(options?.provider ?? 'agy');
     this.files = options?.files ?? new WorkflowFiles(this.storageRoot);
-    this.taskExecution =
-      options?.taskExecution ??
-      new TaskExecution({ files: this.files, executor: this.executor });
+    this.taskExecution = new TaskExecution({
+      files: this.files,
+      executor: this.executor,
+    });
   }
 
   /**
@@ -333,15 +328,25 @@ export class WorkflowEngine {
     details.repository = config.repository;
     details.worktree_root = config.worktree_root;
 
-    // Check provider availability
+    // Validate provider and check executor availability
     const targetProvider = options.provider || config.provider || 'agy';
+    let providerValid = true;
     try {
-      const provCheck = await this.providerChecker.check(targetProvider);
-      if (!provCheck.available) {
-        errors.push(provCheck.error || `Provider "${targetProvider}" is not available.`);
-      }
+      createAgentExecutor(targetProvider);
     } catch (err) {
-      errors.push(`Provider verification failed: ${(err as Error).message}`);
+      providerValid = false;
+      errors.push((err as Error).message);
+    }
+
+    if (providerValid) {
+      try {
+        const provCheck = await this.executor.check();
+        if (!provCheck.available) {
+          errors.push(provCheck.error || `Provider "${targetProvider}" is not available.`);
+        }
+      } catch (err) {
+        errors.push(`Provider verification failed: ${(err as Error).message}`);
+      }
     }
 
     // Check issue accessibility

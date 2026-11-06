@@ -18,7 +18,6 @@ import type {
   ExecutionHandle,
   ExecutionInspection,
   ExecutionStatus,
-  ProviderChecker,
   WorkflowDefinition,
   RoleDefinitions,
 } from '../../packages/core/src/workflow/types.js';
@@ -69,7 +68,6 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
   let mockRepoManager: RepositoryManager;
-  let mockProviderChecker: ProviderChecker;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-review-rework-test-'));
@@ -81,9 +79,6 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
         title: `Test Issue #${issue}`,
       }),
     });
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
   });
 
   afterEach(async () => {
@@ -94,7 +89,6 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
       repositoryManager: mockRepoManager,
-      providerChecker: mockProviderChecker,
       executor: mockExecutor,
     });
     await engine.init({ repository: 'test-owner/test-repo' });
@@ -570,7 +564,6 @@ describe('Workflow MVP: Review and Bounded Rework (Ticket #4)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         repositoryManager: mockRepoManager,
-        providerChecker: mockProviderChecker,
         executor: mockExecutor,
       });
 

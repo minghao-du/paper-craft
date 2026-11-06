@@ -21,7 +21,6 @@ import type {
   ExecutionStatus,
   IssueCheckResult,
   MergeStatusResult,
-  ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
 class MockExecutor implements AgentExecutor {
@@ -118,15 +117,11 @@ class MockRepositoryManager extends RepositoryManager {
 describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
-  let mockProviderChecker: ProviderChecker;
   let mockRepoManager: MockRepositoryManager;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-finalization-test-'));
     mockExecutor = new MockExecutor();
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
     mockRepoManager = new MockRepositoryManager();
   });
 
@@ -138,7 +133,6 @@ describe('Workflow MVP: Finalization and Resource Release (Ticket #7)', () => {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
       repositoryManager: mockRepoManager,
-      providerChecker: mockProviderChecker,
       executor: mockExecutor,
     });
     await engine.init({ repository: 'test-owner/test-repo' });

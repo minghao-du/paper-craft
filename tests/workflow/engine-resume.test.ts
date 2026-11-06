@@ -9,7 +9,6 @@ import type {
   AgentExecutor,
   ExecutionHandle,
   ExecutionInspection,
-  ProviderChecker,
   RunEvent,
 } from '../../packages/core/src/workflow/types.js';
 
@@ -62,7 +61,6 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
   let tmpDir: string;
   let mockExecutor: ResumeTestMockExecutor;
   let mockRepoManager: RepositoryManager;
-  let mockProviderChecker: ProviderChecker;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-resume-test-'));
@@ -75,10 +73,6 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
         title: `Issue #${issue} for resume tests`,
       }),
     });
-
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
   });
 
   afterEach(async () => {
@@ -89,7 +83,6 @@ describe('WorkflowEngine Resume & Reconciliation (Ticket #5)', () => {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
       repositoryManager: mockRepoManager,
-      providerChecker: mockProviderChecker,
       executor: mockExecutor,
     });
     await engine.init({ repository: 'test-owner/test-repo' });
