@@ -29,6 +29,8 @@ export interface OpenRunOptions {
   repository?: string;
   /** Target GitHub issue number. */
   issue?: number;
+  /** Overall Run objective or goal. */
+  goal?: string;
   /** Storage root directory for durable state and events. */
   storageRoot?: string;
   /** Base git repository root directory. Defaults to cwd. */
@@ -115,6 +117,56 @@ export interface SubmitResultSummary {
 }
 
 /**
+ * Summary returned upon stopping a Run.
+ */
+export interface StopSummary {
+  /** Unique Run identifier. */
+  runId: string;
+  /** Whether all target executions were stopped successfully. */
+  stopped: boolean;
+  /** Resulting Run lifecycle status. */
+  status: RunStatus;
+  /** Reason for stopping if provided. */
+  reason?: string;
+  /** Handles that were verified terminated. */
+  terminatedHandles: ExecutionHandle[];
+  /** True if execution termination status was uncertain. */
+  uncertain?: boolean;
+  /** Error message if stopping failed. */
+  error?: string;
+}
+
+/**
+ * Options for completing and finalizing a Run.
+ */
+export interface FinishOptions {
+  /** Overall Run conclusion or delivery summary. */
+  conclusion: string;
+  /** Evidence references (commit shas, PR links, test reports). */
+  evidence?: string[];
+}
+
+/**
+ * Result returned upon finishing and releasing a Run.
+ */
+export interface FinishSummaryResult {
+  /** Unique Run identifier. */
+  runId: string;
+  /** Whether finish and resource release succeeded. */
+  completed: boolean;
+  /** Overall conclusion accepted. */
+  conclusion: string;
+  /** Associated evidence links. */
+  evidence: string[];
+  /** Whether the dedicated worktree was safely retired. */
+  worktreeRetired: boolean;
+  /** Path to the worktree directory. */
+  worktreePath: string;
+  /** Resulting Run lifecycle status. */
+  status: RunStatus;
+}
+
+/**
  * Facade coordinating Run lifecycle and delegation across submodules:
  * Assignments, Execution, Worktree, and RunState.
  */
@@ -155,25 +207,30 @@ export class Run {
     const state = new RunState(storageRoot);
     const worktree = new Worktree(cwd);
 
-    // Prepare or verify worktree with 1.0 owner marker
-    const wtInfo = await worktree.prepare(runId, {
-      worktreePath: options.worktreePath,
-      worktreeRoot: options.worktreeRoot,
-      branchName: options.branchName,
-      repository: options.repository,
-    });
-
-    // Create or attach to Run in durable state
-    let snapshot: RunSnapshot;
+    // Read existing durable state if available
+    let snapshot: RunSnapshot | null = null;
     try {
       snapshot = await state.read(runId);
     } catch {
+      // New run
+    }
+
+    // Prepare or verify worktree with 1.0 owner marker
+    const wtInfo = await worktree.prepare(runId, {
+      worktreePath: options.worktreePath ?? snapshot?.worktreePath,
+      worktreeRoot: options.worktreeRoot,
+      branchName: options.branchName,
+      repository: options.repository ?? snapshot?.repository,
+    });
+
+    if (!snapshot) {
       snapshot = await state.apply(runId, {
         type: 'create_run',
         context: {
           runId,
           repository: options.repository,
           issue: options.issue,
+          goal: options.goal,
           worktreePath: wtInfo.worktreePath,
           provider: options.provider ?? 'agy',
         },
@@ -197,6 +254,16 @@ export class Run {
   }
 
   /**
+   * Records or updates the orchestrator's task plan.
+   */
+  async recordPlan(plan: unknown): Promise<RunSnapshot> {
+    return await this.state.apply(this.runId, {
+      type: 'record_plan',
+      plan,
+    });
+  }
+
+  /**
    * Dispatches an isolated task:
    * 1. Prepares assignment with pinned contract and injected identity
    * 2. Writes task initialization file in worktree
@@ -209,7 +276,57 @@ export class Run {
       params.taskId ?? `${this.runId}-${params.taskType}-${Date.now()}`;
     const targetWorktree = params.worktreePath ?? this.worktreePath;
 
+    // Check existing state for deduplication and recovery
     const snapshot = await this.state.read(this.runId);
+    const existingTask = snapshot.tasks.get(taskId);
+
+    if (existingTask) {
+      if (
+        existingTask.taskType !== params.taskType ||
+        (existingTask.worktreePath && existingTask.worktreePath !== targetWorktree)
+      ) {
+        throw new Error(
+          `Task "${taskId}" already exists with different parameters. Conflicting dispatch rejected.`,
+        );
+      }
+
+      // Case A: Task already has confirmed handle and is running
+      if (existingTask.handle && existingTask.status === 'running') {
+        return {
+          taskId,
+          handle: existingTask.handle,
+          taskType: existingTask.taskType,
+          status: 'running',
+          worktreePath: existingTask.worktreePath ?? targetWorktree,
+        };
+      }
+
+      // Case B: Lost launch confirmation window or reconnection check
+      const inspection = await this.execution.inspect(taskId);
+      if (inspection.isUncertain || inspection.status === 'uncertain') {
+        throw new Error(
+          `Cannot dispatch task "${taskId}": execution status is uncertain (${inspection.error ?? 'unconfirmed provider status'}). Blind restart prevented.`,
+        );
+      }
+
+      if (inspection.status === 'running' || inspection.status === 'exited') {
+        const handle =
+          inspection.handle ??
+          existingTask.handle ?? { id: `handle-${taskId}`, taskId };
+        await this.state.apply(this.runId, {
+          type: 'task_launched',
+          taskId,
+          handle,
+        });
+        return {
+          taskId,
+          handle,
+          taskType: existingTask.taskType,
+          status: 'running',
+          worktreePath: existingTask.worktreePath ?? targetWorktree,
+        };
+      }
+    }
 
     // Explicit predecessor result linking (does not default to latest result)
     const predecessorResultId =
@@ -391,6 +508,167 @@ export class Run {
       acknowledged: true,
       taskId,
       result: validation.normalizedResult,
+    };
+  }
+
+  /**
+   * Stops active executions and pauses the Run:
+   * 1. Stops running executions via Execution.stop() and confirms termination.
+   * 2. Records task_terminated and stop_requested in durable state.
+   * 3. Prevents subsequent task dispatches while paused.
+   */
+  async stop(reason?: string): Promise<StopSummary> {
+    const snapshot = await this.state.read(this.runId);
+    if (snapshot.status === 'completed') {
+      throw new Error(`Cannot stop Run "${this.runId}": Run is already completed.`);
+    }
+
+    const terminatedHandles: ExecutionHandle[] = [];
+    let isUncertain = false;
+    let stopError: string | undefined;
+
+    // Collect active handles to stop
+    const handlesToStop: Array<{ taskId: string; handle: ExecutionHandle }> = [];
+    if (snapshot.activeTaskId && snapshot.activeHandle) {
+      handlesToStop.push({ taskId: snapshot.activeTaskId, handle: snapshot.activeHandle });
+    }
+    for (const [taskId, task] of snapshot.tasks) {
+      if (
+        (task.status === 'running' || task.status === 'pending') &&
+        task.handle &&
+        !handlesToStop.some((h) => h.handle.id === task.handle?.id)
+      ) {
+        handlesToStop.push({ taskId, handle: task.handle });
+      }
+    }
+
+    for (const item of handlesToStop) {
+      const stopResult = await this.execution.stop(item.handle);
+      if (stopResult.stopped) {
+        terminatedHandles.push(item.handle);
+        await this.state.apply(this.runId, {
+          type: 'task_terminated',
+          taskId: item.taskId,
+          handle: item.handle,
+          stopped: true,
+        });
+      } else {
+        if (stopResult.uncertain) {
+          isUncertain = true;
+        }
+        stopError = stopResult.error ?? 'Execution stop could not be verified.';
+        await this.state.apply(this.runId, {
+          type: 'task_terminated',
+          taskId: item.taskId,
+          handle: item.handle,
+          stopped: false,
+        });
+      }
+    }
+
+    const updatedSnapshot = await this.state.apply(this.runId, {
+      type: 'stop_requested',
+      reason,
+      uncertain: isUncertain,
+    });
+
+    return {
+      runId: this.runId,
+      stopped: !isUncertain && !stopError,
+      status: updatedSnapshot.status,
+      reason,
+      terminatedHandles,
+      uncertain: isUncertain,
+      error: stopError,
+    };
+  }
+
+  /**
+   * Completes the Run and releases its resources:
+   * 1. Verifies all executions are terminated.
+   * 2. Inspects worktree ownership and checks for uncommitted changes (dirty check).
+   * 3. Safely retires worktree via Worktree.retire.
+   * 4. Persists run_finished in durable state with conclusion and evidence links.
+   * 5. Supports repeatable, idempotent calls without failing.
+   */
+  async finish(
+    conclusionOrOptions: string | FinishOptions,
+    maybeEvidence?: string[],
+  ): Promise<FinishSummaryResult> {
+    const conclusion =
+      typeof conclusionOrOptions === 'string'
+        ? conclusionOrOptions
+        : conclusionOrOptions.conclusion;
+    const evidence = Array.isArray(maybeEvidence)
+      ? maybeEvidence
+      : typeof conclusionOrOptions === 'object'
+        ? conclusionOrOptions.evidence ?? []
+        : [];
+
+    const snapshot = await this.state.read(this.runId);
+
+    // 1. If already completed, return idempotent finish summary
+    if (snapshot.status === 'completed') {
+      return {
+        runId: this.runId,
+        completed: true,
+        conclusion: snapshot.finishConclusion ?? conclusion,
+        evidence: snapshot.finishEvidence ?? evidence,
+        worktreeRetired: true,
+        worktreePath: this.worktreePath,
+        status: 'completed',
+      };
+    }
+
+    // 2. Verify all tasks are terminated / non-active
+    if (snapshot.activeTaskId) {
+      const obs = await this.execution.inspect(snapshot.activeTaskId);
+      if (obs.status === 'running' || obs.isUncertain) {
+        throw new Error(
+          `Cannot finish Run "${this.runId}": Task "${snapshot.activeTaskId}" is still active (status: ${obs.status}).`,
+        );
+      }
+    }
+
+    for (const [taskId, task] of snapshot.tasks) {
+      if (task.status === 'running' || task.status === 'pending') {
+        const obs = await this.execution.inspect(taskId);
+        if (obs.status === 'running' || obs.isUncertain) {
+          throw new Error(
+            `Cannot finish Run "${this.runId}": Task "${taskId}" is still active (status: ${obs.status}).`,
+          );
+        }
+      }
+      if (task.status === 'uncertain') {
+        throw new Error(
+          `Cannot finish Run "${this.runId}": Task "${taskId}" has unconfirmed or uncertain status.`,
+        );
+      }
+    }
+
+    // 3. Inspect worktree: verify existence, version 1.0 owner marker matching runId, and dirty check
+    const retireResult = await this.worktree.retire(this.worktreePath, this.runId);
+    if (!retireResult.retired) {
+      throw new Error(
+        `Cannot finish Run "${this.runId}": Worktree retirement failed: ${retireResult.error ?? 'Unknown error'}`,
+      );
+    }
+
+    // 4. Atomically persist run_finished in RunState
+    const updated = await this.state.apply(this.runId, {
+      type: 'run_finished',
+      conclusion,
+      evidence,
+    });
+
+    return {
+      runId: this.runId,
+      completed: true,
+      conclusion,
+      evidence,
+      worktreeRetired: true,
+      worktreePath: this.worktreePath,
+      status: updated.status,
     };
   }
 }
