@@ -1,136 +1,190 @@
 ---
 name: pc-pr-land
-description: Execute a orchestrator-dispatched PR merge or post-records preservation and cleanup.
+description: Execute PR merge verification and landing, or post-merge artifact preservation and workspace cleanup
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 ---
 
 # /pc-pr-land
 
-Read the supplied role contract and assignment before mutation.
-The owning Run's Orchestrator dispatches one phase, `merge` or `cleanup`, with repository/PR, evaluated head, checkout and durable evidence pointers.
-Execute only that assignment and return its correlated result.
-Workers remain available for remediation and final records while releasing checkout ownership.
-For missing assignment or resume, return to [Orchestrator intake](../pc-orchestrator/SKILL.md#1-resolve-or-start-the-run) and managed recovery.
+Authoritative instructions for executing pull request merge verification and landing, or performing post-merge artifact preservation and workspace cleanup.
+This skill can be invoked directly by a human or agent with a task prompt (standalone/manual mode), or dispatched automatically by the workflow orchestrator.
 
-## Merge phase
+## Operations Overview
 
-1. **Accept ownership.** Read the orchestrator's transfer record and worker release.
-   Reconcile recorded ownership with supported runtime/process evidence, tmux pane paths
-   and jobs using the directory. Unknown or overlapping ownership blocks mutation.
-   Record acceptance in the coordination ledger and worker worklog.
-   This step ends with one verified owner of the checkout.
+`pc-pr-land` provides two distinct operations based on the task prompt instruction or assigned role:
+- **Operation A: PR Merge (Landing):** Verifies approved commit against live PR HEAD, validates base ancestry and checks, and executes guarded squash merge. (Dispatched under role `merger` or manual merge request).
+- **Operation B: Cleanup & Preservation (Finalization):** Verifies merge completion, archives essential artifacts, and prepares resources for release. (Dispatched under role `finalizer` or manual cleanup request).
 
-2. **Verify the evaluated PR.** Read live GitHub state,
-   evaluated SHA, applicable completion/review outcomes and every required parent/planner confirmation.
-   Use `gh pr view <N> --json url,state,headRefOid,baseRefName,closingIssuesReferences`.
-   Match repository, PR, local HEAD and live head to that SHA. Inspect `git status --porcelain`.
-   Dirty or untracked work requires worker accounting through the orchestrator; preserve it
-   in place rather than committing, moving or stashing it during landing.
-   Missing/stale evidence or a closed PR blocks merge; an already merged PR moves to
-   outcome reconciliation, never another merge attempt.
+---
 
-3. **Update and check.** Fetch origin, then rebase onto `origin/<base>` if needed.
-   A conflict stops the operation: report the precise blocker, preserve the worktree
-   (including any rebase state), and release ownership before worker remediation.
-   If a successful rebase changes HEAD, push with `--force-with-lease`, report the new
-   SHA and release. The orchestrator repeats applicable checks, planner confirmations and
-   professional confirmation before another merge dispatch.
-   With unchanged HEAD, verify current-base ancestry and required checks using
-   `gh pr checks <N> --required`; inspect installed `gh pr checks --help` for supported
-   output fields. Pending checks remain pending; failures return to the orchestrator.
-   No configured required checks is acceptable only with the applicable local findings.
+## Operation A: PR Merge (Landing)
 
-4. **Merge the evaluated head.** Check GitHub's `closingIssuesReferences` against the
-   intended issue set; correct a defective PR body through the worker. Re-read live
-   head and fetch base immediately before merging. For the recorded evaluated SHA:
+### Task Inputs
 
-   ```sh
-   test "$(git rev-parse HEAD)" = "<evaluated-sha>" &&
-   test "$(gh pr view <N> --json headRefOid -q .headRefOid)" = "<evaluated-sha>" &&
-   git fetch -q origin <base> &&
-   git merge-base --is-ancestor origin/<base> <evaluated-sha> &&
-   gh pr merge <N> --squash --match-head-commit <evaluated-sha> --body "closes #<issue>"
+1. **PR context:** PR number or URL (`<PR>`).
+2. **Repository & working directory:** Target repository (`owner/repo`) and local git checkout.
+3. **Approved evaluated commit SHA (optional):** The specific commit SHA approved during review (from prior evidence or prompt).
+4. **Base branch:** Target branch to merge into (defaults to `main` or PR `baseRefName`).
+5. **Closing issue references:** Issue numbers to close on merge (e.g. `closes #<issue>`).
+
+### Verification & Landing Method
+
+#### Step 1: Live GitHub and checkout state check
+1. Query live PR status on GitHub:
+   ```bash
+   gh pr view <PR> --json state,headRefOid,baseRefName,closingIssuesReferences,mergeable
    ```
-
-   Use an explicit squash body containing only intended closing references (or `--body ""`).
-   The match-head guard rejects a moved head; it does not make the separate base check
-   atomic. A moved head returns to checks and applicable planner confirmation. A moved base
-   requires current-base revalidation and, if rebase changes head, fresh quality and professional confirmation.
-   Never replace a failed guard with an unguarded merge.
-
-5. **Report merge separately.** Verify `gh pr view <N> --json state,mergedAt,mergeCommit`.
-   Record the actual merge outcome and commit, including an uncertain command result
-   reconciled against GitHub. A queued or auto-merge request is still pending; retain
-   the checkout and revalidate evidence before reporting success. Submit the structured result:
-
-   ```sh
-   pc workflow submit-result --run <run-id> --task <task-id> --outcome completed --summary "Squash merged PR #<N> into main" --artifacts '{"merged_commit":"<merge-commit-sha>"}'
+2. Verify local working tree state:
+   ```bash
+   git status --porcelain
    ```
+   **Halt protocol for dirty working tree:**
+   A dirty checkout with unstaged or uncommitted changes blocks merge.
+   Preserve uncommitted changes in place; never commit, stash, or overwrite them during landing.
+3. Check PR state:
+   - If the PR is already `MERGED` on GitHub:
+     Extract the existing merge commit SHA (`gh pr view <PR> --json mergeCommit -q .mergeCommit.oid`) and report success idempotently without executing another merge.
+   - If the PR is `CLOSED` or unmergeable (conflicts):
+     Halt immediately and report `blocked`.
 
-   If merge is blocked (conflicts, checks failing), submit outcome `blocked`:
+#### Step 2: Evaluated commit match & real-time HEAD verification
+Inspect local HEAD and real-time remote PR head:
+```bash
+LOCAL_HEAD=$(git rev-parse HEAD)
+REMOTE_HEAD=$(gh pr view <PR> --json headRefOid -q .headRefOid)
+```
 
-   ```sh
-   pc workflow submit-result --run <run-id> --task <task-id> --outcome blocked --summary "Merge blocked: <reason>" --artifacts '{"merged_commit":""}'
+- When an approved evaluated commit SHA was provided:
+  ```bash
+  test "$LOCAL_HEAD" = "<evaluated-sha>" && test "$REMOTE_HEAD" = "<evaluated-sha>"
+  ```
+  **Halt protocol for PR HEAD drift:**
+  If the remote PR head moved or local HEAD does not match `<evaluated-sha>`, **halt immediately**.
+  Prior review approval is invalidated by the changed head.
+  Explain clearly that the PR head has changed from the approved commit, requiring a fresh review before merge.
+
+#### Step 3: Base branch synchronization & check verification
+1. Fetch base branch:
+   ```bash
+   git fetch origin <base>
    ```
-
-   The Engine confirms the actual external GitHub merge state before advancing to `finalization`.
-   If merge execution was interrupted or missing result delivery, `pc workflow resume` inspects
-   external GitHub state directly; an already merged PR advances to finalization without duplicate
-   merge commands. Keep status, worklog, branch and directory intact, record release, and
-   return to the orchestrator. The worker next owns final evaluation and records.
-
-## Cleanup phase
-
-Read this phase only after the orchestrator verifies merge success, final worker records
-and a new worker release. A merge result alone does not dispatch cleanup.
-
-1. **Verify prerequisites.** Accept exclusive checkout ownership using the shared transfer
-   contract. Verify merged PR, all linked issues closed, terminal issue-lead comment and
-   final worklog/status evidence. Account for follow-ups, local changes, unmerged commits,
-   pending input, background jobs, external readers and holds. Missing records return to
-   the worker through the orchestrator; unknown occupancy leaves cleanup pending.
-   Run `pc fleet reclaim-check --dir <slot> --config <authoritative-config>` for fleet slots.
-   It currently returns `eligible: false`, exit 2; retain the slot while that check cannot
-   establish eligibility. Do not treat portable read-only checks as deletion authority.
-
-2. **Preserve before removal.** Run:
-
-   ```sh
-   pc workflow preserve --dir <checkout> --reason "after final records for PR <N>" --config <authoritative-config>
+2. Verify base ancestry:
+   ```bash
+   git merge-base --is-ancestor "origin/<base>" "$LOCAL_HEAD"
    ```
+   If base has moved ahead: rebase onto `origin/<base>`.
+   If a rebase changes the commit SHA, push with `--force-with-lease` and halt for re-verification and fresh review.
+3. Verify required checks:
+   ```bash
+   gh pr checks <PR> --required
+   ```
+   All required CI checks must pass. If checks are pending or failing, halt and report `blocked`.
 
-   Require successful exit, `status: preserved`, manifest/hashes and unchanged sources.
-   Record the verified archive path in the ledger and on the PR before removal.
-   Missing status or failed preservation leaves originals and cleanup pending.
+#### Step 4: Execute guarded squash merge
+Merge using explicit `--match-head-commit` to prevent race conditions:
 
-3. **Clean only eligible resources.** Use actual `git worktree list --porcelain` and
-   config to resolve the primary checkout. Verify its owners released it before updating
-   it; otherwise report primary synchronization pending. For a clone, switch to base and
-   pull with `--ff-only` only after the preceding gates. For a linked worktree, operate
-   outside it and use ordinary `git worktree remove <path>` before local branch deletion.
-   Use ordinary `git branch -d <branch>`; squash-merge ancestry may refuse deletion,
-   which leaves branch cleanup pending for explicit accounting rather than forcing it.
-   Delete a remaining remote branch only after the same work-accounting gates.
-   GitHub branch deletion settings are not evidence that deletion occurred.
+```bash
+gh pr merge <PR> --squash --match-head-commit "<evaluated-sha>" --body "closes #<issue>"
+```
 
-4. **Record actual results.** Verify retained/deleted paths, local/remote branch state,
-   primary synchronization and final checkout status. Report preservation and cleanup
-   independently from merge success. Release ownership and notify the orchestrator; only
-   verified cleanup releases a fleet resource for another task.
+- Never use an unguarded merge. The `--match-head-commit` flag ensures GitHub atomically rejects the merge if HEAD moved.
+- Include closing issue references in the squash body so GitHub auto-closes the linked issue.
 
-Managed delivery follows the current Run assignment and Engine-validated transitions.
-Unknown execution occupancy or unaccounted checkout files retain the checkout.
-A blocked completion resumes its persisted stages; inspect the original execution before retrying a missing receipt.
-Interrupted merge recovery verifies the actual merge result on GitHub and does not repeat a successful merge.
-Parent Issue closure remains a separate user decision.
+#### Step 5: Verify merge completion
+Verify the merge result on GitHub:
+```bash
+gh pr view <PR> --json state,mergedAt,mergeCommit
+```
+Extract the landed merge commit SHA (`mergeCommit.oid`).
 
-## Managed completion
+### Merge Outputs
 
-Submit the assigned task's outcome, summary and required artifacts through
-`pc workflow submit-result`, using the supplied Run and task identities.
-The role contract determines permitted outcomes and required artifacts. Merge
-assignments return `merged_commit`; finalization assignments return
-`release_evidence` after final records and preservation checks.
-The Engine validates the result and controls resource release. Report unresolved
-execution occupancy, preservation or cleanup failures as blockers.
-For recovery, return the Run identity and evidence to the
-[Orchestrator](../pc-orchestrator/SKILL.md#3-recover-stop-or-release).
+1. **Merged Commit SHA:** The SHA of the landed squash commit on the base branch (`merged_commit`).
+2. **Submission / Result:**
+   - **When dispatched via workflow engine:** Submit the result using the command provided in the dispatch prompt:
+     - On success: outcome `completed`, summary `"Squash merged PR #<PR> into <base>"`, artifacts `{"merged_commit":"<merge-commit-sha>"}`.
+     - When blocked: outcome `blocked`, summary `"Merge blocked: <reason>"`, artifacts `{"merged_commit":""}`.
+   - **When invoked manually or standalone:** Report the landed merge commit SHA, PR status, and confirm issue closure to the caller.
+
+---
+
+## Operation B: Post-Merge Cleanup & Preservation
+
+### Task Inputs
+
+1. **Workspace & repository:** Working directory / checkout path to preserve or clean.
+2. **PR / Issue context:** PR number or issue number confirming completion.
+3. **Preservation configuration:** Path or destination for archived run records and artifacts.
+
+### Verification & Cleanup Method
+
+#### Step 1: Verify prerequisites
+1. Verify PR is confirmed merged on GitHub:
+   ```bash
+   gh pr view <PR> --json state -q .state
+   ```
+   Must equal `MERGED`. Never clean up an unmerged branch or worktree without explicit operator override.
+2. Verify all linked issues are closed.
+3. Verify working directory is clean:
+   ```bash
+   git status --porcelain
+   ```
+   Ensure no untracked experimental results or uncommitted work remain unaccounted for.
+
+#### Step 2: Artifact preservation
+Archive important run artifacts, benchmark results, logs, and research records before deletion:
+```bash
+pc workflow preserve --dir <checkout> --reason "after final records for PR <PR>"
+```
+(Or create a local tar/zip archive for standalone runs).
+Ensure the preservation bundle is verified on disk before any destructive removal.
+
+#### Step 3: Resource lifecycle & cleanup scope
+The boundary of responsibility for resource cleanup is strictly defined:
+- **Automated Workflow Runs:**
+  **Process termination and worktree directory removal are controlled and performed by the Workflow Engine** (`engine.releaseRunResources`).
+  The cleanup agent's responsibility is to:
+  1. Confirm PR merge state on GitHub.
+  2. Complete required artifact preservation.
+  3. Ensure no dirty untracked files remain.
+  4. Submit `release_evidence` confirming readiness for engine release.
+  The engine then cleanly terminates remaining agent executions and removes the temporary worktree.
+- **Manual / Standalone Runs:**
+  When operating manually outside the workflow engine:
+  1. Switch out of the worktree directory.
+  2. Remove the linked worktree:
+     ```bash
+     git worktree remove <worktree-path>
+     ```
+  3. Delete the merged local feature branch:
+     ```bash
+     git branch -d <branch>
+     ```
+  4. Delete the remote feature branch (if appropriate):
+     ```bash
+     git push origin --delete <branch>
+     ```
+
+### Cleanup Outputs
+
+1. **Release Evidence:** Evidence confirming artifact preservation and checkout clean state (`release_evidence`).
+2. **Submission / Result:**
+   - **When dispatched via workflow engine:** Submit result via the command provided in the dispatch prompt:
+     - On success: outcome `completed`, summary `"Final records preserved and checkout verified for release"`, artifacts `{"release_evidence":"preservation verified, worktree clean"}`.
+     - When blocked: outcome `blocked`, summary `"Cleanup blocked: <reason>"`, artifacts `{"release_evidence":""}`.
+   - **When invoked manually or standalone:** Report preserved archive paths and deleted branch/worktree status to caller.
+
+---
+
+## Quality Requirements & Completion Criteria
+
+1. **Merge completion:**
+   - Real-time PR HEAD matches the evaluated commit SHA.
+   - Base branch ancestry is clean; required CI checks pass.
+   - Squash merge succeeds on GitHub with verifiable `merged_commit` SHA.
+   - Linked issue auto-close is verified.
+2. **Cleanup completion:**
+   - PR is confirmed merged on GitHub.
+   - Required artifacts and records are preserved.
+   - No untracked work or dirty files are discarded without authorization.
+   - Resource release readiness is confirmed.

@@ -100,4 +100,101 @@ describe('composeTaskPrompt', () => {
       'pc workflow submit-result --run "run-min" --task "task-min" --outcome <outcome> --summary "<summary>" --artifacts \'<artifacts-json>\'',
     );
   });
+
+  it('composes reviewer prompt with pc-pr-review and permitted outcomes', () => {
+    const params: TaskDispatchParams = {
+      runId: 'run-rev-1',
+      taskId: 'task-rev-1',
+      step: 'review',
+      role: 'reviewer',
+      skill: 'pc-pr-review',
+      taskInstructions: 'Review implementation against acceptance criteria and quality standards',
+      sharedRequirements: 'Production quality code, 100% tests passing.',
+      worktreePath: '/worktrees/run-rev-1',
+      repository: 'test-org/test-repo',
+      issue: 26,
+      permittedOutcomes: ['pass', 'rework', 'blocked'],
+      requiredArtifacts: ['reviewed_commit', 'findings'],
+      deliveryArtifacts: {
+        diff: 'diff --git a/file.ts b/file.ts',
+        test_results: 'All 12 tests passed',
+      },
+    };
+
+    const prompt = composeTaskPrompt(params);
+
+    expect(prompt).toContain('# Task Assignment: review (reviewer)');
+    expect(prompt).toContain('Skill: pc-pr-review');
+    expect(prompt).toContain('Role: reviewer');
+    expect(prompt).toContain('Step: review');
+    expect(prompt).toContain('Permitted Outcomes: pass, rework, blocked');
+    expect(prompt).toContain('Required Artifacts: reviewed_commit, findings');
+    expect(prompt).toContain('diff: diff --git a/file.ts b/file.ts');
+    expect(prompt).toContain('test_results: All 12 tests passed');
+    expect(prompt).toContain('pc workflow submit-result --run "run-rev-1" --task "task-rev-1"');
+  });
+
+  it('composes merger prompt with pc-pr-land and evaluated commit evidence', () => {
+    const params: TaskDispatchParams = {
+      runId: 'run-merge-1',
+      taskId: 'task-merge-1',
+      step: 'merge',
+      role: 'merger',
+      skill: 'pc-pr-land',
+      taskInstructions: 'Verify PR head matches approved review commit and merge',
+      sharedRequirements: 'Must use guarded squash merge.',
+      worktreePath: '/worktrees/run-merge-1',
+      repository: 'test-org/test-repo',
+      issue: 26,
+      permittedOutcomes: ['completed', 'blocked'],
+      requiredArtifacts: ['merged_commit'],
+      priorEvidence: {
+        evaluatedCommit: 'commit-approved-789',
+        findings: 'Review passed with 0 defects.',
+      },
+    };
+
+    const prompt = composeTaskPrompt(params);
+
+    expect(prompt).toContain('# Task Assignment: merge (merger)');
+    expect(prompt).toContain('Skill: pc-pr-land');
+    expect(prompt).toContain('Role: merger');
+    expect(prompt).toContain('Step: merge');
+    expect(prompt).toContain('Permitted Outcomes: completed, blocked');
+    expect(prompt).toContain('Required Artifacts: merged_commit');
+    expect(prompt).toContain('Evaluated Commit: commit-approved-789');
+    expect(prompt).toContain('Review Findings:\nReview passed with 0 defects.');
+    expect(prompt).toContain('pc workflow submit-result --run "run-merge-1" --task "task-merge-1"');
+  });
+
+  it('composes finalizer prompt with pc-pr-land and release evidence contract', () => {
+    const params: TaskDispatchParams = {
+      runId: 'run-fin-1',
+      taskId: 'task-fin-1',
+      step: 'finalization',
+      role: 'finalizer',
+      skill: 'pc-pr-land',
+      taskInstructions: 'Record final records, preserve artifacts, and release resources',
+      sharedRequirements: 'Verify preservation before releasing.',
+      worktreePath: '/worktrees/run-fin-1',
+      repository: 'test-org/test-repo',
+      issue: 26,
+      permittedOutcomes: ['completed', 'blocked'],
+      requiredArtifacts: ['release_evidence'],
+      deliveryArtifacts: {
+        merged_commit: 'commit-merged-squash-999',
+      },
+    };
+
+    const prompt = composeTaskPrompt(params);
+
+    expect(prompt).toContain('# Task Assignment: finalization (finalizer)');
+    expect(prompt).toContain('Skill: pc-pr-land');
+    expect(prompt).toContain('Role: finalizer');
+    expect(prompt).toContain('Step: finalization');
+    expect(prompt).toContain('Permitted Outcomes: completed, blocked');
+    expect(prompt).toContain('Required Artifacts: release_evidence');
+    expect(prompt).toContain('merged_commit: commit-merged-squash-999');
+    expect(prompt).toContain('pc workflow submit-result --run "run-fin-1" --task "task-fin-1"');
+  });
 });

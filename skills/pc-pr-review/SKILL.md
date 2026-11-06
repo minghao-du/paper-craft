@@ -1,343 +1,178 @@
 ---
 name: pc-pr-review
 description: Run comprehensive pre-merge quality checklist for current branch's PR
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 ---
 
 # /pc-pr-review
 
-Run a comprehensive quality checklist before merging a PR.
-Automatically detects project type and runs appropriate checks.
+Authoritative instructions for conducting a comprehensive quality review before merging a pull request.
+This skill can be invoked directly by a human or agent with a task prompt (standalone/manual mode), or dispatched automatically by the workflow orchestrator.
 
-## Usage
+## Task Inputs
 
-```
-/pc-pr-review
-```
+Before starting the review, ensure the following inputs are available:
+1. **PR context / target branch:** PR number, URL, or local feature branch (`gh pr view` or `git branch --show-current`).
+2. **Base branch:** Base branch to compare against (defaults to `origin/<base>` resolved via `gh pr view --json baseRefName` or `origin/main`).
+3. **Evaluated commit SHA (optional):** Target commit SHA to review (when dispatched with a specific evaluated revision, the live PR head must match it).
+4. **Repository & working directory:** The git checkout / worktree of the PR.
+5. **Review focus & acceptance criteria:** Specific issue requirements, acceptance criteria, or prior review feedback to verify against.
 
-## Workflow
+## Review Method & Professional Verification Steps
 
-For delegated review or repair, include the reminder and resolved paths required by [Project instructions in every dispatch](../lib/workflow.md#project-instructions-in-every-dispatch) in each agent's brief.
+### Step 1: Base branch & PR HEAD verification
 
-### Step 0: Check for Project-Specific Checklist
-
-First, check for a project-specific checklist:
-1. Look for `PRE-MERGE-CHECKLIST.md` in the repo root
-2. If not found, read the project's `CLAUDE.md` (or `AGENTS.md`) and look for a "Pre-PR Quality Checklist" or "Pre-Merge Checklist" section
-
-**If a project-specific checklist is found, follow those steps exactly** instead of the generic workflow below.
-
-### Step 1: Detect Project Type
-
-Examine the repository to determine what checks apply:
-
-| Indicator | Project Type | Skills to Follow |
-|-----------|--------------|------------------|
-| `workflow/*.smk` or `Snakefile` | Snakemake pipeline | `pc-pipeline-snakemake` |
-| `*.py` files in `src/` or project root | Python project | `pc-review-clean-code` + `pc-review-code-reuse` |
-| `build.zig` or `*.zig` files in `src/` | Zig project | `pc-review-zig` |
-| `go.mod` | Go project | `pc-review-clean-code` + `pc-review-code-reuse` |
-| `package.json` | Node.js project | `pc-review-clean-code` + `pc-review-code-reuse` |
-
-The two reviewers operate in **different modes** and complement each other — run them in parallel:
-
-- `pc-review-clean-code` reads the diff and evaluates each hunk against clean-code principles (naming, function size, single responsibility, DRY-within-hunk).
-- `pc-review-code-reuse` surveys the surrounding codebase *first*, then audits the diff for missed reuse of existing constants, helpers, conventions, and patterns.
-  Its mandatory output tables (inline-import audit vs `pyproject.toml`; function-pair overlap audit) catch things a diff-only reviewer cannot see.
-
-Multiple types can apply (e.g., Snakemake + Python).
-
-### Step 1.5: Fetch and determine base branch
-
-Always fetch first so comparisons are against the true remote state, not a stale local branch:
+Always fetch remote state first so comparisons reflect the true upstream state:
 
 ```bash
 git fetch origin
 ```
 
-Determine the base branch from the PR (if one exists), otherwise default to `main` or `master`:
+1. **Resolve base branch:**
+   ```bash
+   BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "main")
+   ```
+   Always compare against `origin/$BASE` rather than a local branch to avoid stale references.
 
-```bash
-gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "main"
-```
+2. **Verify target evaluated commit:**
+   Record the current checkout HEAD and remote PR head:
+   ```bash
+   LOCAL_HEAD=$(git rev-parse HEAD)
+   REMOTE_HEAD=$(gh pr view --json headRefOid -q .headRefOid 2>/dev/null || echo "$LOCAL_HEAD")
+   ```
+   - When an evaluated commit SHA was explicitly specified in the task dispatch/prompt:
+     Verify that `LOCAL_HEAD` and `REMOTE_HEAD` match the specified SHA.
+     If the PR HEAD has moved or local checkout differs:
+     **Halt review immediately.** Explain that the PR head has changed, requiring a re-targeted review.
+   - For standalone or manual review:
+     Use `LOCAL_HEAD` as the evaluated commit (`reviewed_commit`).
 
-Use `origin/<base>` (not local `<base>`) for all diffs below.
-This avoids false positives from a stale local main.
+3. **Identify changed files:**
+   ```bash
+   git diff "origin/$BASE...$LOCAL_HEAD" --name-only
+   ```
+   Focus review on changed files rather than the entire codebase.
 
-### Step 2: Identify Changed Files
+### Step 2: Check for project-specific checklist & detect project type
 
-```bash
-git diff origin/<base>...HEAD --name-only
-```
+First check for custom project guidelines:
+1. Look for `PRE-MERGE-CHECKLIST.md` in the repo root.
+2. If not found, inspect `AGENTS.md` or `CLAUDE.md` for a "Pre-PR Quality Checklist" or "Pre-Merge Checklist" section.
+3. If a project-specific checklist is present, incorporate its requirements into the checks.
 
-Focus review on changed files, not the entire codebase.
+Detect applicable project types to determine appropriate review modes:
 
-### Step 3: Check for Large Files and Cruft
+| Indicator | Project Type | Reviewers / Skills |
+|-----------|--------------|-------------------|
+| `workflow/*.smk` or `Snakefile` | Snakemake pipeline | `pc-pipeline-snakemake` |
+| `*.py` files in `src/` or root | Python project | `pc-review-clean-code` + `pc-review-code-reuse` |
+| `package.json` | Node.js / TypeScript | `pc-review-clean-code` + `pc-review-code-reuse` |
+| `build.zig` or `*.zig` | Zig project | `pc-review-zig` |
+| `go.mod` | Go project | `pc-review-clean-code` + `pc-review-code-reuse` |
 
-Scan changed files for artifacts that typically shouldn't be committed:
+When both apply, run them in parallel:
+- **Clean code reviewer:** Audits the diff against clean-code principles (naming, single responsibility, function length, DRY within hunks).
+- **Code reuse reviewer:** Surveys the surrounding codebase first to audit for missed reuse of existing helpers, constants, patterns, and conventions.
 
-**Suspicious file types** (flag for user review):
-- HTML files from notebook execution (`.html` in output directories)
-- Image files (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.pdf`) unless in expected locations like `docs/` or `assets/`
-- Binary files and archives (`.zip`, `.tar`, `.gz`, `.pkl`, `.pickle`, `.npy`, `.npz`)
-- Large data files (`.csv`, `.tsv`, `.parquet`) over 100KB
-- Cache/build artifacts (`__pycache__/`, `.pyc`, `node_modules/`, `dist/`, `build/`)
+### Step 3: Check for large files and transient cruft
 
-**Acceptable** (don't flag):
-- Small JSON result files (< 100KB)
-- Config files (`.json`, `.yml`, `.yaml` in root or config directories)
-- Test fixtures in `testdata/` or `tests/fixtures/`
+Scan changed files for artifacts that should never be committed:
+- **Forbidden cruft:** HTML renders from notebooks (`.html`), binary archives (`.zip`, `.tar`, `.gz`, `.pkl`, `.npy`), cache artifacts (`__pycache__/`, `dist/`, `node_modules/`), large datasets (>100KB).
+- **Check file sizes:**
+  ```bash
+  git diff "origin/$BASE...$LOCAL_HEAD" --name-only | xargs -I{} sh -c 'test -f "{}" && stat -f "%z %N" "{}" 2>/dev/null || stat --format="%s %n" "{}" 2>/dev/null' | awk '$1 > 102400 {print}'
+  ```
+  Flag any detected cruft or oversized files as blocking issues.
 
-**Check file sizes:**
-```bash
-git diff origin/<base>...HEAD --name-only | xargs -I{} sh -c 'test -f "{}" && stat -f "%z %N" "{}" 2>/dev/null || stat --format="%s %n" "{}" 2>/dev/null' | awk '$1 > 102400 {print}'
-```
+### Step 4: Run automated quality checks
 
-Flag anything suspicious for user confirmation before proceeding.
+Run the repository's configured static and dynamic validation commands:
 
-### Step 4: Run Reviews (in parallel when possible)
-
-**For Snakemake projects:**
-- Follow the `pc-pipeline-snakemake` skill to review workflow structure, rule organization, and best practices
-
-**For all projects with code changes:**
-- Follow the `pc-review-clean-code` skill on modified source files (not tests)
-- **In parallel**, follow the `pc-review-code-reuse` skill on the same branch — it surveys the surrounding codebase first to catch missed reuse of existing patterns, constants, helpers, and conventions.
-  The two skills have different mandates (clean-code principles vs. pattern adherence) and report independently.
-
-### Step 4.5: Scientific Conclusion Skeptic (conditional)
-
-**Always run this detection step.**
-Examine the PR title, body, and diff for signals that the PR reports a scientific conclusion or experimental result:
-
-- Benchmark results or comparison tables
-- Win/loss rates, accuracy numbers, or performance metrics
-- Language like "outperforms", "worse than", "fails to", "never beats", "always prefers"
-- Claims about method effectiveness, algorithmic limitations, or model comparisons
-- Surprising or strong negative results (e.g., 0% or 100% rates)
-
-**If any scientific conclusion is detected**, follow the `pc-skeptic` skill with this prompt:
-
-```
-Review PR #<number> on branch <branch> for scientific credibility.
-
-Claim: <summarize the scientific conclusion from the PR title/body>
-
-The PR diff is at: git diff origin/<base>...HEAD
-
-Work through your full checklist: check for bugs, unfair comparisons,
-implausible effect sizes, contradictions with established results, and
-unverified upstream assumptions. Read the code that produced the result,
-not just the description.
-
-Report your findings with Claim / Confidence / Concerns / Recommended Checks / Verdict.
-```
-
-This step runs **in parallel** with the agent reviews in Step 4.
-Do not wait for it to complete before proceeding.
-
-**If no scientific conclusion is detected**, skip this step and note "No scientific claims detected — skeptic review skipped" in the final report.
-
-### Step 4.6: Cold read of a rendered notebook (conditional)
-
-When the diff adds or changes a committed notebook render, launch one `general-purpose` agent per render in parallel with Step 4. Key on the changed `.html` files themselves, since a render need not share its notebook's stem. Give the agent the render's path, plus the intended audience if the issue names one, and nothing else: no issue, PR, or thread, because every session that wrote or reviewed the PR already knows what the notebook was meant to say.
-
-```
-Read <path to .html> as its intended reader (<audience, if named>) would, knowing nothing else.
-1. In two sentences: what question does it answer, and what is the answer?
-   Say whether you could state both from the first screen.
-2. List every term used before it is defined, every forward reference,
-   and every result whose statement is interrupted by caveats.
-```
-
-A reader who cannot state the answer from the first screen is the finding. If the diff touches a notebook but commits no render, note "no render committed — cold read skipped".
-
-### Step 5: Run Automated Checks
-
-Detect and run available quality tools:
-
-| Tool Indicator | Check to Run |
-|----------------|--------------|
-| `pixi.toml` | Use `pixi run` prefix |
-| `pyproject.toml` with ruff | `ruff check .` |
-| `Makefile` with `check` target | `make check` |
-| `build.zig` | `zig build test` and `zig fmt --check src/ tests/` |
-| `go.mod` | `go test ./...` and `go vet ./...` |
+| Tool Indicator | Check Commands |
+|----------------|----------------|
+| `package.json` (TypeScript/JS) | `npm run typecheck && npm run lint && npm test` |
+| `pyproject.toml` with ruff | `ruff check . && pytest` |
+| `pixi.toml` | `pixi run check` or `pixi run test` |
+| `Makefile` with `check` | `make check` |
+| `build.zig` | `zig build test && zig fmt --check src/ tests/` |
+| `go.mod` | `go test ./... && go vet ./...` |
 | `Snakefile` | `snakemake --lint` |
-| `tests/` directory | `pytest` (or project-specific test command) |
 
-### Step 6: Test Audit
+Verify all automated checks exit 0 without errors.
 
-Run a thorough test quality review using an agent.
-Grepping alone is insufficient—tests need semantic analysis to detect:
+### Step 5: Test quality audit
 
-- Placeholder tests (empty bodies, just `pass`, meaningless assertions)
-- Inappropriate use of mocks (if project forbids mocking)
-- Tests that don't actually test anything (`assert True`, trivial assertions)
-- Tests with `pytest.skip` that should have real implementations
-- Tests that silently catch exceptions instead of letting them propagate
+Audit the test changes for substantive verification:
+1. **No placeholder tests:** Ensure tests have real assertions, not just empty bodies or `pass`.
+2. **No forbidden mocks:** Adhere to project guidelines regarding real vs mocked dependencies.
+3. **No trivial assertions:** Check for `assert True`, `expect(true).toBe(true)`, or meaningless tautologies.
+4. **No swallowed exceptions:** Verify test code does not catch and silently discard unexpected errors.
+5. **Test budget:** Verify that individual test execution stays well within the project budget (under 120 seconds).
 
-**Follow the `pc-review-clean-code` skill specifically for test files:**
+### Step 6: Conditional domain reviews
 
-```
-Review the test files in tests/ for test quality issues:
-1. Placeholder tests (empty or pass-only test bodies)
-2. Mock usage (if project constitution forbids mocks)
-3. Trivial assertions (assert True, assert 1==1)
-4. Unconditional pytest.skip() that should be real tests
-5. Tests that catch and swallow exceptions
-6. Tests without meaningful assertions
+- **Scientific Conclusion Skeptic (conditional):**
+  If the PR claims benchmark improvements, accuracy figures, or algorithmic comparisons:
+  Follow `pc-skeptic` to audit methodology, data splits, fair comparisons, and plausible effect sizes.
+- **Rendered Notebook Cold Read (conditional):**
+  If the PR adds or updates committed `.html` notebook renders:
+  Perform a cold read to ensure the stated question and answer are immediately clear from the first screen.
+- **Mathematical Documentation (conditional):**
+  If the PR implements mathematical, statistical, or algorithmic formulas:
+  Verify that mathematical specifications are documented with LaTeX formulas matching the implementation and literature citations.
 
-Focus on tests for changed code. Report specific file:line references.
-```
+### Step 7: Synthesize review findings & generate report
 
-Report findings with severity (blocking vs advisory).
-
-### Step 7: Mathematical Documentation (for mathematical PRs)
-
-**Skip this step** if the PR doesn't involve mathematical/statistical computation.
-
-**Detect mathematical PR**: Check if the changed source files contain:
-- Mathematical formulas in docstrings (Greek letters, summations, matrix notation)
-- Scientific computation (matrix operations, probability distributions, statistical models)
-- Algorithm implementations with mathematical foundations
-
-**If mathematical**, check the PR for an existing mathematical specification comment:
-
-1. **Check for existing math comment on the PR**: Use `gh pr view` and look for comments containing LaTeX code blocks or mathematical notation
-
-2. **If no math comment exists**:
-   - Back-translate the implementation directly into mathematical notation
-   - Use LaTeX code blocks for formulas
-   - Document the actual computation, not perceived intent
-   - Post as a comment on the PR with 🤖 prefix
-   - Include in report: "Posted mathematical specification to PR"
-
-3. **If math comment already exists**:
-   - Re-read the implementation carefully
-   - Compare against the existing mathematical specification
-   - Check for discrepancies (formula errors, missing steps, outdated notation)
-   - If discrepancies found: post a correction comment and flag in report
-   - If accurate: note "Mathematical specification verified" in report
-
-4. **Literature verification for pre-existing formulas**:
-   - If the implementation uses formulas from established literature (standard models, known algorithms, published methods), verify against the source paper
-   - **Search local pc library first**: `pc search "method name"` or `pc search -a "Author"`
-   - The reference paper should already be in our library; if not found locally, ask user before searching externally
-   - Use pdf-navigator tools to read the actual paper and verify the implementation matches the published definition
-   - Include the pc paper ID in the math comment to demonstrate correctness
-   - Flag any discrepancies between implementation and literature as blocking issues
-
-**Mathematical comment format**:
-```markdown
-🤖 Mathematical specification back-translated from the implementation in PR #XXX:
-
-## [Section Name]
-
-[Description of what this computes]
-
-```latex
-[Formula in LaTeX]
-```
-
-[Continue for each major mathematical component...]
-```
-
-### Step 8: Generate Report
-
-Present a checklist summary:
+Compile findings into a structured report:
 
 ```markdown
 ## Pre-Merge Quality Report
 
-### Agent Reviews
-- [ ] Snakemake review: [findings or ✓]
-- [ ] Code review (clean-code): [findings or ✓]
-- [ ] Code review (code-reuse): [findings or ✓]
+### Review Summary
+- Evaluated Commit: `<commit-sha>`
+- Base Branch: `origin/<base>`
+- Verdict: `<pass | rework | blocked>`
 
-### Scientific Conclusion Skeptic
-- [ ] Skeptic review: [verdict or "No scientific claims detected — skipped"]
+### Quality Checklist
+- [x] PR Head and base branch verified
+- [x] No transient cruft or oversized binaries
+- [x] Automated static checks (lint, typecheck) passed
+- [x] Automated test suite passed within budget
+- [x] Test audit: no placeholder tests, trivial assertions, or forbidden mocks
+- [x] Clean-code & code-reuse reviews completed
+- [ ] Domain-specific audits: `<result or skipped>`
 
-### Notebook Cold Read
-- [ ] Cold read: [stated question and answer, plus findings, or "no render in diff — skipped"]
-
-### Large Files / Cruft
-- [x] No suspicious files found
-- [ ] ⚠️ Flagged for review: `output/results.html` (notebook output?)
-
-### Automated Checks
-- [x] Linting: passed
-- [x] Tests: 124 passed
-- [ ] Format: 2 files need formatting
-
-### Test Audit
-- [x] No placeholder tests found
-- [x] No forbidden mocks found
-
-### Mathematical Documentation (if applicable)
-- [x] Mathematical specification posted to PR
-- [x] Existing specification verified against implementation
-- [x] Literature references provided for pre-existing formulas
-
-### Action Items
-1. Fix formatting in `src/foo.py`
-2. Address code review suggestion about X
+### Findings & Action Items
+1. `<Item 1 with file:line reference and severity: blocking vs advisory>`
+2. `<Item 2>`
 ```
 
-### Step 9: Return correlated review result
+## Quality Requirements & Decision Criteria
 
-When operating as a Reviewer within a Managed Run, publish your review evidence through the `submit-result` contract:
+1. **Pass (`pass`):**
+   - All acceptance criteria are satisfied.
+   - Zero blocking defects in clean-code and code-reuse audits.
+   - All automated checks (typecheck, lint, tests) pass.
+   - Zero transient cruft or unauthorized large files.
+   - High test quality with real assertions and execution within budget.
+2. **Rework (`rework`):**
+   - Actionable defects, test failures, linter/typecheck errors, or architectural violations requiring code changes.
+   - Detail the defect list and reproduction steps in `findings`.
+3. **Blocked (`blocked`):**
+   - Review cannot proceed due to external blockers: merge conflicts with upstream base, missing external dependencies, or unresolvable environment failures.
 
-For approved PR passing all criteria:
-```bash
-pc workflow submit-result \
-  --run "<run-id>" \
-  --task "<task-id>" \
-  --outcome pass \
-  --summary "All acceptance criteria and quality checks passed" \
-  --artifacts '{"reviewed_commit":"<commit-sha>","findings":"All checks passed cleanly."}'
-```
+## Task Outputs
 
-For PR requiring remediation or rework:
-```bash
-pc workflow submit-result \
-  --run "<run-id>" \
-  --task "<task-id>" \
-  --outcome rework \
-  --summary "Changes requested: found defects or test failures" \
-  --artifacts '{"reviewed_commit":"<commit-sha>","findings":"<detailed defect list and reproduction steps>"}'
-```
+1. **Evaluated Commit SHA:** The verified commit SHA evaluated during the review (`reviewed_commit`).
+2. **Review Report:** Structured report detailing findings, severity, and verification evidence (`findings`).
+3. **Review Verdict / Submission:**
+   - **When dispatched via workflow engine:** Submit the correlated review result using the command provided in the dispatch prompt:
+     - For pass: outcome `pass`, artifacts `{"reviewed_commit":"<commit-sha>","findings":"All checks passed cleanly."}`
+     - For rework: outcome `rework`, artifacts `{"reviewed_commit":"<commit-sha>","findings":"<detailed defect list and reproduction steps>"}`
+     - For blocked: outcome `blocked`, artifacts `{"reviewed_commit":"<commit-sha>","findings":"<blocker details>"}`
+   - **When invoked manually or standalone:** Report the summary, verdict (`pass` / `rework` / `blocked`), evaluated commit SHA, and findings directly to the caller, or post a PR review comment via `gh pr review`.
 
-If review cannot proceed (conflicts, environment failure, missing dependencies):
-```bash
-pc workflow submit-result \
-  --run "<run-id>" \
-  --task "<task-id>" \
-  --outcome blocked \
-  --summary "Review blocked: <reason>" \
-  --artifacts '{"reviewed_commit":"<commit-sha>","findings":"<blocker details>"}'
-```
+## Resource Lifecycle
 
-The Engine validates:
-1. `run` and `task` match the active assignment.
-2. `outcome` is in `permitted_outcomes` for reviewer (`pass`, `rework`, `blocked`).
-3. `artifacts` satisfies `required_artifacts` (`reviewed_commit`, `findings`).
-
-Upon submission:
-- `pass` transitions the Run to `merge` and retains the approved `evaluatedCommit`.
-- `rework` increments `rework_count`, carries forward `priorEvidence` (the evaluated commit and review findings), and transitions back to `implementation` for worker repair. If `rework_limit` is exceeded, the Run pauses safely.
-- `blocked` marks the Run blocked with retained diagnostic artifacts.
-
-## Error Handling
-
-- **Not on a branch**: Warn that this should be run from a feature branch
-- **No changes from main**: Note that branch appears to be up-to-date with main
-- **Missing tools**: Skip checks for tools not installed, note in report
-- **Agent failures**: Report the failure but continue with other checks
-
-## Notes
-
-- This skill coordinates multiple agents and tools; it may take a few minutes
-- Agent reviews focus on changed files to keep feedback relevant
-- The skill adapts to each project's tooling automatically
-
-For paper-craft documentation changes, run `pnpm docs:check` over the full active corpus; see [the maintenance contract](../../docs/guides/documentation.md).
+- **Automated workflow runs:** Process execution and temporary worktree lifecycle are managed by the workflow engine. The reviewer agent evaluates the code and returns findings without destroying the working directory.
+- **Manual / Standalone runs:** The working directory and branch remain intact for the operator or developer to address findings or proceed to landing.

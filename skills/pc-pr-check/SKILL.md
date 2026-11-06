@@ -1,18 +1,20 @@
 ---
 name: pc-pr-check
 description: Quick PR readiness check — clean worktree, good description, squashed body. Run before /pc-pr-review.
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 ---
 
 # /pc-pr-check
 
 Quick sanity check before running the heavier `/pc-pr-review`.
-Catches common issues that waste review cycles.
+Catches common issues (uncommitted cruft, rebase conflicts, noisy PR bodies) that waste review cycles.
+This skill can be invoked directly by a human or agent with a task prompt (standalone/manual mode).
 
-## Usage
+## Task Inputs
 
-```
-/pc-pr-check
-```
+1. **Current working directory & feature branch:** The local git checkout.
+2. **Base branch:** Target upstream branch (defaults to `origin/<base>` resolved via `gh pr view` or `origin/main`).
+3. **PR context:** The pull request associated with the current branch (`gh pr view`).
 
 ## Workflow
 
@@ -131,7 +133,7 @@ If the body looks like historical commit noise, revision-history accumulation, o
 1. Read the actual diff to understand the changes: `git diff origin/$(gh pr view --json baseRefName -q .baseRefName)...HEAD`.
    For a revision-history body specifically, also read the current body in full — later sections usually contain results/conclusions (recomputed numbers, resolved bugs, reconciled findings) that supersede earlier ones and must carry over into the rewrite; only the per-round framing gets dropped, not the substance.
 2. Draft a clean replacement body in this format:
-   ```
+   ```markdown
    [For an experiment PR, open with a plain-language **Result.** paragraph
    explaining what was learned before numbers or technical details; follow
    PROSE-DISCIPLINE.md, "Open with a plain-language paragraph".]
@@ -167,7 +169,7 @@ If the PR is marked as draft:
 
 Print a compact checklist:
 
-```
+```markdown
 ## PR Check
 
 - [x] On feature branch: `branch-name`
@@ -183,8 +185,10 @@ Print a compact checklist:
 
 Or flag what needs attention before proceeding.
 
-## Notes
+## Task Outputs & Completion Criteria
 
-- This is intentionally lightweight — no code review, no tests, no linting
-- Run `/pc-pr-review` after this passes for the full quality sweep
-- The body check is the most valuable part: it prevents the common mistake of merging with GitHub's default concatenated-commits body
+1. **Readiness Checklist:** Compact summary reporting status for branch, worktree cleanliness, PR existence, title quality, body quality, and push state.
+2. **Readiness Verdict:**
+   - **Pass:** Clean worktree, rebased branch, quality title and body, ready for review.
+   - **Needs Attention:** Specific blockers flagged (uncommitted cruft, rebase conflicts, unpushed commits, draft status).
+3. **Execution Mode:** Can be run standalone by a human or agent at any point during feature delivery.
