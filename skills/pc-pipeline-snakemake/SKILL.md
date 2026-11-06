@@ -7,8 +7,7 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 # /pc-pipeline-snakemake
 
 Guidance, scaffolding, and auditing for Snakemake workflows adhering to official best practices and reproducible execution standards.
-This skill can be invoked directly by a human or agent with a task prompt or parameters, or dispatched automatically by the workflow orchestrator.
-For post-merge or release workflow audits, read [the post-merge audit guide](finalization.md) before selecting scope or running checks.
+This skill can be invoked directly by a human or agent with a task prompt or parameters.
 
 ## Task Inputs
 
@@ -183,6 +182,4 @@ When reviewing or optimizing an existing Snakemake pipeline:
 
 1. **Workflow codebase or audit report:** Scaffolded rules/scripts/configs or categorized audit report with drop-in code blocks.
 2. **Verification evidence:** Smoke execution output, log files, and lint validation results.
-3. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the scaffolded workflow, audit findings, or smoke test results to the caller.
+3. **Summary:** Report the scaffolded workflow, audit findings, or smoke test results to the caller.

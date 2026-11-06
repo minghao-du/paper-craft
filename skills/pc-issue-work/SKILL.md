@@ -7,15 +7,16 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 # /pc-issue-work
 
 Authoritative instructions for implementing GitHub issue requirements in the designated working directory.
-This skill can be invoked directly by a human or agent with a task prompt, or dispatched automatically by the workflow orchestrator.
+This skill can be invoked directly by a human or agent with an ordinary task prompt.
 
 ## Task Inputs
 
 Before starting work, ensure the following inputs are available:
 1. **Issue context:** Issue number, title, description, and comments from GitHub (`gh issue view <issue> --comments`).
-2. **Task brief & objectives:** The specific goals, scope, and instructions provided in the dispatch prompt or task assignment.
+2. **Task brief & objectives:** The specific goals, scope, and instructions provided in the task prompt or assignment.
 3. **Environment & working directory:** The assigned git checkout / worktree. Never switch to another directory or branch outside the designated scope.
 4. **Prerequisites & dependencies:** Required external files, weights, datasets, environment variables, or upstream build artifacts.
+5. **Rework context (conditional):** If addressing review findings or repair feedback, inspect predecessor findings, previous HEAD SHA, and original constraints.
 
 ## Implementation Method
 
@@ -41,7 +42,7 @@ Prerequisite input verification is blocked; the task cannot proceed:
 - Action needed: `<provide the file, restore access, or clarify the environment and path; describe the proposed substitute or regeneration plan and request authorization if needed>`
 ```
 
-4. If executing under workflow dispatch, report `blocked` outcome with blocker details. If invoked manually, wait for user direction.
+4. Report `blocked` outcome with blocker details.
 
 ### Step 2: Implementation via TDD red-green loop
 
@@ -51,10 +52,10 @@ Prerequisite input verification is blocked; the task cannot proceed:
   2. Implement minimal code to pass the tests.
   3. Refactor while keeping tests passing.
 - Keep individual test execution well within the project budget (under 120 seconds).
-- Ensure all quality gates pass:
-  - `npm run typecheck`
-  - `npm run lint`
-  - `npm test`
+- Ensure all project-configured quality gates pass:
+  - Static type checks (e.g. `npm run typecheck`, `pyright`, `mypy`)
+  - Linting and formatting (e.g. `npm run lint`, `ruff check`, `cargo clippy`)
+  - Automated test suite (e.g. `npm test`, `pytest`, `cargo test`)
 - When Snakemake workflows are involved, follow incremental recovery before rerunning.
 
 ### Step 3: Adaptive checks for long tasks
@@ -80,32 +81,16 @@ Maintain zero transient artifacts in git history by staging files selectively:
    Inspect all staged paths against forbidden transient patterns (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`). If any forbidden path is staged, unstage it immediately (`git reset HEAD <file>`).
 3. **Commit:** Commit only verified source code, tests, and documentation using conventional commit messages.
 
-### Step 5: Pull request creation or update
-
-Create or update the PR for the assigned branch:
-
-```bash
-gh pr create --title "<concise title>" --body "<body>"
-```
-
-- Include `Closes #<issue>` in the body to auto-close the issue on merge.
-- Do NOT manually close the issue.
-- Report key findings, test outcomes, benchmark tables, and reproduction commands in the PR body.
-- When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed alongside reproduction commands and resource metrics.
-
 ## Quality Requirements & Completion Criteria
 
 A task is complete only when all criteria are met:
 1. **Functional verification:** All new and existing tests pass cleanly.
-2. **Static verification:** `npm run typecheck` and `npm run lint` report zero errors or warnings.
+2. **Static verification:** Configured static analysis and lint tools report zero errors or warnings.
 3. **Test budget:** All individual tests execute within 120 seconds.
 4. **Clean working tree:** No untracked transient cruft, unstaged modifications, or unwanted files remain in the working directory.
-5. **PR readiness:** PR is created or updated, linked to the target issue, with clear description and reproduction evidence.
 
 ## Task Outputs
 
-1. **Git commits:** Clean, conventional commits on the feature branch.
-2. **Pull request:** Created or updated PR linked with `Closes #<issue>`.
-3. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the PR URL, git diff summary, and test verification output to the caller.
+1. **Git commits / Diff:** Clean, conventional commits on the feature branch, or git diff / commit SHA capturing verified changes.
+2. **Verification evidence:** Test execution outputs, benchmark metrics, or check results demonstrating passing quality gates.
+3. **Summary:** Concise report of implementation details and verification evidence.

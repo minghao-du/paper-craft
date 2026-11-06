@@ -9,7 +9,20 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 
 Refactor existing scientific computing workflows from ad-hoc, flat, or sequentially numbered directory layouts into clean, modular, tiered architectures adhering to [pc-pipeline-snakemake](../pc-pipeline-snakemake/SKILL.md).
 Synchronize all code, rules, configurations, and data assets across local workstations and remote HPC environments without interrupting reproducible execution or losing data.
-This skill can be invoked directly by a human or agent with a target path or task prompt, or dispatched automatically by the workflow orchestrator.
+This skill can be invoked directly by a human or agent with a target path or task prompt.
+
+## Default Workflow Refactoring Scope & Scientific Invariance
+
+When invoked as part of a delivery workflow:
+- **Scope discipline:** The task strictly reorganizes only the workflow and pipeline files involved in the current work (`scope`), and syncs path references in affected rules, configs, and scripts.
+- **Scientific invariance:** Preserves all scientific methods, computational logic, algorithmic choices, analytical parameters, results, and conclusions.
+- **Operability checks:** Performs necessary structural, path, and operability checks (e.g. DAG dry-run `snakemake -n`, syntax verification, small-data smoke checks) without re-running unrelated computation.
+- **Out-of-scope guardrail:** If computational logic changes or scientific parameter alterations are required, do NOT alter them or expand the task. Report `out_of_scope` with the rationale.
+- **Permitted outcomes:**
+  - `completed`: Pipeline files reorganized and paths synced with verification evidence (`changedFiles`, `verificationEvidence`).
+  - `no_change`: Layout already conforms; no modifications necessary (`verificationEvidence`).
+  - `out_of_scope`: Computational or scientific logic changes required.
+  - `blocked`: Environment, dependency, or permissions barrier.
 
 ## Task Inputs
 
@@ -165,6 +178,4 @@ Local Git working tree is clean and synchronized with upstream.
 2. **Refactored workflow codebase:** Reorganized rules, scripts, configs, and cluster profiles.
 3. **Git commits:** Clean commits preserving history (`git mv`).
 4. **Verification logs:** Small-data smoke execution output and DAG dry-run logs.
-5. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the migration ledger, git diff summary, and verification logs to the caller.
+5. **Report to caller:** Report the migration ledger, git diff summary or changed files list, and verification logs directly to the caller.
