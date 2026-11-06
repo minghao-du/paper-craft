@@ -9,7 +9,6 @@ import * as os from 'node:os';
 import { WorkflowEngine } from '../packages/core/src/workflow/engine.js';
 import { AgyExecutor } from '../packages/core/src/workflow/executor.js';
 import { RepositoryManager } from '../packages/core/src/workflow/repository.js';
-import type { ProviderChecker } from '../packages/core/src/workflow/types.js';
 
 async function main() {
   console.log('=== Real Agy Dispatch & Collect Round Trip Demonstration ===\n');
@@ -36,18 +35,10 @@ async function main() {
     }),
   });
 
-  const mockProviderChecker: ProviderChecker = {
-    check: async (provider) => {
-      if (provider === 'agy') return agyExecutor.check();
-      return { available: false, error: `Unsupported provider: ${provider}` };
-    },
-  };
-
   const engine = new WorkflowEngine({
     cwd: tmpDir,
     executor: agyExecutor,
     repositoryManager,
-    providerChecker: mockProviderChecker,
   });
 
   console.log('3. Initializing workflow configuration...');

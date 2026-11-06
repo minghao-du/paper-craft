@@ -28,7 +28,6 @@ import {
 import type {
   IssueCheckResult,
   MergeStatusResult,
-  ProviderChecker,
 } from '../packages/core/src/workflow/types.js';
 
 class DemoRepositoryManager extends RepositoryManager {
@@ -50,7 +49,7 @@ class DemoRepositoryManager extends RepositoryManager {
   override async checkMergeStatus(
     _prOrIssue: number | string,
     expectedHeadShaOrOptions?: string | CheckMergeStatusOptions,
-    maybeOptions?: CheckMergeStatusOptions,
+    _maybeOptions?: CheckMergeStatusOptions,
   ): Promise<MergeStatusResult> {
     if (this.error) {
       return { exists: false, error: this.error };
@@ -94,25 +93,17 @@ async function main() {
     process.exit(1);
   }
 
-  // 2. Set up checkers
+  // 2. Set up repository manager and engine
   const designatedIssue = 8;
   const targetRepository = 'minghao-du/paper-craft';
   const sharedRequirements = 'Workflow MVP live acceptance: verify complete delivery and recovery with real agy (Ticket #8).';
 
   const repositoryManager = new DemoRepositoryManager();
 
-  const mockProviderChecker: ProviderChecker = {
-    check: async (provider) => {
-      if (provider === 'agy') return agyExecutor.check();
-      return { available: false, error: `Unsupported provider: ${provider}` };
-    },
-  };
-
   let engine = new WorkflowEngine({
     cwd: tmpDir,
     executor: agyExecutor,
     repositoryManager,
-    providerChecker: mockProviderChecker,
   });
 
   // 3. Initialize workflow configuration
@@ -240,7 +231,6 @@ async function main() {
     cwd: tmpDir,
     executor: agyExecutor,
     repositoryManager,
-    providerChecker: mockProviderChecker,
   });
 
   const resumeRes = await freshEngine.resume(run.run_id);
