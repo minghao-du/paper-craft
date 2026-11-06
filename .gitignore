@@ -4,6 +4,7 @@ _ignore/
 .last-checkin.json
 /AGENTS.md
 .env
+reports/
 
 site/
 /ISSUE-*.md
