@@ -21,6 +21,10 @@ export interface TaskContract {
   permittedOutcomes: string[];
   /** Required artifact keys expected when outcome is completed. */
   requiredArtifacts: string[];
+  /** Required input parameter keys that must be supplied when preparing/binding this task. */
+  requiredInputs?: string[];
+  /** Outcome-specific required artifact keys. */
+  requiredOutcomeArtifacts?: Record<string, string[]>;
 }
 
 /**
@@ -65,13 +69,36 @@ export const DEFAULT_TASK_CONTRACTS: Record<string, TaskContract> = {
     version: '1.0',
     permittedOutcomes: ['completed', 'blocked'],
     requiredArtifacts: ['diff', 'testResults', 'summary'],
+    requiredOutcomeArtifacts: {
+      completed: ['diff', 'testResults'],
+      blocked: [],
+    },
   },
   'pc-issue-plan': {
     taskType: 'pc-issue-plan',
     skill: 'pc-issue-plan',
     version: '1.0',
-    permittedOutcomes: ['direct', 'decomposed', 'verified', 'rework_needed', 'blocked'],
+    permittedOutcomes: ['direct', 'decomposed', 'blocked'],
     requiredArtifacts: ['summary'],
+    requiredInputs: ['issue', 'issueTitle', 'issueBody', 'goal'],
+    requiredOutcomeArtifacts: {
+      direct: ['reason'],
+      decomposed: ['plan'],
+      blocked: [],
+    },
+  },
+  'pc-issue-verify': {
+    taskType: 'pc-issue-verify',
+    skill: 'pc-issue-plan',
+    version: '1.0',
+    permittedOutcomes: ['verified', 'rework_needed', 'blocked'],
+    requiredArtifacts: ['summary'],
+    requiredInputs: ['originalObjective', 'acceptanceCriteria', 'deliveryEvidence'],
+    requiredOutcomeArtifacts: {
+      verified: ['evaluatedHead', 'evidence'],
+      rework_needed: ['evidence'],
+      blocked: [],
+    },
   },
   'pc-pr-land': {
     taskType: 'pc-pr-land',
@@ -79,6 +106,11 @@ export const DEFAULT_TASK_CONTRACTS: Record<string, TaskContract> = {
     version: '1.0',
     permittedOutcomes: ['landed', 'rework_needed', 'blocked'],
     requiredArtifacts: ['summary'],
+    requiredOutcomeArtifacts: {
+      landed: ['prNumber', 'prUrl', 'mergedCommit'],
+      rework_needed: ['findings'],
+      blocked: [],
+    },
   },
   'pc-pipeline-refactor': {
     taskType: 'pc-pipeline-refactor',
@@ -86,6 +118,13 @@ export const DEFAULT_TASK_CONTRACTS: Record<string, TaskContract> = {
     version: '1.0',
     permittedOutcomes: ['completed', 'no_change', 'out_of_scope', 'blocked'],
     requiredArtifacts: ['changedFiles', 'verificationEvidence'],
+    requiredInputs: ['scope', 'migrationInstructions'],
+    requiredOutcomeArtifacts: {
+      completed: ['changedFiles', 'verificationEvidence'],
+      no_change: ['verificationEvidence'],
+      out_of_scope: [],
+      blocked: [],
+    },
   },
   'pc-research-state': {
     taskType: 'pc-research-state',
@@ -93,6 +132,16 @@ export const DEFAULT_TASK_CONTRACTS: Record<string, TaskContract> = {
     version: '1.0',
     permittedOutcomes: ['recorded', 'blocked'],
     requiredArtifacts: ['updatedRecords', 'summary'],
+    requiredInputs: [
+      'deliveryEvidence',
+      'reproductionEntryPoints',
+      'artifactLocations',
+      'brief',
+    ],
+    requiredOutcomeArtifacts: {
+      recorded: ['updatedRecords'],
+      blocked: [],
+    },
   },
 };
 
@@ -135,6 +184,48 @@ export class Assignments {
   }
 
   /**
+   * Validates provided inputs against the contract's required inputs.
+   */
+  validateInputs(
+    taskType: string,
+    inputs?: Record<string, unknown>,
+  ): { valid: boolean; errors?: string[] } {
+    const contract = this.getContract(taskType);
+    const errors: string[] = [];
+    const provided = inputs ?? {};
+
+    if (contract.requiredInputs) {
+      for (const key of contract.requiredInputs) {
+        const val = provided[key];
+        if (val === undefined || val === null || val === '') {
+          errors.push(`Missing required input "${key}" for task "${taskType}".`);
+        }
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  }
+
+  /**
+   * Binds inputs according to task contract, validating required inputs
+   * and returning structured bound inputs.
+   */
+  bindInputs(
+    taskType: string,
+    inputs?: Record<string, unknown>,
+  ): { valid: boolean; boundInputs: Record<string, unknown>; errors?: string[] } {
+    const validation = this.validateInputs(taskType, inputs);
+    return {
+      valid: validation.valid,
+      boundInputs: inputs ?? {},
+      errors: validation.errors,
+    };
+  }
+
+  /**
    * Prepares a task assignment: binds inputs, pins contract version 1.0,
    * generates prompt with injected identity and delivery expectations,
    * and creates the initialization file payload.
@@ -148,6 +239,14 @@ export class Assignments {
     inputs?: Record<string, unknown>;
   }): PreparedAssignment {
     const contract = this.getContract(params.taskType);
+
+    // Validate required inputs if specified by contract
+    const inputValidation = this.validateInputs(params.taskType, params.inputs);
+    if (!inputValidation.valid && inputValidation.errors && inputValidation.errors.length > 0) {
+      throw new Error(
+        `Input validation failed for task "${params.taskType}": ${inputValidation.errors.join('; ')}`,
+      );
+    }
 
     const sections: string[] = [];
 
@@ -177,11 +276,17 @@ export class Assignments {
     }
 
     // 4. Delivery Requirements
+    const expectedArtifactsDesc = contract.requiredOutcomeArtifacts
+      ? Object.entries(contract.requiredOutcomeArtifacts)
+          .map(([outcome, arts]) => `${outcome} -> [${arts.join(', ')}]`)
+          .join('; ')
+      : contract.requiredArtifacts.join(', ');
+
     sections.push(
       '## Delivery Requirements',
       `- Contract Version: ${contract.version}`,
       `- Permitted Outcomes: ${contract.permittedOutcomes.join(', ')}`,
-      `- Required Artifacts: ${contract.requiredArtifacts.length > 0 ? contract.requiredArtifacts.join(', ') : 'none'}`,
+      `- Required Artifacts: ${expectedArtifactsDesc || 'none'}`,
       'Submit your result or record result.json in your working directory adhering to these requirements upon completion.',
     );
 
@@ -197,6 +302,7 @@ export class Assignments {
       inputs: params.inputs ?? {},
       permittedOutcomes: contract.permittedOutcomes,
       requiredArtifacts: contract.requiredArtifacts,
+      requiredOutcomeArtifacts: contract.requiredOutcomeArtifacts,
     };
 
     return {
@@ -236,28 +342,43 @@ export class Assignments {
       );
     }
 
-    // 2. Summary validation
-    if (typeof res.summary !== 'string' || !res.summary.trim()) {
+    // 2. Summary validation (allow res.summary or res.reason as fallback)
+    const summary =
+      typeof res.summary === 'string' && res.summary.trim()
+        ? res.summary.trim()
+        : typeof res.reason === 'string' && res.reason.trim()
+          ? res.reason.trim()
+          : '';
+
+    if (!summary) {
       errors.push('Submitted result is missing required "summary" string.');
     }
 
-    // 3. Artifact validation when outcome indicates completion
-    if (res.outcome === 'completed' || res.outcome === 'landed' || res.outcome === 'recorded') {
-      const artifacts = (typeof res.artifacts === 'object' && res.artifacts !== null
-        ? res.artifacts
-        : res) as Record<string, unknown>;
+    // 3. Artifact validation
+    const artifacts = (typeof res.artifacts === 'object' && res.artifacts !== null
+      ? res.artifacts
+      : res) as Record<string, unknown>;
 
-      for (const requiredKey of contract.requiredArtifacts) {
-        if (requiredKey === 'summary') {
-          // Handled above
-          continue;
-        }
-        const val = artifacts[requiredKey];
-        if (val === undefined || val === null || val === '') {
-          errors.push(
-            `Missing required artifact "${requiredKey}" in submission for task "${taskType}".`,
-          );
-        }
+    let expectedArtifacts: string[] = [];
+    if (contract.requiredOutcomeArtifacts && typeof res.outcome === 'string') {
+      expectedArtifacts = contract.requiredOutcomeArtifacts[res.outcome] ?? [];
+    } else if (
+      res.outcome === 'completed' ||
+      res.outcome === 'landed' ||
+      res.outcome === 'recorded'
+    ) {
+      expectedArtifacts = contract.requiredArtifacts;
+    }
+
+    for (const requiredKey of expectedArtifacts) {
+      if (requiredKey === 'summary') {
+        continue;
+      }
+      const val = artifacts[requiredKey] !== undefined ? artifacts[requiredKey] : res[requiredKey];
+      if (val === undefined || val === null || val === '') {
+        errors.push(
+          `Missing required artifact "${requiredKey}" in submission for task "${taskType}".`,
+        );
       }
     }
 
@@ -268,12 +389,27 @@ export class Assignments {
       };
     }
 
+    const normalizedArtifacts: Record<string, unknown> =
+      typeof res.artifacts === 'object' && res.artifacts !== null
+        ? { ...(res.artifacts as Record<string, unknown>) }
+        : {};
+
+    for (const [k, v] of Object.entries(res)) {
+      if (
+        k !== 'outcome' &&
+        k !== 'summary' &&
+        k !== 'artifacts' &&
+        normalizedArtifacts[k] === undefined
+      ) {
+        normalizedArtifacts[k] = v;
+      }
+    }
+
     const normalizedResult: TaskResult = {
       outcome: res.outcome as string,
-      summary: res.summary as string,
-      artifacts: (typeof res.artifacts === 'object' && res.artifacts !== null
-        ? res.artifacts
-        : undefined) as Record<string, unknown> | undefined,
+      summary,
+      artifacts:
+        Object.keys(normalizedArtifacts).length > 0 ? normalizedArtifacts : undefined,
     };
 
     return {

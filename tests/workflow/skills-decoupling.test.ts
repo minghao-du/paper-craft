@@ -31,6 +31,8 @@ test('specialist skills do not carry workflow or scheduling protocol traces', ()
   const specialistSkills = [
     'pc-issue-file/SKILL.md',
     'pc-issue-next/SKILL.md',
+    'pc-issue-plan/SKILL.md',
+    'pc-pipeline-refactor/SKILL.md',
     'pc-research-ideas/SKILL.md',
     'pc-research-plan/SKILL.md',
     'pc-pipeline-snakemake/SKILL.md',
