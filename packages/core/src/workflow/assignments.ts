@@ -8,6 +8,20 @@
 import type { TaskResult } from './types.js';
 
 /**
+ * Predecessor result binding details for repair/rework tasks.
+ */
+export interface PredecessorBinding {
+  /** Identifier of the predecessor task whose result is being addressed. */
+  predecessorResultId: string;
+  /** Summary or detail of findings from the predecessor review/check. */
+  findings?: string;
+  /** Commit SHA evaluated in the predecessor task. */
+  previousHeadSha?: string;
+  /** Original constraints or requirements from the initial task. */
+  originalConstraints?: string[] | string;
+}
+
+/**
  * Formal schema contract defining expectations for a specific task type.
  */
 export interface TaskContract {
@@ -136,8 +150,8 @@ export class Assignments {
 
   /**
    * Prepares a task assignment: binds inputs, pins contract version 1.0,
-   * generates prompt with injected identity and delivery expectations,
-   * and creates the initialization file payload.
+   * generates prompt with injected identity, repair/predecessor context,
+   * delivery expectations, and creates the initialization file payload.
    */
   prepare(params: {
     runId: string;
@@ -146,6 +160,7 @@ export class Assignments {
     worktreePath: string;
     instructions: string;
     inputs?: Record<string, unknown>;
+    predecessor?: PredecessorBinding;
   }): PreparedAssignment {
     const contract = this.getContract(params.taskType);
 
@@ -164,10 +179,53 @@ export class Assignments {
     // 2. Instructions
     sections.push('## Objectives & Instructions', params.instructions.trim());
 
-    // 3. Inputs
+    // Resolve predecessor binding if explicitly supplied or embedded in inputs
+    const pred =
+      params.predecessor ??
+      (params.inputs?.predecessor as PredecessorBinding | undefined) ??
+      (params.inputs?.predecessorResultId
+        ? {
+            predecessorResultId: String(params.inputs.predecessorResultId),
+            findings: params.inputs.findings ? String(params.inputs.findings) : undefined,
+            previousHeadSha:
+              params.inputs.previousHeadSha ?? params.inputs.evaluatedCommit
+                ? String(params.inputs.previousHeadSha ?? params.inputs.evaluatedCommit)
+                : undefined,
+            originalConstraints:
+              (params.inputs.originalConstraints as string[] | string | undefined) ??
+              (params.inputs.constraints as string[] | string | undefined),
+          }
+        : undefined);
+
+    // 3. Predecessor Findings & Repair Context (if present)
+    if (pred && pred.predecessorResultId) {
+      const predLines: string[] = [
+        '## Predecessor Findings & Repair Context',
+        `- Predecessor Task ID: ${pred.predecessorResultId}`,
+      ];
+      if (pred.findings) {
+        predLines.push(`- Predecessor Findings: ${pred.findings}`);
+      }
+      if (pred.previousHeadSha) {
+        predLines.push(`- Previous HEAD SHA: ${pred.previousHeadSha}`);
+      }
+      if (pred.originalConstraints) {
+        const constraintsStr = Array.isArray(pred.originalConstraints)
+          ? pred.originalConstraints.join(', ')
+          : String(pred.originalConstraints);
+        predLines.push(`- Original Constraints: ${constraintsStr}`);
+      }
+      sections.push(predLines.join('\n'));
+    }
+
+    // 4. Inputs
     if (params.inputs && Object.keys(params.inputs).length > 0) {
       sections.push('## Task Inputs');
       for (const [key, value] of Object.entries(params.inputs)) {
+        if (key === 'predecessor' || key === 'predecessorResultId') {
+          // Handled in predecessor section above
+          continue;
+        }
         if (typeof value === 'object' && value !== null) {
           sections.push(`- **${key}**:\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``);
         } else {
@@ -176,7 +234,7 @@ export class Assignments {
       }
     }
 
-    // 4. Delivery Requirements
+    // 5. Delivery Requirements
     sections.push(
       '## Delivery Requirements',
       `- Contract Version: ${contract.version}`,
@@ -198,6 +256,10 @@ export class Assignments {
       permittedOutcomes: contract.permittedOutcomes,
       requiredArtifacts: contract.requiredArtifacts,
     };
+
+    if (pred && pred.predecessorResultId) {
+      initializationPayload.predecessor = pred;
+    }
 
     return {
       taskId: params.taskId,
@@ -241,15 +303,64 @@ export class Assignments {
       errors.push('Submitted result is missing required "summary" string.');
     }
 
-    // 3. Artifact validation when outcome indicates completion
-    if (res.outcome === 'completed' || res.outcome === 'landed' || res.outcome === 'recorded') {
-      const artifacts = (typeof res.artifacts === 'object' && res.artifacts !== null
-        ? res.artifacts
-        : res) as Record<string, unknown>;
+    const artifacts = (typeof res.artifacts === 'object' && res.artifacts !== null
+      ? res.artifacts
+      : res) as Record<string, unknown>;
 
+    // 3. Task-specific validation rules
+    if (taskType === 'pc-issue-work' && res.outcome === 'completed') {
+      const hasChanges = Boolean(
+        artifacts.diff || artifacts.commitSha || artifacts.changes || res.diff || res.commitSha || res.changes,
+      );
+      if (!hasChanges) {
+        errors.push(
+          'Missing required artifact or changes (diff, commitSha, or changes) in submission for task "pc-issue-work".',
+        );
+      }
+
+      const hasTestEvidence = Boolean(
+        artifacts.testResults ||
+          artifacts.verificationEvidence ||
+          res.testResults ||
+          res.verificationEvidence,
+      );
+      if (!hasTestEvidence) {
+        errors.push(
+          'Missing required artifact or test evidence (testResults or verificationEvidence) in submission for task "pc-issue-work".',
+        );
+      }
+    } else if (taskType === 'pc-pr-land') {
+      const mergedVal = artifacts.merged !== undefined ? artifacts.merged : res.merged;
+      if (typeof mergedVal !== 'boolean') {
+        errors.push('Missing required "merged" boolean in submission for task "pc-pr-land".');
+      }
+
+      if (res.outcome === 'landed') {
+        if (mergedVal !== true) {
+          errors.push('The "merged" property must be true when outcome is "landed" for task "pc-pr-land".');
+        }
+        const prNumber = artifacts.prNumber !== undefined ? artifacts.prNumber : res.prNumber;
+        if (typeof prNumber !== 'number' || isNaN(prNumber)) {
+          errors.push('Missing required "prNumber" number in submission for task "pc-pr-land".');
+        }
+        const prUrl = artifacts.prUrl !== undefined ? artifacts.prUrl : res.prUrl;
+        if (typeof prUrl !== 'string' || !prUrl.trim()) {
+          errors.push('Missing required "prUrl" string in submission for task "pc-pr-land".');
+        }
+      } else {
+        // Outcome is not landed (e.g. 'rework_needed' or 'blocked')
+        if (mergedVal === true) {
+          errors.push(`The "merged" property must be false when outcome is "${res.outcome}" for task "pc-pr-land".`);
+        }
+        const findings = artifacts.findings !== undefined ? artifacts.findings : res.findings;
+        if (typeof findings !== 'string' || !findings.trim()) {
+          errors.push('Missing required "findings" string in submission for task "pc-pr-land" when not merged.');
+        }
+      }
+    } else if (res.outcome === 'completed' || res.outcome === 'landed' || res.outcome === 'recorded') {
+      // General requiredArtifacts check for other task types
       for (const requiredKey of contract.requiredArtifacts) {
         if (requiredKey === 'summary') {
-          // Handled above
           continue;
         }
         const val = artifacts[requiredKey];
@@ -268,12 +379,31 @@ export class Assignments {
       };
     }
 
+    const combinedArtifacts: Record<string, unknown> = {
+      ...(typeof res.artifacts === 'object' && res.artifacts !== null ? res.artifacts : {}),
+    };
+    for (const key of [
+      'diff',
+      'commitSha',
+      'changes',
+      'testResults',
+      'verificationEvidence',
+      'prNumber',
+      'prUrl',
+      'merged',
+      'findings',
+      'evaluatedCommit',
+      'mergedCommit',
+    ]) {
+      if (res[key] !== undefined && combinedArtifacts[key] === undefined) {
+        combinedArtifacts[key] = res[key];
+      }
+    }
+
     const normalizedResult: TaskResult = {
       outcome: res.outcome as string,
       summary: res.summary as string,
-      artifacts: (typeof res.artifacts === 'object' && res.artifacts !== null
-        ? res.artifacts
-        : undefined) as Record<string, unknown> | undefined,
+      artifacts: Object.keys(combinedArtifacts).length > 0 ? combinedArtifacts : undefined,
     };
 
     return {

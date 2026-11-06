@@ -31,9 +31,11 @@ test('specialist skills do not carry workflow or scheduling protocol traces', ()
   const specialistSkills = [
     'pc-issue-file/SKILL.md',
     'pc-issue-next/SKILL.md',
+    'pc-issue-work/SKILL.md',
     'pc-research-ideas/SKILL.md',
     'pc-research-plan/SKILL.md',
     'pc-pipeline-snakemake/SKILL.md',
+    'pc-pr-land/SKILL.md',
     'pc-pr-review/SKILL.md',
     'pc-research-state/SKILL.md',
   ];
@@ -50,4 +52,13 @@ test('specialist skills do not carry workflow or scheduling protocol traces', ()
     );
     expect(content, `${relPath} must not reference workflow engine`).not.toContain('workflow engine');
   }
+
+  // Ticket #32 specific checks
+  const issueWork = readFileSync(resolve(skillsDir, 'pc-issue-work/SKILL.md'), 'utf8');
+  expect(issueWork, 'pc-issue-work must not create PR').not.toContain('gh pr create');
+  expect(issueWork, 'pc-issue-work must not require PR creation in criteria').not.toContain('PR readiness');
+
+  const prLand = readFileSync(resolve(skillsDir, 'pc-pr-land/SKILL.md'), 'utf8');
+  expect(prLand, 'pc-pr-land must not reclaim worktrees').not.toContain('git worktree remove');
+  expect(prLand, 'pc-pr-land must not contain Operation B cleanup').not.toContain('Operation B');
 });

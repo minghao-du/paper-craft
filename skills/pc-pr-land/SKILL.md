@@ -1,186 +1,127 @@
 ---
 name: pc-pr-land
-description: Execute PR merge verification and landing, or post-merge artifact preservation and workspace cleanup
+description: Create or update PR, invoke pre-merge review, verify target HEAD commit, and land guarded merge
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 ---
 
 # /pc-pr-land
 
-Authoritative instructions for executing pull request merge verification and landing, or performing post-merge artifact preservation and workspace cleanup.
-This skill can be invoked directly by a human or agent with a task prompt (standalone/manual mode), or dispatched automatically by the workflow orchestrator.
+Authoritative instructions for managing pull request delivery: creating or updating the PR, invoking `pc-pr-review`, verifying target HEAD commit, and executing guarded squash merge.
+This skill can be invoked directly by a human or agent with an ordinary task prompt.
 
-## Operations Overview
+## Task Responsibilities
 
-`pc-pr-land` provides two distinct operations based on the task prompt instruction or assigned role:
-- **Operation A: PR Merge (Landing):** Verifies approved commit against live PR HEAD, validates base ancestry and checks, and executes guarded squash merge. (Dispatched under role `merger` or manual merge request).
-- **Operation B: Cleanup & Preservation (Finalization):** Verifies merge completion, archives essential artifacts, and prepares resources for release. (Dispatched under role `finalizer` or manual cleanup request).
+`pc-pr-land` is responsible for:
+1. Creating or updating the PR on GitHub for the designated feature branch.
+2. Invoking `pc-pr-review` to evaluate the PR head commit.
+3. If review findings indicate defects or require changes, returning structured review findings without taking over implementation.
+4. If review passes, verifying the live PR head against the evaluated commit SHA and landing a guarded squash merge.
+5. Note: `pc-pr-land` does NOT reclaim or delete worktrees; workspace lifecycle is managed by the execution environment.
 
----
+## Task Inputs
 
-## Operation A: PR Merge (Landing)
+1. **Branch & Base branch:** Feature branch name (`branch`) and base branch to merge into (`baseBranch`, defaults to `main`).
+2. **Issue context:** Issue number and references to close on merge (e.g. `Closes #<issue>`).
+3. **Repository & working directory:** Target repository (`owner/repo`) and local git checkout.
+4. **Approved evaluated commit SHA (optional):** Prior evaluated commit SHA if previously reviewed.
 
-### Task Inputs
+## Verification & Landing Method
 
-1. **PR context:** PR number or URL (`<PR>`).
-2. **Repository & working directory:** Target repository (`owner/repo`) and local git checkout.
-3. **Approved evaluated commit SHA (optional):** The specific commit SHA approved during review (from prior evidence or prompt).
-4. **Base branch:** Target branch to merge into (defaults to `main` or PR `baseRefName`).
-5. **Closing issue references:** Issue numbers to close on merge (e.g. `closes #<issue>`).
+### Step 1: Create or update pull request
 
-### Verification & Landing Method
-
-#### Step 1: Live GitHub and checkout state check
-1. Query live PR status on GitHub:
+1. Check if a PR already exists for the branch:
    ```bash
-   gh pr view <PR> --json state,headRefOid,baseRefName,closingIssuesReferences,mergeable
+   gh pr list --head "<branch>" --json number,url,state,headRefOid
    ```
-2. Verify local working tree state:
+2. If no PR exists, create it:
    ```bash
-   git status --porcelain
+   gh pr create --base "<baseBranch>" --head "<branch>" --title "<concise title>" --body "Closes #<issue>\n\n## Summary\n<summary>\n\n## Test plan\n<test plan>"
    ```
-   **Halt protocol for dirty working tree:**
-   A dirty checkout with unstaged or uncommitted changes blocks merge.
-   Preserve uncommitted changes in place; never commit, stash, or overwrite them during landing.
-3. Check PR state:
-   - If the PR is already `MERGED` on GitHub:
-     Extract the existing merge commit SHA (`gh pr view <PR> --json mergeCommit -q .mergeCommit.oid`) and report success idempotently without executing another merge.
-   - If the PR is `CLOSED` or unmergeable (conflicts):
-     Halt immediately and report `blocked`.
+3. If the PR exists and is open, push any updated commits with `--force-with-lease` if needed.
+4. If the PR is already merged, extract the merge commit and report success idempotently.
+5. If the PR is closed or has merge conflicts, report `blocked` with conflict details.
 
-#### Step 2: Evaluated commit match & real-time HEAD verification
-Inspect local HEAD and real-time remote PR head:
-```bash
-LOCAL_HEAD=$(git rev-parse HEAD)
-REMOTE_HEAD=$(gh pr view <PR> --json headRefOid -q .headRefOid)
-```
+### Step 2: Invoke pre-merge review
 
-- When an approved evaluated commit SHA was provided:
-  ```bash
-  test "$LOCAL_HEAD" = "<evaluated-sha>" && test "$REMOTE_HEAD" = "<evaluated-sha>"
-  ```
-  **Halt protocol for PR HEAD drift:**
-  If the remote PR head moved or local HEAD does not match `<evaluated-sha>`, **halt immediately**.
-  Prior review approval is invalidated by the changed head.
-  Explain clearly that the PR head has changed from the approved commit, requiring a fresh review before merge.
+Invoke `pc-pr-review` to audit the live PR and local checkout HEAD:
+- Inspect PR title, squashed body format, clean working tree, test quality, and static analysis results.
+- Reviewer outputs verdict: `pass`, `rework`, or `blocked`.
 
-#### Step 3: Base branch synchronization & check verification
-1. Fetch base branch:
+#### Handling review findings
+- If review verdict is **`rework`**:
+  - **Do NOT attempt to implement code fixes.**
+  - Extract the review findings, defect list, and evaluated commit SHA.
+  - Return outcome `rework_needed` with:
+    - `merged: false`
+    - `findings`: structured review findings and defect items
+    - `evaluatedCommit`: evaluated HEAD commit SHA
+    - `prNumber` and `prUrl`
+- If review verdict is **`blocked`**:
+  - Return outcome `blocked` with blocker explanation and `merged: false`.
+
+### Step 3: Verified HEAD commit match & base branch check
+
+When review verdict is **`pass`**:
+1. Inspect local HEAD and remote PR head:
    ```bash
-   git fetch origin <base>
+   LOCAL_HEAD=$(git rev-parse HEAD)
+   REMOTE_HEAD=$(gh pr view <PR> --json headRefOid -q .headRefOid)
    ```
-2. Verify base ancestry:
-   ```bash
-   git merge-base --is-ancestor "origin/<base>" "$LOCAL_HEAD"
-   ```
-   If base has moved ahead: rebase onto `origin/<base>`.
-   If a rebase changes the commit SHA, push with `--force-with-lease` and halt for re-verification and fresh review.
-3. Verify required checks:
+2. Ensure `LOCAL_HEAD` equals `REMOTE_HEAD` and matches the reviewed commit SHA.
+   **Halt protocol for PR HEAD drift:**
+   If the remote PR head moved or checkout HEAD changed after review, **halt immediately**. Prior review approval is invalidated; report `rework_needed` with note on head drift.
+3. Verify required CI checks pass:
    ```bash
    gh pr checks <PR> --required
    ```
-   All required CI checks must pass. If checks are pending or failing, halt and report `blocked`.
+   If required checks fail or are pending, report `blocked`.
 
-#### Step 4: Execute guarded squash merge
+### Step 4: Execute guarded squash merge
+
 Merge using explicit `--match-head-commit` to prevent race conditions:
 
 ```bash
-gh pr merge <PR> --squash --match-head-commit "<evaluated-sha>" --body "closes #<issue>"
+gh pr merge <PR> --squash --match-head-commit "$LOCAL_HEAD" --body "Closes #<issue>"
 ```
 
-- Never use an unguarded merge. The `--match-head-commit` flag ensures GitHub atomically rejects the merge if HEAD moved.
-- Include closing issue references in the squash body so GitHub auto-closes the linked issue.
+- Always use `--match-head-commit`. GitHub atomically rejects the merge if HEAD changed.
+- Include closing issue references so GitHub auto-closes the linked issue.
 
-#### Step 5: Verify merge completion
+### Step 5: Verify merge completion
+
 Verify the merge result on GitHub:
 ```bash
 gh pr view <PR> --json state,mergedAt,mergeCommit
 ```
-Extract the landed merge commit SHA (`mergeCommit.oid`).
-
-### Merge Outputs
-
-1. **Merged Commit SHA:** The SHA of the landed squash commit on the base branch (`merged_commit`).
-2. **Submission / Result:**
-   - **When dispatched via workflow engine:** The prompt dynamically supplies the task identity, permitted outcomes, required artifacts, and `submit-result` contract for the run; the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - **When invoked manually or standalone:** Report the landed merge commit SHA, PR status, and confirm issue closure directly to the caller.
-
----
-
-## Operation B: Post-Merge Cleanup & Preservation
-
-### Task Inputs
-
-1. **Workspace & repository:** Working directory / checkout path to preserve or clean.
-2. **PR / Issue context:** PR number or issue number confirming completion.
-3. **Preservation configuration:** Path or destination for archived run records and artifacts.
-
-### Verification & Cleanup Method
-
-#### Step 1: Verify prerequisites
-1. Verify PR is confirmed merged on GitHub:
-   ```bash
-   gh pr view <PR> --json state -q .state
-   ```
-   Must equal `MERGED`. Never clean up an unmerged branch or worktree without explicit operator override.
-2. Verify all linked issues are closed.
-3. Verify working directory is clean:
-   ```bash
-   git status --porcelain
-   ```
-   Ensure no untracked experimental results or uncommitted work remain unaccounted for.
-
-#### Step 2: Artifact preservation
-Archive important run artifacts, benchmark results, logs, and research records before deletion:
-```bash
-pc workflow preserve --dir <checkout> --reason "after final records for PR <PR>"
-```
-(Or create a local tar/zip archive for standalone runs).
-Ensure the preservation bundle is verified on disk before any destructive removal.
-
-#### Step 3: Resource lifecycle & cleanup scope
-The boundary of responsibility for resource cleanup is strictly defined:
-- **Automated Workflow Runs:**
-  **Process termination and worktree directory removal are controlled and performed by the Workflow Engine** (`engine.releaseRunResources`).
-  The cleanup agent's responsibility is to:
-  1. Confirm PR merge state on GitHub.
-  2. Complete required artifact preservation.
-  3. Ensure no dirty untracked files remain.
-  4. Submit `release_evidence` confirming readiness for engine release.
-  The engine then cleanly terminates remaining agent executions and removes the temporary worktree.
-- **Manual / Standalone Runs:**
-  When operating manually outside the workflow engine:
-  1. Switch out of the worktree directory.
-  2. Remove the linked worktree:
-     ```bash
-     git worktree remove <worktree-path>
-     ```
-  3. Delete the merged local feature branch:
-     ```bash
-     git branch -d <branch>
-     ```
-  4. Delete the remote feature branch (if appropriate):
-     ```bash
-     git push origin --delete <branch>
-     ```
-
-### Cleanup Outputs
-
-1. **Release Evidence:** Evidence confirming artifact preservation and checkout clean state (`release_evidence`).
-2. **Submission / Result:**
-   - **When dispatched via workflow engine:** The prompt dynamically supplies the task identity, permitted outcomes, required artifacts, and `submit-result` contract for the run; the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - **When invoked manually or standalone:** Report preserved archive paths and deleted branch/worktree status directly to the caller.
-
----
+Extract the landed squash commit SHA (`mergeCommit.oid`).
 
 ## Quality Requirements & Completion Criteria
 
-1. **Merge completion:**
-   - Real-time PR HEAD matches the evaluated commit SHA.
-   - Base branch ancestry is clean; required CI checks pass.
-   - Squash merge succeeds on GitHub with verifiable `merged_commit` SHA.
-   - Linked issue auto-close is verified.
-2. **Cleanup completion:**
-   - PR is confirmed merged on GitHub.
-   - Required artifacts and records are preserved.
-   - No untracked work or dirty files are discarded without authorization.
-   - Resource release readiness is confirmed.
+1. **When landed:**
+   - Review verdict was `pass`.
+   - Real-time PR HEAD matched evaluated commit SHA.
+   - Guarded squash merge succeeded on GitHub with verified `mergedCommit` SHA.
+   - `merged` is `true`.
+2. **When rework needed:**
+   - Review findings or defects identified.
+   - Implementation is NOT modified by `pc-pr-land`.
+   - Complete findings, evaluated commit SHA, and PR context returned with `merged: false`.
+
+## Task Outputs
+
+1. **Landed outcome (`landed`):**
+   - `prNumber`: PR number
+   - `prUrl`: PR URL
+   - `merged`: `true`
+   - `mergedCommit`: Merge commit SHA
+   - `summary`: Landing summary
+2. **Rework needed outcome (`rework_needed`):**
+   - `prNumber`: PR number
+   - `prUrl`: PR URL
+   - `merged`: `false`
+   - `findings`: Review findings and defect details
+   - `evaluatedCommit`: Evaluated commit SHA
+   - `summary`: Reason rework is required
+3. **Blocked outcome (`blocked`):**
+   - `merged`: `false`
+   - `summary`: Blocker explanation
