@@ -7,7 +7,8 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 # /pc-pr-review
 
 Authoritative instructions for conducting a comprehensive quality review before merging a pull request.
-This skill can be invoked directly by a human or agent with a task prompt or parameters.
+This skill can be invoked directly by a human or agent with an ordinary task prompt or parameters.
+This skill strictly reviews the specified revision, returns structured conclusions and evidence, and does not modify source code, execute automatic rebase/push operations, or schedule next steps.
 
 ## Task Inputs
 

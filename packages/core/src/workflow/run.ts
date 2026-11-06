@@ -14,7 +14,7 @@ import type {
   TaskResult,
 } from './types.js';
 import { createAgentExecutor } from './executor.js';
-import { Assignments } from './assignments.js';
+import { Assignments, type PredecessorBinding } from './assignments.js';
 import { Execution, type ExecutionObservation } from './execution.js';
 import { Worktree } from './worktree.js';
 import { RunState, type RunSnapshot } from './run-state.js';
@@ -63,6 +63,8 @@ export interface DispatchTaskParams {
   inputs?: Record<string, unknown>;
   /** Dedicated worktree path override (defaults to Run's worktree). */
   worktreePath?: string;
+  /** Explicit predecessor task identifier to link findings from (for rework/repair). */
+  predecessorResultId?: string;
 }
 
 /**
@@ -326,6 +328,51 @@ export class Run {
       }
     }
 
+    // Explicit predecessor result linking (does not default to latest result)
+    const predecessorResultId =
+      params.predecessorResultId ??
+      (params.inputs?.predecessorResultId as string | undefined);
+
+    let predecessorBinding: PredecessorBinding | undefined;
+
+    if (predecessorResultId) {
+      const predResult = snapshot.results.get(predecessorResultId);
+      const predTask = snapshot.tasks.get(predecessorResultId);
+
+      if (!predResult && !params.inputs?.findings) {
+        throw new Error(
+          `Cannot link predecessor result: Predecessor task "${predecessorResultId}" not found in Run "${this.runId}".`,
+        );
+      }
+
+      const findings =
+        (params.inputs?.findings as string | undefined) ??
+        (predResult?.artifacts?.findings as string | undefined) ??
+        predResult?.summary ??
+        '';
+
+      const previousHeadSha =
+        (params.inputs?.previousHeadSha as string | undefined) ??
+        (predResult?.artifacts?.evaluatedCommit as string | undefined) ??
+        (predResult?.artifacts?.reviewed_commit as string | undefined) ??
+        (predResult?.artifacts?.commitSha as string | undefined) ??
+        (predResult?.artifacts?.diff as string | undefined) ??
+        (predTask?.inputs?.evaluatedCommit as string | undefined);
+
+      const originalConstraints =
+        (params.inputs?.originalConstraints as string[] | string | undefined) ??
+        (predTask?.inputs?.constraints as string[] | string | undefined) ??
+        (predTask?.inputs?.originalConstraints as string[] | string | undefined) ??
+        (predTask?.inputs?.sharedRequirements as string | undefined);
+
+      predecessorBinding = {
+        predecessorResultId,
+        findings,
+        previousHeadSha,
+        originalConstraints,
+      };
+    }
+
     // 1. Prepare assignment
     const prepared = this.assignments.prepare({
       runId: this.runId,
@@ -334,6 +381,7 @@ export class Run {
       worktreePath: targetWorktree,
       instructions: params.instructions,
       inputs: params.inputs,
+      predecessor: predecessorBinding,
     });
 
     // 2. Write initialization file in worktree
