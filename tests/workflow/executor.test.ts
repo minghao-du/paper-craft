@@ -2,7 +2,31 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { AgyExecutor } from '../../packages/core/src/workflow/executor.js';
+import { AgyExecutor, createAgentExecutor } from '../../packages/core/src/workflow/executor.js';
+
+describe('createAgentExecutor Factory (Ticket #22)', () => {
+  it('constructs an AgyExecutor instance for "agy" provider', () => {
+    const executor = createAgentExecutor('agy');
+    expect(executor).toBeInstanceOf(AgyExecutor);
+    expect((executor as AgyExecutor).command).toBe('agy');
+  });
+
+  it('passes executor options to AgyExecutor', () => {
+    const executor = createAgentExecutor('agy', { command: 'custom-agy', stopGracePeriodMs: 1234 });
+    expect(executor).toBeInstanceOf(AgyExecutor);
+    expect((executor as AgyExecutor).command).toBe('custom-agy');
+    expect((executor as AgyExecutor).stopGracePeriodMs).toBe(1234);
+  });
+
+  it('throws an error for unsupported provider', () => {
+    expect(() => createAgentExecutor('unsupported')).toThrow(
+      /unsupported provider: "unsupported"/i,
+    );
+    expect(() => createAgentExecutor('codex')).toThrow(
+      /unsupported provider: "codex"/i,
+    );
+  });
+});
 
 describe('AgyExecutor Contract & Process Lifecycle (Ticket #3)', () => {
   let tmpDir: string;

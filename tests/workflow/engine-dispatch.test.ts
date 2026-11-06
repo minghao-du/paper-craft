@@ -9,7 +9,6 @@ import type {
   ExecutionInspection,
   ExecutionStatus,
   IssueChecker,
-  ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
 /**
@@ -64,7 +63,6 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
   let tmpDir: string;
   let mockExecutor: ControlledMockExecutor;
   let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-dispatch-test-'));
@@ -77,10 +75,6 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
         title: `Issue #${issue} for testing`,
       }),
     };
-
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
   });
 
   afterEach(async () => {
@@ -91,7 +85,6 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
       issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
       executor: mockExecutor,
     });
     await engine.init({ repository: 'test-owner/test-repo' });

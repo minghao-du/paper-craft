@@ -18,7 +18,6 @@ import type {
   GitHubMergeChecker,
   IssueChecker,
   MergeStatusResult,
-  ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
 class ControlledExecutor implements AgentExecutor {
@@ -98,7 +97,6 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
   let executor: ControlledExecutor;
   let mergeChecker: ControlledMergeChecker;
   let issueChecker: IssueChecker;
-  let providerChecker: ProviderChecker;
   let engine: WorkflowEngine;
 
   beforeEach(async () => {
@@ -114,16 +112,11 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
       }),
     };
 
-    providerChecker = {
-      check: async () => ({ available: true }),
-    };
-
     engine = new WorkflowEngine({
       cwd: tmpDir,
       executor,
       mergeChecker,
       issueChecker,
-      providerChecker,
     });
   });
 
@@ -347,7 +340,6 @@ describe('Workflow MVP End-to-End Lifecycle & Recovery Verification (Ticket #8)'
       executor,
       mergeChecker,
       issueChecker,
-      providerChecker,
     });
 
     const resumeRes = await freshEngine.resume(run.run_id);

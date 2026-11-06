@@ -21,7 +21,6 @@ import type {
   GitHubMergeChecker,
   IssueChecker,
   MergeStatusResult,
-  ProviderChecker,
 } from '../../packages/core/src/workflow/types.js';
 
 class MockExecutor implements AgentExecutor {
@@ -96,7 +95,6 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
   let tmpDir: string;
   let mockExecutor: MockExecutor;
   let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
   let mockMergeChecker: MockMergeChecker;
 
   beforeEach(async () => {
@@ -109,9 +107,6 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
         title: `Test Issue #${issue}`,
       }),
     };
-    mockProviderChecker = {
-      check: async () => ({ available: true }),
-    };
     mockMergeChecker = new MockMergeChecker();
   });
 
@@ -123,7 +118,6 @@ describe('Workflow MVP: Merge Reviewed Revisions (Ticket #6)', () => {
     const engine = new WorkflowEngine({
       cwd: tmpDir,
       issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
       executor: mockExecutor,
       mergeChecker: mockMergeChecker,
     });

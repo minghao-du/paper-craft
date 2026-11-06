@@ -16,7 +16,6 @@ import type {
   MergeStatusResult,
   PreflightCheckResult,
   PriorEvidence,
-  ProviderChecker,
   ReconciledTask,
   ReleaseResourcesOptions,
   ReleaseResourcesResult,
@@ -44,9 +43,8 @@ import {
 import {
   DefaultGitHubMergeChecker,
   DefaultIssueChecker,
-  DefaultProviderChecker,
 } from './checkers.js';
-import { AgyExecutor } from './executor.js';
+import { createAgentExecutor } from './executor.js';
 import {
   WorkflowCleanupError,
   WorkflowFiles,
@@ -247,16 +245,14 @@ export interface WorkflowEngineOptions {
   storageRoot?: string;
   /** Checker for verifying GitHub issue accessibility. */
   issueChecker?: IssueChecker;
-  /** Checker for verifying provider capabilities. */
-  providerChecker?: ProviderChecker;
   /** Agent executor instance for launching and managing agent executions. */
   executor?: AgentExecutor;
+  /** Designated provider identifier (e.g. 'agy'). Used when executor is not explicitly provided. */
+  provider?: string;
   /** Checker for verifying PR head revision and GitHub merge status. */
   mergeChecker?: GitHubMergeChecker;
   /** Files manager for persisting workflow runs and events. */
   files?: WorkflowFiles;
-  /** Task execution manager for preparing and launching specialist tasks. */
-  taskExecution?: TaskExecution;
 }
 
 /**
@@ -267,7 +263,6 @@ export class WorkflowEngine {
   public readonly cwd: string;
   public readonly storageRoot: string;
   public readonly issueChecker: IssueChecker;
-  public readonly providerChecker: ProviderChecker;
   public readonly executor: AgentExecutor;
   public readonly mergeChecker: GitHubMergeChecker;
   public readonly files: WorkflowFiles;
@@ -279,13 +274,14 @@ export class WorkflowEngine {
       ? path.resolve(this.cwd, options.storageRoot)
       : path.join(this.cwd, '.paper-craft');
     this.issueChecker = options?.issueChecker ?? new DefaultIssueChecker();
-    this.providerChecker = options?.providerChecker ?? new DefaultProviderChecker();
-    this.executor = options?.executor ?? new AgyExecutor();
+    this.executor =
+      options?.executor ?? createAgentExecutor(options?.provider ?? 'agy');
     this.mergeChecker = options?.mergeChecker ?? new DefaultGitHubMergeChecker();
     this.files = options?.files ?? new WorkflowFiles(this.storageRoot);
-    this.taskExecution =
-      options?.taskExecution ??
-      new TaskExecution({ files: this.files, executor: this.executor });
+    this.taskExecution = new TaskExecution({
+      files: this.files,
+      executor: this.executor,
+    });
   }
 
   /**
@@ -340,15 +336,25 @@ export class WorkflowEngine {
     details.repository = config.repository;
     details.worktree_root = config.worktree_root;
 
-    // Check provider availability
+    // Validate provider and check executor availability
     const targetProvider = options.provider || config.provider || 'agy';
+    let providerValid = true;
     try {
-      const provCheck = await this.providerChecker.check(targetProvider);
-      if (!provCheck.available) {
-        errors.push(provCheck.error || `Provider "${targetProvider}" is not available.`);
-      }
+      createAgentExecutor(targetProvider);
     } catch (err) {
-      errors.push(`Provider verification failed: ${(err as Error).message}`);
+      providerValid = false;
+      errors.push((err as Error).message);
+    }
+
+    if (providerValid) {
+      try {
+        const provCheck = await this.executor.check();
+        if (!provCheck.available) {
+          errors.push(provCheck.error || `Provider "${targetProvider}" is not available.`);
+        }
+      } catch (err) {
+        errors.push(`Provider verification failed: ${(err as Error).message}`);
+      }
     }
 
     // Check issue accessibility

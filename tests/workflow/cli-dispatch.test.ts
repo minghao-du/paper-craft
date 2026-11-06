@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { runCli } from '../../packages/cli/src/workflow.js';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
-import type { AgentExecutor, ExecutionHandle, ExecutionInspection, IssueChecker, ProviderChecker } from '../../packages/core/src/workflow/types.js';
+import type { AgentExecutor, ExecutionHandle, ExecutionInspection, IssueChecker } from '../../packages/core/src/workflow/types.js';
 
 class MockCliExecutor implements AgentExecutor {
   public launchedTasks: string[] = [];
@@ -45,15 +45,10 @@ describe('Workflow CLI dispatch & submit-result (Ticket #3)', () => {
         title: `Issue #${issue}`,
       }),
     };
-    const mockProviderChecker: ProviderChecker = {
-      check: async () => ({ available: true }),
-    };
-
     mockEngine = new WorkflowEngine({
       cwd: tmpDir,
       executor: mockExecutor,
       issueChecker: mockIssueChecker,
-      providerChecker: mockProviderChecker,
     });
 
     await mockEngine.init({ repository: 'org/repo' });

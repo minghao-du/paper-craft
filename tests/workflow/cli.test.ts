@@ -85,8 +85,12 @@ describe('Workflow CLI smoke tests (Ticket #2)', () => {
       issueChecker: {
         checkIssue: async () => ({ exists: true, open: true, title: 'Mock issue' }),
       },
-      providerChecker: {
+      executor: {
         check: async () => ({ available: true }),
+        launch: async () => ({ id: 'mock-handle', taskId: 'mock-task' }),
+        inspect: async () => ({ status: 'not_started' }),
+        send: async () => {},
+        stop: async () => ({ stopped: true }),
       },
     });
 

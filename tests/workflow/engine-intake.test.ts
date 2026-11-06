@@ -3,12 +3,12 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { WorkflowEngine } from '../../packages/core/src/workflow/engine.js';
-import type { IssueChecker, ProviderChecker } from '../../packages/core/src/workflow/types.js';
+import type { AgentExecutor, IssueChecker } from '../../packages/core/src/workflow/types.js';
 
 describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
   let tmpDir: string;
   let mockIssueChecker: IssueChecker;
-  let mockProviderChecker: ProviderChecker;
+  let mockExecutor: AgentExecutor;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-workflow-test-'));
@@ -22,16 +22,12 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       },
     };
 
-    mockProviderChecker = {
-      check: async (provider: string) => {
-        if (provider === 'unsupported') {
-          return { available: false, error: 'Provider "unsupported" is not supported' };
-        }
-        if (provider === 'missing-agy') {
-          return { available: false, error: 'agy executable not found in PATH' };
-        }
-        return { available: true };
-      },
+    mockExecutor = {
+      check: async () => ({ available: true }),
+      launch: async () => ({ id: 'mock-handle', taskId: 'mock-task' }),
+      inspect: async () => ({ status: 'not_started' }),
+      send: async () => {},
+      stop: async () => ({ stopped: true }),
     };
   });
 
@@ -44,7 +40,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -66,7 +62,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init({ configPath: customPath, repository: 'custom-org/custom-repo' });
@@ -82,7 +78,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       await engine.init({ repository: '' });
@@ -94,7 +90,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -108,7 +104,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -123,7 +119,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -138,7 +134,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -154,7 +150,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
 
       const { configPath } = await engine.init();
@@ -171,29 +167,60 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       await engine.init();
 
       await expect(engine.start({ issue: 404 })).rejects.toThrow(/Issue #404 not found/i);
     });
 
-    it('fails when provider is unavailable with actionable error', async () => {
+    it('fails when provider check fails with actionable error', async () => {
+      const failingExecutor: AgentExecutor = {
+        ...mockExecutor,
+        check: async () => ({
+          available: false,
+          error: 'agy executable not found in PATH',
+        }),
+      };
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: failingExecutor,
       });
       await engine.init();
 
-      await expect(engine.start({ issue: 1, provider: 'missing-agy' })).rejects.toThrow(/agy executable not found in PATH/i);
+      await expect(engine.start({ issue: 1 })).rejects.toThrow(/agy executable not found in PATH/i);
+    });
+
+    it('fails when provider is unsupported with actionable error', async () => {
+      const engine = new WorkflowEngine({
+        cwd: tmpDir,
+        issueChecker: mockIssueChecker,
+        executor: mockExecutor,
+      });
+      await engine.init();
+
+      await expect(engine.start({ issue: 1, provider: 'unsupported' })).rejects.toThrow(/unsupported provider: "unsupported"/i);
+    });
+
+    it('shares the same executor instance between Engine and internal TaskExecution, keeping config and execution consistent', async () => {
+      const engine = new WorkflowEngine({
+        cwd: tmpDir,
+        issueChecker: mockIssueChecker,
+        executor: mockExecutor,
+      });
+      await engine.init();
+
+      const run = await engine.start({ issue: 1 });
+      expect(run.provider).toBe('agy');
+      expect(engine.executor).toBe(mockExecutor);
     });
 
     it('fails when both requirements and requirementsFile are passed', async () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -208,7 +235,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -224,7 +251,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -241,7 +268,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -262,7 +289,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       const { configPath } = await engine.init();
 
@@ -298,7 +325,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       await engine.init();
 
@@ -323,7 +350,7 @@ describe('WorkflowEngine Intake & Startup (Ticket #2)', () => {
       const engine = new WorkflowEngine({
         cwd: tmpDir,
         issueChecker: mockIssueChecker,
-        providerChecker: mockProviderChecker,
+        executor: mockExecutor,
       });
       await engine.init();
 
