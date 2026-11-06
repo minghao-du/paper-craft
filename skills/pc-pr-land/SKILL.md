@@ -5,11 +5,11 @@ description: Execute a orchestrator-dispatched PR merge or post-records preserva
 
 # /pc-pr-land
 
-Read [the managed lifecycle](../pc-orchestrator/managed-lifecycle.md) before mutation.
+Read the supplied role contract and assignment before mutation.
 The owning Run's Orchestrator dispatches one phase, `merge` or `cleanup`, with repository/PR, evaluated head, checkout and durable evidence pointers.
 Execute only that assignment and return its correlated result.
 Workers remain available for remediation and final records while releasing checkout ownership.
-For missing assignment or resume, return to [Orchestrator intake](../pc-orchestrator/SKILL.md#intake) and managed recovery.
+For missing assignment or resume, return to [Orchestrator intake](../pc-orchestrator/SKILL.md#1-resolve-or-start-the-run) and managed recovery.
 
 ## Merge phase
 
@@ -117,7 +117,7 @@ and a new worker release. A merge result alone does not dispatch cleanup.
    independently from merge success. Release ownership and notify the orchestrator; only
    verified cleanup releases a fleet resource for another task.
 
-Managed delivery and `pc workflow orchestrator land` execute delivery stages (`pr-merge`, `preservation-cleanup`) through Managed Stage execution (`executeDeliveryStage`), progressing solely through RunRegistry without unmanaged side records.
+Managed delivery follows the current Run assignment and Engine-validated transitions.
 Unknown execution occupancy or unaccounted checkout files retain the checkout.
 A blocked completion resumes its persisted stages; inspect the original execution before retrying a missing receipt.
 Interrupted merge recovery verifies the actual merge result on GitHub and does not repeat a successful merge.
@@ -125,13 +125,12 @@ Parent Issue closure remains a separate user decision.
 
 ## Managed completion
 
-For Run-owned work, use [the shared managed lifecycle](../pc-orchestrator/managed-lifecycle.md) for correlated results and acceptance. Receipt publication is not delivery acceptance and does not authorize another top-level dispatch or checkout reuse.
-
-Post-merge completion follows the [shared lifecycle](../pc-orchestrator/managed-lifecycle.md#post-merge-delivery): accept Worker final records and independently verified termination before preservation/cleanup. A merged PR remains pending delivery until the archive and actual resource release are verified.
-
-For CLI-dispatched assignments, use the [supported stage operations](../pc-orchestrator/managed-lifecycle.md#cli-stage-assignments).
-The Orchestrator selects the merge or cleanup Dispatch, collects your result, executes
-that stage with `stage execute --dispatch <id> --pr <number>` or `pc workflow orchestrator land <issue>`, then independently
-accepts its Receipt. Cleanup requires accepted Worker final records and verified
-termination of every execution using the checkout. Completion retains the verified
-archive and resource-release evidence.
+Submit the assigned task's outcome, summary and required artifacts through
+`pc workflow submit-result`, using the supplied Run and task identities.
+The role contract determines permitted outcomes and required artifacts. Merge
+assignments return `merged_commit`; finalization assignments return
+`release_evidence` after final records and preservation checks.
+The Engine validates the result and controls resource release. Report unresolved
+execution occupancy, preservation or cleanup failures as blockers.
+For recovery, return the Run identity and evidence to the
+[Orchestrator](../pc-orchestrator/SKILL.md#3-recover-stop-or-release).

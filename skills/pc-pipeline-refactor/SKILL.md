@@ -12,9 +12,10 @@ Synchronize all code, rules, configurations, and data assets across local workst
 ## Post-closure audit invocation
 
 When dispatched by an Orchestrator after verified closure, perform applicability
-and bounded structural audit only, following [the shared finalization contract](../pc-orchestrator/finalization.md).
-Return the inspected versions and classified findings required there; completion uses
-that shared accepted-disposition contract.
+and bounded structural audit within the supplied brief.
+Return inspected versions, applicability evidence, classified findings, checks,
+artifacts, blockers and limitations. Required changes remain pending until their
+approved maintenance delivery and verification are complete.
 
 ## Core Leading Words
 
@@ -148,7 +149,6 @@ Affected-target small-data runs and relevant tests pass, zero standalone step sb
 Any production DAG checks required by an identified risk pass; record their results and any production behavior not covered by the verification.
 Local Git working tree is clean and synchronized with upstream.
 
-For explicit managed dispatch, acceptance and finalization commands, follow
-`managed-lifecycle.md` in the installed `/pc-orchestrator` skill directory. Use
-accepted correlated results and the current integrated version before reporting
-completion.
+For a managed assignment, use the supplied role contract and Run/task identities
+to submit the required result through `pc workflow submit-result`. Bind evidence
+to the assigned integrated version; the Engine validates acceptance.

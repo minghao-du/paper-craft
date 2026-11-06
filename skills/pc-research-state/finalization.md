@@ -15,8 +15,9 @@ Resolve the shared research entry rather than copying state into the audit check
 Verify whole-workspace ignore and tracked-file handling under the existing convention.
 Keep raw evidence at source and live task progress in the task system.
 
-Return the structured receipt in
-[Orchestrator finalization](../pc-orchestrator/finalization.md), including changed report paths,
+Return the structured result required by the assignment, with evaluated `head`,
+`status` (`completed` or `blocked`), `evidence`, `blockers`, `scope`, `checks`,
+`artifacts` and `limitations`. Include changed report paths,
 affected folder mappings and dependent reports pending verification or rerun,
 integrated results, evidence status, pending disagreements and deferred updates. Every
 requested update must be recorded or have a coordinator-accepted deferral that does not

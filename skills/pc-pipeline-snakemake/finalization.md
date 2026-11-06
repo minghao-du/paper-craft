@@ -17,8 +17,9 @@ optimization and review uses retain their own workflow.
    verified code, input, parameter and environment identity.
    **Done:** Required checks have commands and evidence, or blocking explanations of why
    they could not run. No full production DAG is required merely to check unrelated work.
-3. Return a structured receipt using the contract in
-   [Orchestrator finalization](../pc-orchestrator/finalization.md). Include evaluated PR/SHA
+3. Return the assignment's structured result with evaluated `head`, `status`
+   (`completed` or `blocked`), `evidence`, `blockers`, `scope`, `checks`, `artifacts`
+   and `limitations`. Include evaluated PR/SHA
    identities, scope reasons, commands, artifacts, blocking defects, nonblocking advice
    and unperformed checks in the appropriate fields. Include the named code roots,
    affected directory/script mapping, callers and dependent stages in that scope
