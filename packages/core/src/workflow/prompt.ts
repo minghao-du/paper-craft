@@ -6,7 +6,28 @@
 
 import type { TaskDispatchParams } from './types.js';
 
+/**
+ * Parameters for dispatching a task and composing its prompt.
+ */
 export type { TaskDispatchParams };
+
+/**
+ * Formats a dictionary section with a markdown header and key-value entries.
+ *
+ * @param title Section header title (e.g. 'Caller Inputs').
+ * @param dict Optional dictionary of string keys and arbitrary values.
+ * @returns Array of lines for the section, or empty array if dictionary is empty or undefined.
+ */
+function formatDictionarySection(title: string, dict?: Record<string, unknown>): string[] {
+  if (!dict || Object.keys(dict).length === 0) {
+    return [];
+  }
+  const lines: string[] = ['', `## ${title}`];
+  for (const [key, val] of Object.entries(dict)) {
+    lines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
+  }
+  return lines;
+}
 
 /**
  * Composes a structured task prompt for an agent execution.
@@ -36,19 +57,8 @@ export function composeTaskPrompt(params: TaskDispatchParams): string {
     params.sharedRequirements || 'None specified.',
   ];
 
-  if (params.inputs && Object.keys(params.inputs).length > 0) {
-    lines.push('', '## Caller Inputs');
-    for (const [key, val] of Object.entries(params.inputs)) {
-      lines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
-    }
-  }
-
-  if (params.deliveryArtifacts && Object.keys(params.deliveryArtifacts).length > 0) {
-    lines.push('', '## Delivery Artifacts');
-    for (const [key, val] of Object.entries(params.deliveryArtifacts)) {
-      lines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
-    }
-  }
+  lines.push(...formatDictionarySection('Caller Inputs', params.inputs));
+  lines.push(...formatDictionarySection('Delivery Artifacts', params.deliveryArtifacts));
 
   if (params.priorEvidence) {
     lines.push('', '## Prior Evidence & Review Findings');
@@ -76,6 +86,7 @@ export function composeTaskPrompt(params: TaskDispatchParams): string {
     '### Submission Contract',
     'When finished or if blocked, submit your result using:',
     `pc workflow submit-result --run "${params.runId}" --task "${params.taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
+    '(or --artifacts-file <path-to-json-file> for complex or multi-line outputs)',
     '',
     'The top-level dispatch agent is responsible for returning the receipt via this command upon task completion or blockage.',
   );

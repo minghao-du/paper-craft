@@ -166,11 +166,8 @@ Compile findings into a structured report:
 1. **Evaluated Commit SHA:** The verified commit SHA evaluated during the review (`reviewed_commit`).
 2. **Review Report:** Structured report detailing findings, severity, and verification evidence (`findings`).
 3. **Review Verdict / Submission:**
-   - **When dispatched via workflow engine:** Submit the correlated review result using the command provided in the dispatch prompt:
-     - For pass: outcome `pass`, artifacts `{"reviewed_commit":"<commit-sha>","findings":"All checks passed cleanly."}`
-     - For rework: outcome `rework`, artifacts `{"reviewed_commit":"<commit-sha>","findings":"<detailed defect list and reproduction steps>"}`
-     - For blocked: outcome `blocked`, artifacts `{"reviewed_commit":"<commit-sha>","findings":"<blocker details>"}`
-   - **When invoked manually or standalone:** Report the summary, verdict (`pass` / `rework` / `blocked`), evaluated commit SHA, and findings directly to the caller, or post a PR review comment via `gh pr review`.
+   - **When dispatched via workflow engine:** The prompt dynamically supplies the task identity, permitted outcomes, required artifacts, and `submit-result` contract for the run; the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
+   - **When invoked manually or standalone:** The agent reports the summary, verdict (`pass` / `rework` / `blocked`), evaluated commit SHA, and findings directly to the caller (or posts a PR review comment via `gh pr review`).
 
 ## Resource Lifecycle
 

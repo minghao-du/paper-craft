@@ -101,10 +101,8 @@ Extract the landed merge commit SHA (`mergeCommit.oid`).
 
 1. **Merged Commit SHA:** The SHA of the landed squash commit on the base branch (`merged_commit`).
 2. **Submission / Result:**
-   - **When dispatched via workflow engine:** Submit the result using the command provided in the dispatch prompt:
-     - On success: outcome `completed`, summary `"Squash merged PR #<PR> into <base>"`, artifacts `{"merged_commit":"<merge-commit-sha>"}`.
-     - When blocked: outcome `blocked`, summary `"Merge blocked: <reason>"`, artifacts `{"merged_commit":""}`.
-   - **When invoked manually or standalone:** Report the landed merge commit SHA, PR status, and confirm issue closure to the caller.
+   - **When dispatched via workflow engine:** The prompt dynamically supplies the task identity, permitted outcomes, required artifacts, and `submit-result` contract for the run; the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
+   - **When invoked manually or standalone:** Report the landed merge commit SHA, PR status, and confirm issue closure directly to the caller.
 
 ---
 
@@ -169,10 +167,8 @@ The boundary of responsibility for resource cleanup is strictly defined:
 
 1. **Release Evidence:** Evidence confirming artifact preservation and checkout clean state (`release_evidence`).
 2. **Submission / Result:**
-   - **When dispatched via workflow engine:** Submit result via the command provided in the dispatch prompt:
-     - On success: outcome `completed`, summary `"Final records preserved and checkout verified for release"`, artifacts `{"release_evidence":"preservation verified, worktree clean"}`.
-     - When blocked: outcome `blocked`, summary `"Cleanup blocked: <reason>"`, artifacts `{"release_evidence":""}`.
-   - **When invoked manually or standalone:** Report preserved archive paths and deleted branch/worktree status to caller.
+   - **When dispatched via workflow engine:** The prompt dynamically supplies the task identity, permitted outcomes, required artifacts, and `submit-result` contract for the run; the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
+   - **When invoked manually or standalone:** Report preserved archive paths and deleted branch/worktree status directly to the caller.
 
 ---
 

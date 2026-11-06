@@ -18,9 +18,6 @@ import type {
 import type { WorkflowFiles } from './files.js';
 import { composeTaskPrompt } from './prompt.js';
 
-export { composeTaskPrompt };
-export type { TaskDispatchParams };
-
 /**
  * Facts about the active or most recently dispatched task for a Run.
  */
@@ -159,6 +156,11 @@ export class TaskExecution {
   private readonly files: WorkflowFiles;
   private readonly executor: AgentExecutor;
 
+  /**
+   * Initializes a new TaskExecution instance.
+   *
+   * @param options Task execution options including files manager and agent executor.
+   */
   constructor(options: TaskExecutionOptions) {
     this.files = options.files;
     this.executor = options.executor;
@@ -203,7 +205,7 @@ export class TaskExecution {
     await this.files.prepareTaskFiles(params.worktreePath, initData);
 
     // 2. Compose worker prompt
-    const prompt = this.composeWorkerPrompt(params);
+    const prompt = composeTaskPrompt(params);
 
     // 3. Persist dispatch intent event BEFORE launch
     const intentEvent: RunEvent = {
@@ -968,21 +970,4 @@ export class TaskExecution {
     }
     return null;
   }
-
-  /**
-   * Composes the worker prompt instructing the agent on task expectations,
-   * requirements, prior evidence, and submission contract.
-   * Delegates prompt composition to composeTaskPrompt.
-   *
-   * @param params Parameters for the task assignment.
-   * @returns Formatted prompt string.
-   */
-  composeWorkerPrompt(params: TaskDispatchParams): string {
-    return composeTaskPrompt(params);
-  }
 }
-
-/**
- * Service alias for TaskExecution to maintain naming consistency.
- */
-export { TaskExecution as TaskExecutionService };

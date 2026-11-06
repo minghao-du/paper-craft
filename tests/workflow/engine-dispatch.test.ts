@@ -183,6 +183,7 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
       expect(launched.prompt).toContain(
         `pc workflow submit-result --run "${runContext.run_id}" --task "${dispatchResult.taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
       );
+      expect(launched.prompt).toContain('(or --artifacts-file <path-to-json-file> for complex or multi-line outputs)');
       expect(launched.prompt).toContain(
         'The top-level dispatch agent is responsible for returning the receipt via this command upon task completion or blockage.',
       );
@@ -251,6 +252,7 @@ describe('WorkflowEngine Dispatch & Collect (Ticket #3)', () => {
       expect(launchedRework!.prompt).toContain('## Scheduling Directives');
       expect(launchedRework!.prompt).toContain(`Run ID: ${runContext.run_id}`);
       expect(launchedRework!.prompt).toContain(`Task ID: ${reworkTask.taskId}`);
+      expect(launchedRework!.prompt).toContain('(or --artifacts-file <path-to-json-file> for complex or multi-line outputs)');
       expect(launchedRework!.prompt).toContain(
         'The top-level dispatch agent is responsible for returning the receipt via this command upon task completion or blockage.',
       );
