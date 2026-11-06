@@ -234,7 +234,7 @@ async function listRegisteredWorktrees(cwd: string): Promise<string[]> {
  * Checks if a worktree directory has uncommitted tracked changes or untracked user files.
  * Ignores tool-managed metadata files (.pc-execution-owner and initialization.json).
  */
-async function checkWorktreeDirty(worktreePath: string): Promise<{ dirty: boolean; details?: string }> {
+export async function checkWorktreeDirty(worktreePath: string): Promise<{ dirty: boolean; details?: string }> {
   try {
     const { stdout } = await execFileAsync('git', ['status', '--porcelain', '-uall'], {
       cwd: worktreePath,
