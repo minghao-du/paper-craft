@@ -971,3 +971,86 @@ export class TaskExecution {
     return null;
   }
 }
+
+/**
+ * Observation returned by Execution.inspect.
+ */
+export interface ExecutionObservation {
+  /** Stable task identifier. */
+  taskId: string;
+  /** Current process or session execution status from provider. */
+  status: ExecutionStatus;
+  /** Associated execution handle if known. */
+  handle?: ExecutionHandle;
+  /** Exit code if process has terminated. */
+  exitCode?: number;
+  /** Diagnostic error or failure message if uncertain or errored. */
+  error?: string;
+  /** Whether the process execution status is uncertain/unconfirmed. */
+  isUncertain?: boolean;
+}
+
+/**
+ * Execution submodule for Run.
+ * Wraps the low-level AgentExecutor seam, launches fresh agent conversations
+ * per task without cross-task session reuse, handles unknown states conservatively,
+ * and executes verified process stopping.
+ */
+export class Execution {
+  private readonly executor: AgentExecutor;
+  private readonly handles = new Map<string, ExecutionHandle>();
+
+  constructor(executor: AgentExecutor) {
+    this.executor = executor;
+  }
+
+  /**
+   * Starts an agent task in the target working directory with the given prompt.
+   * Ensures provider readiness and spawns a fresh conversation.
+   */
+  async start(taskId: string, workingDirectory: string, prompt: string): Promise<ExecutionHandle> {
+    const checkResult = await this.executor.check();
+    if (!checkResult.available) {
+      throw new Error(`Execution provider check failed: ${checkResult.error ?? 'Unknown error'}`);
+    }
+
+    const handle = await this.executor.launch(taskId, workingDirectory, prompt);
+    this.handles.set(taskId, handle);
+    return handle;
+  }
+
+  /**
+   * Inspects the execution status for a given task identifier.
+   * Conservatively classifies failures or unconfirmed states as uncertain.
+   */
+  async inspect(taskId: string): Promise<ExecutionObservation> {
+    try {
+      const inspection = await this.executor.inspect(taskId);
+      const isUncertain = inspection.status === 'uncertain';
+      return {
+        taskId,
+        status: inspection.status,
+        handle: inspection.handle ?? this.handles.get(taskId),
+        exitCode: inspection.exitCode,
+        error: inspection.error,
+        isUncertain,
+      };
+    } catch (err) {
+      return {
+        taskId,
+        status: 'uncertain',
+        handle: this.handles.get(taskId),
+        error: (err as Error).message,
+        isUncertain: true,
+      };
+    }
+  }
+
+  /**
+   * Stops an active execution handle and verifies termination.
+   */
+  async stop(handle: ExecutionHandle): Promise<ExecutionStopResult> {
+    return await this.executor.stop(handle);
+  }
+}
+
