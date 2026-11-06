@@ -15,8 +15,10 @@ This skill can be invoked directly by a human or agent with an update brief.
 
 Before executing, verify the following inputs:
 1. **Designated research entry:** Fixed entry point from project agent/startup guidance (`research-state/RESEARCH-STATE.local.md` or external designated project home).
-2. **Writing brief:** The caller's findings, agreed plan, hypotheses, or post-merge evidence to record, along with evidence locations and limitations.
-3. **Supporting materials:** Relevant run logs, benchmark tables, pipeline output files, or source code paths with specific identities.
+2. **Delivery evidence & writing brief:** The caller's findings, agreed plan, hypotheses, or explicit delivery evidence (commit SHAs, test results, benchmark summaries) to record, along with limitations.
+3. **Artifact locations:** Specific file and directory paths for produced analytical artifacts, figures, models, or processed datasets.
+4. **Reproduction entry points:** Concrete commands, execution scripts, or pipeline targets required to reproduce the findings.
+5. **Supporting materials:** Relevant run logs, benchmark tables, pipeline output files, or source code paths with specific identities.
 
 ## Recording Procedure
 
