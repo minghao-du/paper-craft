@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 
 Develop or update the research route for the project's designated research entry.
 This skill produces a scientific research overview, independent of code implementation; its scope is the plan and its discovery pointer, not research execution.
-This skill can be invoked directly by a human or agent with a research query or topic, or dispatched automatically by the workflow orchestrator. Use the user's language for the plan and discussion.
+This skill can be invoked directly by a human or agent with a research query or topic. Use the user's language for the plan and discussion.
 
 ## Task Inputs
 
@@ -84,6 +84,3 @@ Report missing source access or broken references as gaps rather than implying t
 
 1. **Research plan entry:** Written or updated plan in the designated research state via `/pc-research-state`.
 2. **Summary:** Research route overview, stage structure, open questions, and discovery pointer.
-3. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the updated plan path and scientific summary directly to the caller.

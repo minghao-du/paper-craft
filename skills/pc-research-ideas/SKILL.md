@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 
 Be a research sparring partner: develop new directions or interrogate an existing idea through evidence-grounded dialogue.
 Match the user's language. Keep the discussion grounded in the shared research state; preserve useful scientific outcomes and unfinished questions there.
-This skill can be invoked directly by a human or agent with a paper corpus or idea, or dispatched automatically by the workflow orchestrator.
+This skill can be invoked directly by a human or agent with a paper corpus or idea.
 
 ## Task Inputs
 
@@ -75,6 +75,4 @@ Keep hypotheses and proposed experiments prospective; the discussion does not au
 
 1. **Structured synthesis:** Discussion summary, grounded findings, rejected directions, and concrete experiment designs.
 2. **Updated research state:** Records committed to `research-state/` via `/pc-research-state`.
-3. **Receipt / submission:**
-   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
-   - When invoked manually or standalone: report the synthesis and updated record locations to the caller.
+3. **Summary:** Report the synthesis and updated record locations to the caller.
