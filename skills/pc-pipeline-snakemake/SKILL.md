@@ -1,14 +1,21 @@
 ---
 name: pc-pipeline-snakemake
-description: Review, scaffold, and optimize Snakemake workflows with modular rules, fail-fast validation, uv & conda isolation, tiered data hygiene, and independent cluster scheduling.
+description: Review, scaffold, and optimize Snakemake workflows with modular rules, fail-fast validation, uv & conda isolation, tiered data hygiene, and independent cluster scheduling
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 ---
 
 # /pc-pipeline-snakemake
 
 Guidance, scaffolding, and auditing for Snakemake workflows adhering to official best practices and reproducible execution standards.
+This skill can be invoked directly by a human or agent with a task prompt or parameters, or dispatched automatically by the workflow orchestrator.
+For post-merge or release workflow audits, read [the post-merge audit guide](finalization.md) before selecting scope or running checks.
 
-For Orchestrator-dispatched post-merge audits, read
-[the finalization audit branch](finalization.md) before selecting scope or running checks.
+## Task Inputs
+
+Before beginning work, ensure the following inputs are available:
+1. **Workflow directory & configuration:** Target workflow root (`Snakefile`, `workflow/rules/`, `config/config.yaml`, `config/schema.yaml`).
+2. **Task brief & mode:** Intent to scaffold a new workflow (Branch 1), audit an existing pipeline (Branch 2), or recover from a failure (Incremental recovery).
+3. **Compute environment:** Local workstation environment and cluster parameters specified in `.paper-craft/compute.md` or configuration.
 
 ## Standard Directory Layout
 
@@ -109,7 +116,6 @@ records needed by the research; Snakemake rules produce the evidence they refere
 ### 5. Independent Cluster Jobs (HPC)
 
 For cluster execution:
-
 - **Native Executor Orchestration**: Manage cluster execution strictly through Snakemake native executor plugins (e.g., `snakemake-executor-plugin-slurm`) configured via profile (`config/profiles/<profile>/config.yaml`). Rules must declare explicit resource directives (`threads:`, `resources: mem_mb=...`, `runtime=...`), allowing Snakemake to submit individual Slurm jobs directly.
 - **Native Executor over sbatch Scripts**: Never write standalone `.sbatch` scripts, shell loops (`submit_all.sh`), or manual job dependency chains (`--dependency=afterok`) for workflow steps; express all computational steps as Snakemake rules and let the DAG govern dependencies and retries. Never wrap `snakemake` inside a monolithic fat-node allocation running the local executor (`-j N`). If site policy forbids running long-lived controller processes on login nodes, use only the minimal 1-CPU controller daemon script at `config/profiles/slurm/controller.sbatch` (see [Slurm profiles](references/slurm.md)) to launch the native profile executor.
 - **Independent Units**: Represent independent samples, replicates, and parameter combinations as separate wildcard jobs with distinct outputs and logs. Submit each through a Snakemake cluster executor/profile; keep dependencies and aggregation in the DAG.
@@ -123,7 +129,6 @@ For cluster execution:
 ### Incremental recovery
 
 When fixing a failed Snakemake run:
-
 1. Inspect the original target, configuration, execution environment, and logs. Confirm which upstream outputs completed successfully and remain valid under the repaired code, inputs, parameters, and environment; file existence alone is insufficient. Preserve those outputs and `.snakemake/` metadata at their existing paths.
 2. Repair the existing DAG and its input or environment contracts. Give expensive stages separate rules with persisted outputs connected to downstream inputs; a single rule containing several stages must restart as a unit. Reuse verified existing artifacts when splitting such a rule. Introduce a separate entry point or stage-selection switch only when the existing DAG cannot express the execution requirement.
 3. Dry-run the original target through the same launcher, configuration, and execution environment. Inspect the planned jobs and every unexpected upstream rebuild reason. Correct missing dependency declarations or overly broad rule boundaries; retain rebuilds required by invalidated outputs. Preserve normal freshness checks rather than using touch, metadata deletion, or weakened rerun triggers to force reuse.
@@ -134,7 +139,6 @@ When fixing a failed Snakemake run:
 ### Branch 1: Workflow Scaffolding (Authoring)
 
 When generating a new Snakemake workflow or expanding an existing one:
-
 1. **Scaffold Directory Tree & uv Project**: Create the Standard Directory Layout as outputs are introduced. Initialize root `pyproject.toml` declaring `snakemake` and `snakefmt`.
 2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `.venv/`, `processed/`, `results/`, and `logs/` are gitignored while `pyproject.toml`, `uv.lock`, and `tests/` are tracked. Resolve the fixed research entry from `AGENTS.md`; use `/pc-research-state` to establish it when needed, keeping its whole workspace ignored at the designated research home.
 3. **Configure & Schema**:
@@ -154,7 +158,6 @@ When generating a new Snakemake workflow or expanding an existing one:
 ### Branch 2: Workflow Audit & Refactoring (Auditing)
 
 When reviewing or optimizing an existing Snakemake pipeline:
-
 1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and research state follows **Research State** outside the DAG. Check Stage Output Organization conventions. For existing `summary/` records, have `/pc-research-state` integrate useful scientific content before retiring duplicate receipts, their rules, and targets; preserve evidence with independent value.
 2. **Check Parameter Validation & Smoke Testing**: Verify startup schema validation and evaluate the **Smoke Execution Contract**, including actual execution and artifact evidence for the affected chain.
 3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, audit for orchestration debt: flag any standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local execution, and evaluate the **Independent Cluster Jobs** configuration gate.
@@ -168,3 +171,18 @@ When reviewing or optimizing an existing Snakemake pipeline:
    - Categorize findings into: Critical Violations, Architectural Improvements, and Drop-in Refactorings (concrete before/after code blocks).
 
 **Completion Criterion**: All 4 audit categories evaluated against the codebase; all identified defects accompanied by drop-in replacement code blocks. For cluster execution, include configuration-gate findings, unretired sbatch scripts, and unresolved configuration in the audit.
+
+## Quality Requirements & Completion Criteria
+
+1. **Standard layout conformance:** Directory structure strictly separates configuration, rules, environments, scripts, tests, data, intermediates, and deliverables.
+2. **Reproducible environments:** Conda definitions pin exact package versions; Python dependencies are locked via `uv.lock` or PEP 723 script metadata.
+3. **Cluster independence:** Computational steps submit as independent cluster jobs via native Snakemake executor plugins; zero monolithic allocations or wrapper loops.
+4. **Verified execution:** Small-data smoke runs execute successfully through production entry point; `snakemake --lint` emits zero errors.
+
+## Task Outputs
+
+1. **Workflow codebase or audit report:** Scaffolded rules/scripts/configs or categorized audit report with drop-in code blocks.
+2. **Verification evidence:** Smoke execution output, log files, and lint validation results.
+3. **Receipt / submission:**
+   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
+   - When invoked manually or standalone: report the scaffolded workflow, audit findings, or smoke test results to the caller.
