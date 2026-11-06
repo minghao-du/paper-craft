@@ -7,5 +7,6 @@ export * from './config.js';
 export * from './repository.js';
 export * from './executor.js';
 export * from './files.js';
+export * from './prompt.js';
 export * from './execution.js';
 export * from './engine.js';

@@ -10,12 +10,16 @@ import type {
   ExecutionInspection,
   ExecutionStatus,
   ExecutionStopResult,
-  PriorEvidence,
   ReconciledTask,
   RunEvent,
+  TaskDispatchParams,
   TaskResult,
 } from './types.js';
 import type { WorkflowFiles } from './files.js';
+import { composeTaskPrompt } from './prompt.js';
+
+export { composeTaskPrompt };
+export type { TaskDispatchParams };
 
 /**
  * Facts about the active or most recently dispatched task for a Run.
@@ -102,41 +106,6 @@ export interface TaskExecutionOptions {
   executor: AgentExecutor;
 }
 
-/**
- * Parameters required to dispatch a specialist task.
- */
-export interface TaskDispatchParams {
-  /** Unique Run identifier. */
-  runId: string;
-  /** Stable task identifier. */
-  taskId: string;
-  /** Active workflow step name. */
-  step: string;
-  /** Specialist role assigned to the step. */
-  role: string;
-  /** Canonical skill invoked by this role. */
-  skill: string;
-  /** Specific task instructions from operator. */
-  taskInstructions: string;
-  /** Immutable shared requirements for the Run. */
-  sharedRequirements?: string;
-  /** Worktree directory path. */
-  worktreePath: string;
-  /** Target repository in owner/repo format. */
-  repository: string;
-  /** Target issue number. */
-  issue: number;
-  /** Outcomes permitted by the role contract. */
-  permittedOutcomes: string[];
-  /** Artifact keys required by the role contract. */
-  requiredArtifacts?: string[];
-  /** Prior review findings or evaluated commits. */
-  priorEvidence?: PriorEvidence;
-  /** Accumulated delivery artifacts. */
-  deliveryArtifacts?: Record<string, unknown>;
-  /** Optional caller-supplied inputs. */
-  inputs?: Record<string, unknown>;
-}
 
 /**
  * Parameters for recording and persisting a specialist role's submitted result.
@@ -1003,57 +972,17 @@ export class TaskExecution {
   /**
    * Composes the worker prompt instructing the agent on task expectations,
    * requirements, prior evidence, and submission contract.
+   * Delegates prompt composition to composeTaskPrompt.
    *
    * @param params Parameters for the task assignment.
    * @returns Formatted prompt string.
    */
   composeWorkerPrompt(params: TaskDispatchParams): string {
-    const promptLines = [
-      `# Task Assignment: ${params.step} (${params.role})`,
-      `Run: ${params.runId}`,
-      `Task: ${params.taskId}`,
-      `Skill: ${params.skill}`,
-      '',
-      '## Shared Requirements',
-      params.sharedRequirements || 'None specified.',
-    ];
-
-    if (params.deliveryArtifacts && Object.keys(params.deliveryArtifacts).length > 0) {
-      promptLines.push('', '## Delivery Artifacts');
-      for (const [key, val] of Object.entries(params.deliveryArtifacts)) {
-        promptLines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
-      }
-    }
-
-    if (params.priorEvidence) {
-      promptLines.push('', '## Prior Evidence & Review Findings');
-      if (params.priorEvidence.evaluatedCommit) {
-        promptLines.push(`Evaluated Commit: ${params.priorEvidence.evaluatedCommit}`);
-      }
-      if (params.priorEvidence.findings) {
-        promptLines.push(`Review Findings:\n${params.priorEvidence.findings}`);
-      }
-      if (params.priorEvidence.priorSummary) {
-        promptLines.push(`Prior Summary: ${params.priorEvidence.priorSummary}`);
-      }
-    }
-
-    promptLines.push(
-      '',
-      '## Task Instructions',
-      params.taskInstructions,
-      '',
-      '## Permitted Outcomes',
-      params.permittedOutcomes.join(', '),
-      '',
-      '## Required Artifacts',
-      (params.requiredArtifacts ?? []).join(', ') || 'None',
-      '',
-      '## Submission Contract',
-      `When finished, submit your result using:`,
-      `pc workflow submit-result --run "${params.runId}" --task "${params.taskId}" --outcome <outcome> --summary "<summary>" --artifacts '<artifacts-json>'`,
-    );
-
-    return promptLines.join('\n');
+    return composeTaskPrompt(params);
   }
 }
+
+/**
+ * Service alias for TaskExecution to maintain naming consistency.
+ */
+export { TaskExecution as TaskExecutionService };

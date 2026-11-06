@@ -25,13 +25,16 @@ pc workflow dispatch <run-id> --instructions-file <assignment-file>
 
 The assignment states the objective, scope, acceptance criteria and relevant prior
 findings. Preserve immutable shared requirements. The Engine selects the current
-role, binds its skill and inputs, and supplies its workspace; the Orchestrator need
-not load specialist procedures or prescribe how to perform their work.
+role, binds its skill and inputs, supplies its workspace, and assembles the full task prompt—injecting
+the runtime identity (run/task ID), permitted outcomes, required artifacts, and the exact
+`pc workflow submit-result` command. The top-level dispatch agent executes the skill procedure
+and returns the receipt upon task completion or blockage. The Orchestrator need not load specialist
+procedures or prescribe how to perform their work.
 
 The returned task identity identifies the execution to observe. Specialists return
-`outcome`, `summary` and required `artifacts` through `pc workflow submit-result`.
-Only Engine-acknowledged results and recorded transitions authorize subsequent work;
-chat replies and process exit alone do not establish completion.
+`outcome`, `summary` and required `artifacts` through `pc workflow submit-result` as directed
+by the injected prompt contract. Only Engine-acknowledged results and recorded transitions authorize
+subsequent work; chat replies and process exit alone do not establish completion.
 
 Use the current scheduling context when supplied by the Engine. From the CLI,
 inspect `pc workflow status <run-id>` for the recorded step, Run status and latest

@@ -1,60 +1,38 @@
 ---
 name: pc-issue-work
-description: Authoritative Managed Worker instructions: work in assigned checkout, follow immutable brief, and return correlated results
+description: Implement issue requirements in working directory, follow TDD and code standards, and deliver verified changes
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 ---
 
 # /pc-issue-work
 
-Authoritative instructions for Managed Workers delivering Issue work assignments under Managed Runs.
+Authoritative instructions for implementing GitHub issue requirements in the designated working directory.
+This skill can be invoked directly by a human or agent with a task prompt, or dispatched automatically by the workflow orchestrator.
 
-## Core Contract
+## Task Inputs
 
-When dispatched as a Worker in a Managed Run:
-1. **Assigned checkout:** Work exclusively inside the assigned checkout reserved for this attempt (`.pc-execution-owner`). Never create another worktree, switch branches out of the assignment, or modify files outside the checkout.
-2. **Immutable brief:** Respect the immutable task brief and `initialization.json` provided in your attempt directory. Never alter or disregard the assignment scope or requirements.
-3. **Correlated results:** Return structured, verifiable evidence (including current Git HEAD and artifact paths) so the Orchestrator can collect and accept your stage receipt.
-4. **Clean turn completion:** Complete your turn and release execution occupancy to the Orchestrator. Do not dispatch next-stage roles or trigger landing effects yourself.
+Before starting work, ensure the following inputs are available:
+1. **Issue context:** Issue number, title, description, and comments from GitHub (`gh issue view <issue> --comments`).
+2. **Task brief & objectives:** The specific goals, scope, and instructions provided in the dispatch prompt or task assignment.
+3. **Environment & working directory:** The assigned git checkout / worktree. Never switch to another directory or branch outside the designated scope.
+4. **Prerequisites & dependencies:** Required external files, weights, datasets, environment variables, or upstream build artifacts.
 
-## Workflow
+## Implementation Method
 
-### Step 1: Role initialization & assignment verification
+### Step 1: Input and prerequisite verification
 
-Read `initialization.json` from your attempt directory:
+Verify that all external prerequisite dependencies and requirements are satisfied before modifying any files.
 
-```bash
-cat initialization.json
-```
-
-Verify that:
-- `role` is `'worker'`.
-- `attempt` matches your active execution identity.
-- `checkout` points to the directory you are operating in.
-- `.pc-execution-owner` exists in the checkout and matches your `run` and `registry`.
-- The task brief at the referenced path is read and its contents understood.
-
-Read both the issue body and comments from GitHub for tracker context if needed:
-
-```bash
-gh issue view <issue>
-gh issue view <issue> --comments
-```
-
-### Step 2: Input verification
-
-Verify that all external prerequisite dependencies and requirements are satisfied before writing any code.
-
-#### Prerequisite input verification
-
+#### External dependency verification
 Inspect the issue requirements for required external inputs — trained models, weights, data tables, or external files.
-Read the project's `.paper-craft/compute.md` when present to resolve where each input will be consumed and its expected path; otherwise use the issue's environment and paths.
-Verify that each prerequisite file exists and is readable in that environment, using the configured platform skill for remote checks.
-Inputs verified there satisfy this prerequisite without additional authorization or a local copy.
+- When `.paper-craft/compute.md` exists, read it to resolve where each input is consumed and its expected path. Otherwise, use the environment and paths specified in the issue.
+- Verify each prerequisite file exists and is readable in that environment.
 
-When any prerequisite input is missing, inaccessible, or has an unresolved environment or path:
-- **Halt immediately** before modifying files.
-- Never guess missing values, fabricate mock data, or launch unapproved long-running recalculations.
-- Emit the standardized 3-part interactive halt notification:
+#### Halt protocol for missing prerequisites
+When any prerequisite input is missing, inaccessible, or has an unresolved mapping:
+1. **Halt immediately** before modifying files.
+2. Never guess missing values, fabricate mock data, or launch unapproved long-running recalculations.
+3. Emit the standardized 3-part interactive halt notification:
 
 ```markdown
 Prerequisite input verification is blocked; the task cannot proceed:
@@ -63,61 +41,46 @@ Prerequisite input verification is blocked; the task cannot proceed:
 - Action needed: `<provide the file, restore access, or clarify the environment and path; describe the proposed substitute or regeneration plan and request authorization if needed>`
 ```
 
-- Wait for explicit user or Orchestrator direction before proceeding.
+4. If executing under workflow dispatch, report `blocked` outcome with blocker details. If invoked manually, wait for user direction.
 
-Completion criterion: every prerequisite input has passed the verification above (or the user has explicitly resolved the blocker with a substitute), and all requirements are clear.
+### Step 2: Implementation via TDD red-green loop
 
-### Step 3: Create a feature branch (assigned checkout)
-
-Stay strictly inside the assigned checkout.
-The branch and worktree are provisioned, owned, and tracked by the Managed Run:
-- Do not create a separate worktree (`git worktree add`).
-- Do not check out another branch (`git checkout <other>`).
-- Keep all modifications within the checkout boundary.
-
-### Step 4: Implement
-
-- Implement the required changes strictly adhering to the immutable brief and project coding standards.
-- Follow the TDD red-green loop: write failing tests first at public seams, then minimal implementation to pass.
+- Work strictly inside the assigned working directory.
+- Follow the TDD red-green loop:
+  1. Write failing tests first at public seams.
+  2. Implement minimal code to pass the tests.
+  3. Refactor while keeping tests passing.
+- Keep individual test execution well within the project budget (under 120 seconds).
+- Ensure all quality gates pass:
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm test`
 - When Snakemake workflows are involved, follow incremental recovery before rerunning.
-- Continue until implementation is complete and project checks pass (`pnpm run typecheck`, `pnpm run lint`, tests).
 
-#### Adaptive checks for long tasks
+### Step 3: Adaptive checks for long tasks
 
-Apply the shared protocol in [Adaptive checks for long tasks](../lib/adaptive-checks.md) to local and remote computation, training, experiments and long tests:
-1. Launch through the configured platform/runtime and retain the exact job ID or PID, execution environment, logs and completion probe. Verify the probe returns nonzero while unfinished and zero only on verified success.
-2. Estimate completion from comparable runs, input size or measured progress. Record the estimate, its basis and the next check time before waiting.
-3. For SLURM, track submission, queue wait and actual execution separately.
+Apply adaptive checks to local and remote computation, training, experiments, and long tests:
+1. Launch through the configured platform/runtime and retain the exact job ID or PID, execution environment, logs, and completion probe. Verify the probe returns nonzero while unfinished and zero only on verified success.
+2. Estimate completion from comparable runs, input size, or measured progress. Record the estimate, its basis, and the next check time before waiting.
+3. For SLURM, track submission, queue wait, and actual execution separately.
 4. Keep waiting responsive through completion events or a supported scheduled wake-up.
 
-### Step 5: Selective staging and pre-commit cached diff audit
+### Step 4: Selective staging and pre-commit audit
 
-Stage changes explicitly per-file to maintain zero transient artifacts in git history.
+Maintain zero transient artifacts in git history by staging files selectively:
+1. **Selective staging:** Stage modified or new source and test files individually using per-file commands:
+   ```bash
+   git add <file>
+   ```
+   Never use indiscriminate staging commands (`git add .`, `git add -A`, or `git commit -a`).
+2. **Pre-commit cached diff audit:** Before creating any commit, audit the staged cache:
+   ```bash
+   git diff --cached --name-only
+   ```
+   Inspect all staged paths against forbidden transient patterns (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`). If any forbidden path is staged, unstage it immediately (`git reset HEAD <file>`).
+3. **Commit:** Commit only verified source code, tests, and documentation using conventional commit messages.
 
-#### Selective staging protocol
-
-Stage modified or new files individually using per-file commands:
-
-```bash
-git add <file>
-```
-
-Target only source code, configuration files, and documentation.
-Do not use indiscriminate staging commands (`git add .`, `git add -A`, or `git commit -a`).
-
-#### Pre-commit cached diff audit
-
-Before creating any commit, audit the staged cache to intercept transient cruft:
-
-```bash
-git diff --cached --name-only
-```
-
-Inspect all staged paths against forbidden transient patterns (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`).
-When any staged path matches a forbidden pattern, immediately unstage it (`git reset HEAD <file>`).
-Commit only when `git diff --cached --name-only` contains exclusively legitimate source, configuration, and documentation files.
-
-### Step 6: PR creation or update
+### Step 5: Pull request creation or update
 
 Create or update the PR for the assigned branch:
 
@@ -126,40 +89,23 @@ gh pr create --title "<concise title>" --body "<body>"
 ```
 
 - Include `Closes #<issue>` in the body to auto-close the issue on merge.
-- Do NOT manually close the issue — GitHub and the landing lifecycle handle closure.
+- Do NOT manually close the issue.
 - Report key findings, test outcomes, benchmark tables, and reproduction commands in the PR body.
-- When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed (such as a preserved path or ephemeral directory) alongside their reproduction command, environment specifications, and reproduction duration or cost.
+- When transient local outputs or benchmarks were produced, record in the PR body where the local outputs were placed alongside reproduction commands and resource metrics.
 
-### Step 7: Return correlated results
+## Quality Requirements & Completion Criteria
 
-Publish your completed implementation evidence through the `submit-result` contract:
+A task is complete only when all criteria are met:
+1. **Functional verification:** All new and existing tests pass cleanly.
+2. **Static verification:** `npm run typecheck` and `npm run lint` report zero errors or warnings.
+3. **Test budget:** All individual tests execute within 120 seconds.
+4. **Clean working tree:** No untracked transient cruft, unstaged modifications, or unwanted files remain in the working directory.
+5. **PR readiness:** PR is created or updated, linked to the target issue, with clear description and reproduction evidence.
 
-```bash
-pc workflow submit-result \
-  --run "<run-id>" \
-  --task "<task-id>" \
-  --outcome completed \
-  --summary "Concise summary of implementation" \
-  --artifacts '{"diff":"<git-diff-summary>","test_results":"<test-run-output>"}'
-```
+## Task Outputs
 
-The Engine validates:
-1. `run` and `task` match the active assignment.
-2. `outcome` is in `permitted_outcomes` for worker (`completed`, `blocked`).
-3. `artifacts` satisfies `required_artifacts` (`diff`, `test_results`).
-
-Upon acknowledgement, the Engine verifies execution termination and reports the collected outcome.
-Do not declare whole Issue delivery yourself. Complete your turn cleanly.
-
-### Step 8: Final records stage (when dispatched post-merge)
-
-When the Orchestrator dispatches the `final-records` stage following verified PR merge:
-1. Verify the merged state of the PR:
-   ```bash
-   gh pr view <pr> --json state,mergedAt,mergeCommit
-   ```
-2. Write final assessment, worklog, and follow-ups:
-   - Provide complete final records with assessment summary, worklog, followups (empty list `[]` if none), and release evidence.
-3. Release execution occupancy for independently verified preservation and cleanup.
-   - Do NOT remove or delete the worktree checkout yourself; PR-Land performs bundle preservation and worktree removal.
-   - End turn cleanly so the Orchestrator can accept final records and execute `preservation-cleanup`.
+1. **Git commits:** Clean, conventional commits on the feature branch.
+2. **Pull request:** Created or updated PR linked with `Closes #<issue>`.
+3. **Receipt / submission:**
+   - When dispatched via workflow engine: the execution receipt is submitted via the `pc workflow submit-result` command supplied in the dispatch prompt.
+   - When invoked manually or standalone: report the PR URL, git diff summary, and test verification output to the caller.

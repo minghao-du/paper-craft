@@ -377,6 +377,42 @@ export interface DispatchOptions {
 }
 
 /**
+ * Parameters required to dispatch a specialist task.
+ */
+export interface TaskDispatchParams {
+  /** Unique Run identifier. */
+  runId: string;
+  /** Stable task identifier. */
+  taskId: string;
+  /** Active workflow step name. */
+  step: string;
+  /** Specialist role assigned to the step. */
+  role: string;
+  /** Canonical skill invoked by this role. */
+  skill: string;
+  /** Specific task instructions from operator. */
+  taskInstructions: string;
+  /** Immutable shared requirements for the Run. */
+  sharedRequirements?: string;
+  /** Worktree directory path. */
+  worktreePath: string;
+  /** Target repository in owner/repo format. */
+  repository: string;
+  /** Target issue number. */
+  issue: number;
+  /** Outcomes permitted by the role contract. */
+  permittedOutcomes: string[];
+  /** Artifact keys required by the role contract. */
+  requiredArtifacts?: string[];
+  /** Prior review findings or evaluated commits. */
+  priorEvidence?: PriorEvidence;
+  /** Accumulated delivery artifacts. */
+  deliveryArtifacts?: Record<string, unknown>;
+  /** Optional caller-supplied inputs. */
+  inputs?: Record<string, unknown>;
+}
+
+/**
  * Result returned upon successful task dispatch.
  */
 export interface DispatchResult {
