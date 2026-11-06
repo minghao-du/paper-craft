@@ -467,9 +467,11 @@ export class Assignments {
         if (mergedVal === true) {
           errors.push(`The "merged" property must be false when outcome is "${res.outcome}" for task "pc-pr-land".`);
         }
-        const findings = artifacts.findings !== undefined ? artifacts.findings : res.findings;
-        if (typeof findings !== 'string' || !findings.trim()) {
-          errors.push('Missing required "findings" string in submission for task "pc-pr-land" when not merged.');
+        if (res.outcome === 'rework_needed') {
+          const findings = artifacts.findings !== undefined ? artifacts.findings : res.findings;
+          if (typeof findings !== 'string' || !findings.trim()) {
+            errors.push('Missing required "findings" string in submission for task "pc-pr-land" when rework_needed.');
+          }
         }
       }
     } else {
@@ -517,6 +519,18 @@ export class Assignments {
         normalizedArtifacts[k] === undefined
       ) {
         normalizedArtifacts[k] = v;
+      }
+    }
+
+    if (taskType === 'pc-pr-land' && res.outcome === 'rework_needed') {
+      const commit =
+        (normalizedArtifacts.evaluatedCommit as string | undefined) ??
+        (normalizedArtifacts.previousHeadSha as string | undefined) ??
+        (res.evaluatedCommit as string | undefined) ??
+        (res.previousHeadSha as string | undefined);
+      if (commit && typeof commit === 'string' && commit.trim()) {
+        normalizedArtifacts.evaluatedCommit = commit.trim();
+        normalizedArtifacts.previousHeadSha = commit.trim();
       }
     }
 

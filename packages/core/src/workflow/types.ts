@@ -10,12 +10,12 @@ export interface WorkflowConfig {
   repository: string;
   /** Root directory where execution worktrees are isolated. */
   worktree_root: string;
-  /** Path to workflow definition file or inline workflow definition. */
-  workflow_definition: string | WorkflowDefinition;
-  /** Path to role contracts file or inline role definitions. */
-  role_definitions: string | RoleDefinitions;
+  /** Optional path to workflow definition file or inline workflow definition. */
+  workflow_definition?: string | WorkflowDefinition;
+  /** Optional path to role contracts file or inline role definitions. */
+  role_definitions?: string | RoleDefinitions;
   /** Maximum permitted rework loops before transitioning to blocked. */
-  rework_limit: number;
+  rework_limit?: number;
   /** Designated agent executor provider (e.g. 'agy'). */
   provider: string;
 }

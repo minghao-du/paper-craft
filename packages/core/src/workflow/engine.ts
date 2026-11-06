@@ -31,24 +31,13 @@ import type { RepositoryManager } from './repository.js';
 
 export { WorkflowCleanupError, WorkflowOwnershipError };
 
+/**
+ * Error thrown when preflight verification checks fail before workflow operations.
+ */
 export class WorkflowPreflightError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'WorkflowPreflightError';
-  }
-}
-
-export class WorkflowReviewInvalidatedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WorkflowReviewInvalidatedError';
-  }
-}
-
-export class WorkflowMergeVerificationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WorkflowMergeVerificationError';
   }
 }
 

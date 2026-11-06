@@ -17,75 +17,60 @@ import type {
 const execFileAsync = promisify(execFile);
 
 /**
- * Standard default workflow for atomic Issue delivery.
+ * Modern default workflow definition for atomic delivery.
+ * Task sequencing and recovery are orchestrated dynamically by pc-orchestrator.
  */
 export const DEFAULT_WORKFLOW_DEFINITION: WorkflowDefinition = {
-  initial_step: 'implementation',
+  initial_step: 'pc-issue-plan',
   rework_limit: 3,
   steps: {
-    implementation: {
+    'pc-issue-plan': {
+      role: 'planner',
+      guidance: 'Analyze requirements, plan issue decomposition or direct delivery',
+      transitions: {},
+    },
+    'pc-issue-work': {
       role: 'worker',
-      guidance: 'Implement the requested changes adhering to acceptance criteria',
-      transitions: {
-        completed: 'review',
-        blocked: 'blocked',
-      },
+      guidance: 'Implement requested changes adhering to acceptance criteria',
+      transitions: {},
     },
-    review: {
-      role: 'reviewer',
-      guidance: 'Review implementation against acceptance criteria and quality standards',
-      input_artifacts: ['diff', 'test_results'],
-      transitions: {
-        pass: 'merge',
-        rework: 'implementation',
-        blocked: 'blocked',
-      },
+    'pc-pr-land': {
+      role: 'lander',
+      guidance: 'Create PR, run reviews, verify commit, and land changes',
+      transitions: {},
     },
-    merge: {
-      role: 'merger',
-      guidance: 'Verify PR head matches approved review commit and merge',
-      input_artifacts: ['reviewed_commit'],
-      transitions: {
-        completed: 'finalization',
-        blocked: 'blocked',
-      },
-    },
-    finalization: {
-      role: 'finalizer',
-      guidance: 'Record final records, preserve artifacts, and release resources',
-      input_artifacts: ['merged_commit'],
-      transitions: {
-        completed: 'completed',
-        blocked: 'blocked',
-      },
+    'pc-issue-verify': {
+      role: 'verifier',
+      guidance: 'Verify delivery against original objectives and criteria',
+      transitions: {},
     },
   },
 };
 
 /**
- * Standard role contracts for the default delivery roles.
+ * Modern default role definitions for dynamic task dispatching.
  */
 export const DEFAULT_ROLE_DEFINITIONS: RoleDefinitions = {
   roles: {
+    planner: {
+      skill: 'pc-issue-plan',
+      permitted_outcomes: ['direct', 'decomposed', 'blocked'],
+      required_artifacts: ['summary'],
+    },
     worker: {
       skill: 'pc-issue-work',
       permitted_outcomes: ['completed', 'blocked'],
-      required_artifacts: ['diff', 'test_results'],
+      required_artifacts: ['summary', 'diff', 'testResults'],
     },
-    reviewer: {
-      skill: 'pc-pr-review',
-      permitted_outcomes: ['pass', 'rework', 'blocked'],
-      required_artifacts: ['reviewed_commit', 'findings'],
-    },
-    merger: {
+    lander: {
       skill: 'pc-pr-land',
-      permitted_outcomes: ['completed', 'blocked'],
-      required_artifacts: ['merged_commit'],
+      permitted_outcomes: ['landed', 'rework_needed', 'blocked'],
+      required_artifacts: ['summary'],
     },
-    finalizer: {
-      skill: 'pc-pr-land',
-      permitted_outcomes: ['completed', 'blocked'],
-      required_artifacts: ['release_evidence'],
+    verifier: {
+      skill: 'pc-issue-plan',
+      permitted_outcomes: ['verified', 'rework_needed', 'blocked'],
+      required_artifacts: ['summary'],
     },
   },
 };
@@ -127,37 +112,9 @@ export async function initWorkflowConfig(
   const worktreeRoot = options?.worktreeRoot ?? '.worktrees';
   const provider = options?.provider ?? 'agy';
 
-  if (options?.inline) {
-    const configObj: WorkflowConfig = {
-      repository,
-      worktree_root: worktreeRoot,
-      workflow_definition: DEFAULT_WORKFLOW_DEFINITION,
-      role_definitions: DEFAULT_ROLE_DEFINITIONS,
-      rework_limit: 3,
-      provider,
-    };
-    await fs.writeFile(targetConfigPath, YAML.stringify(configObj), 'utf8');
-    return { configPath: targetConfigPath };
-  }
-
-  // Create external definition files
-  const wfDefRelPath = 'config/workflow.yml';
-  const roleDefRelPath = 'config/roles.yml';
-
-  const wfDefAbsPath = path.resolve(configDir, wfDefRelPath);
-  const roleDefAbsPath = path.resolve(configDir, roleDefRelPath);
-
-  await fs.mkdir(path.dirname(wfDefAbsPath), { recursive: true });
-  await fs.mkdir(path.dirname(roleDefAbsPath), { recursive: true });
-
-  await fs.writeFile(wfDefAbsPath, YAML.stringify(DEFAULT_WORKFLOW_DEFINITION), 'utf8');
-  await fs.writeFile(roleDefAbsPath, YAML.stringify(DEFAULT_ROLE_DEFINITIONS), 'utf8');
-
   const configObj: WorkflowConfig = {
     repository,
     worktree_root: worktreeRoot,
-    workflow_definition: wfDefRelPath,
-    role_definitions: roleDefRelPath,
     rework_limit: 3,
     provider,
   };
@@ -242,7 +199,7 @@ export async function loadWorkflowConfig(
   const config = parsed as WorkflowConfig;
 
   // Resolve workflow definition
-  let workflow: WorkflowDefinition;
+  let workflow: WorkflowDefinition = DEFAULT_WORKFLOW_DEFINITION;
   if (typeof config.workflow_definition === 'string') {
     const wfPath = path.resolve(configDir, config.workflow_definition);
     try {
@@ -255,12 +212,10 @@ export async function loadWorkflowConfig(
     }
   } else if (config.workflow_definition && typeof config.workflow_definition === 'object') {
     workflow = config.workflow_definition;
-  } else {
-    throw new Error(`Configuration "${configPath}" is missing a valid "workflow_definition" property.`);
   }
 
   // Resolve role definitions
-  let roles: RoleDefinitions;
+  let roles: RoleDefinitions = DEFAULT_ROLE_DEFINITIONS;
   if (typeof config.role_definitions === 'string') {
     const rolesPath = path.resolve(configDir, config.role_definitions);
     try {
@@ -273,8 +228,6 @@ export async function loadWorkflowConfig(
     }
   } else if (config.role_definitions && typeof config.role_definitions === 'object') {
     roles = config.role_definitions;
-  } else {
-    throw new Error(`Configuration "${configPath}" is missing a valid "role_definitions" property.`);
   }
 
   validateWorkflowConfiguration(config, workflow, roles);
@@ -348,11 +301,8 @@ export function validateWorkflowConfiguration(
     const assignedRoleContract = roles.roles[stepDef.role];
     const permittedOutcomes = new Set([...assignedRoleContract.permitted_outcomes, 'blocked']);
 
-    if (!stepDef.transitions || typeof stepDef.transitions !== 'object') {
-      throw new Error(`Step "${stepName}" must define a "transitions" mapping.`);
-    }
-
-    for (const [outcome, targetStep] of Object.entries(stepDef.transitions)) {
+    if (stepDef.transitions && typeof stepDef.transitions === 'object') {
+      for (const [outcome, targetStep] of Object.entries(stepDef.transitions)) {
       if (!permittedOutcomes.has(outcome)) {
         throw new Error(
           `Workflow definition validation error: transition outcome "${outcome}" is not permitted for role "${stepDef.role}" in step "${stepName}". Permitted outcomes: ${Array.from(permittedOutcomes).join(', ')}.`,
@@ -367,4 +317,5 @@ export function validateWorkflowConfiguration(
       }
     }
   }
+}
 }

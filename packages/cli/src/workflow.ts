@@ -37,6 +37,7 @@ Commands:
   init                     Scaffold default workflow configuration (.pc-workflow.yml)
   open <issue>             Open or allocate a workflow Run (alias: start)
   observe [runId]          Inspect status and execution of a workflow Run (alias: status)
+  plan [runId]             Record or inspect orchestrator plan for a Run
   dispatch [runId]         Dispatch an isolated task with contract-bound instructions
   submit-result            Submit structured result for an assigned task
   stop [runId]             Stop active executions and pause a workflow Run
@@ -59,11 +60,18 @@ Open / Start Options:
   --goal <text>            Run objective or goal
   --requirements <text>    Immutable shared requirements text
   --requirements-file <file> Path to UTF-8 file containing shared requirements
+  --plan <text>            Initial task plan text or JSON
+  --plan-file <file>       Path to file containing initial plan
 
 Observe / Status Options:
   --run <runId>            Run identifier to inspect (defaults to latest)
   --task <taskId>          Specific task identifier to inspect
   --detailed               Show full structured context and telemetry
+
+Plan Options:
+  --run <runId>            Run identifier to update or inspect (defaults to latest)
+  --plan <text>            Plan text or JSON string to record
+  --plan-file <file>       Path to file containing plan to record
 
 Dispatch Options:
   --run <runId>            Target workflow Run identifier (or positional arg)
@@ -108,6 +116,32 @@ async function resolveLatestRunId(cwd: string): Promise<string> {
   }
   runIds.sort().reverse();
   return runIds[0];
+}
+
+/**
+ * Resolves or opens the target Run instance from CLI options, positionals, or context.
+ */
+async function resolveTargetRun(
+  options: { run?: string },
+  positionals: string[] | undefined,
+  ctx: CliContext | undefined,
+  cwd: string,
+  executor?: AgentExecutor,
+): Promise<Run> {
+  let targetRunId = options.run || positionals?.[0];
+  if (!targetRunId) {
+    targetRunId = await resolveLatestRunId(cwd);
+  }
+
+  if (ctx?.run && ctx.run.runId === targetRunId) {
+    return ctx.run;
+  }
+
+  return await Run.open({
+    runId: targetRunId,
+    repoRoot: cwd,
+    executor,
+  });
 }
 
 /**
@@ -180,6 +214,8 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
             requirements: { type: 'string' },
             'requirements-file': { type: 'string' },
             repo: { type: 'string' },
+            plan: { type: 'string' },
+            'plan-file': { type: 'string' },
             help: { type: 'boolean', short: 'h' },
           },
           allowPositionals: true,
@@ -240,6 +276,27 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
             executor,
           }));
 
+        if (values['plan-file']) {
+          const planFilePath = path.resolve(cwd, values['plan-file']);
+          try {
+            const rawPlan = await fs.readFile(planFilePath, 'utf8');
+            try {
+              await run.recordPlan(JSON.parse(rawPlan));
+            } catch {
+              await run.recordPlan(rawPlan.trim());
+            }
+          } catch {
+            stderr(`Error: Plan file not found at: ${planFilePath}`);
+            return 1;
+          }
+        } else if (values.plan) {
+          try {
+            await run.recordPlan(JSON.parse(values.plan));
+          } catch {
+            await run.recordPlan(values.plan);
+          }
+        }
+
         const obs = await run.observe();
 
         stdout(
@@ -251,6 +308,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
               status: obs.status,
               worktree: run.worktreePath,
               provider: obs.snapshot.provider ?? values.provider ?? 'agy',
+              plan: obs.snapshot.plan,
             },
             null,
             2,
@@ -277,19 +335,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
           return 0;
         }
 
-        let targetRunId = values.run || positionals[0];
-        if (!targetRunId) {
-          targetRunId = await resolveLatestRunId(cwd);
-        }
-
-        const run =
-          ctx?.run && ctx.run.runId === targetRunId
-            ? ctx.run
-            : await Run.open({
-                runId: targetRunId,
-                repoRoot: cwd,
-                executor,
-              });
+        const run = await resolveTargetRun(values, positionals, ctx, cwd, executor);
 
         const obs = await run.observe(values.task);
 
@@ -308,12 +354,84 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
                 execution: obs.execution,
                 result: obs.result,
                 has_submitted_result: obs.hasSubmittedResult,
+                plan: obs.snapshot.plan,
               },
               null,
               2,
             ),
           );
         }
+        return 0;
+      }
+
+      case 'plan': {
+        const { values, positionals } = parseArgs({
+          args: args.slice(1),
+          options: {
+            run: { type: 'string' },
+            plan: { type: 'string' },
+            'plan-file': { type: 'string' },
+            help: { type: 'boolean', short: 'h' },
+          },
+          allowPositionals: true,
+        });
+
+        if (values.help) {
+          stdout(USAGE_HELP);
+          return 0;
+        }
+
+        const run = await resolveTargetRun(values, positionals, ctx, cwd, executor);
+
+        let planToRecord: unknown;
+        if (values['plan-file']) {
+          const resolvedPath = path.resolve(cwd, values['plan-file']);
+          try {
+            const raw = await fs.readFile(resolvedPath, 'utf8');
+            try {
+              planToRecord = JSON.parse(raw);
+            } catch {
+              planToRecord = raw.trim();
+            }
+          } catch (err) {
+            stderr(`Error: Failed to read plan file at ${resolvedPath}: ${(err as Error).message}`);
+            return 1;
+          }
+        } else if (values.plan) {
+          try {
+            planToRecord = JSON.parse(values.plan);
+          } catch {
+            planToRecord = values.plan;
+          }
+        }
+
+        if (planToRecord !== undefined) {
+          const snapshot = await run.recordPlan(planToRecord);
+          stdout(
+            JSON.stringify(
+              {
+                runId: run.runId,
+                recorded: true,
+                plan: snapshot.plan,
+              },
+              null,
+              2,
+            ),
+          );
+          return 0;
+        }
+
+        const obs = await run.observe();
+        stdout(
+          JSON.stringify(
+            {
+              runId: run.runId,
+              plan: obs.snapshot.plan,
+            },
+            null,
+            2,
+          ),
+        );
         return 0;
       }
 
@@ -337,11 +455,6 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
         if (values.help) {
           stdout(USAGE_HELP);
           return 0;
-        }
-
-        let targetRunId = values.run || positionals[0];
-        if (!targetRunId) {
-          targetRunId = await resolveLatestRunId(cwd);
         }
 
         let taskInstructions = '';
@@ -383,14 +496,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
 
         const taskType = values['task-type'] ?? 'pc-issue-work';
 
-        const run =
-          ctx?.run && ctx.run.runId === targetRunId
-            ? ctx.run
-            : await Run.open({
-                runId: targetRunId,
-                repoRoot: cwd,
-                executor,
-              });
+        const run = await resolveTargetRun(values, positionals, ctx, cwd, executor);
 
         const dispatchResult = await run.dispatch({
           taskType,
@@ -474,14 +580,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
           }
         }
 
-        const run =
-          ctx?.run && ctx.run.runId === values.run
-            ? ctx.run
-            : await Run.open({
-                runId: values.run,
-                repoRoot: cwd,
-                executor,
-              });
+        const run = await resolveTargetRun(values, undefined, ctx, cwd, executor);
 
         const submitResult = await run.submitResult(values.task, {
           outcome: values.outcome,
@@ -521,19 +620,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
           return 0;
         }
 
-        let targetRunId = values.run || positionals[0];
-        if (!targetRunId) {
-          targetRunId = await resolveLatestRunId(cwd);
-        }
-
-        const run =
-          ctx?.run && ctx.run.runId === targetRunId
-            ? ctx.run
-            : await Run.open({
-                runId: targetRunId,
-                repoRoot: cwd,
-                executor,
-              });
+        const run = await resolveTargetRun(values, positionals, ctx, cwd, executor);
 
         const res = await run.stop(values.reason);
         stdout(JSON.stringify(res, null, 2));
@@ -556,19 +643,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
           return 0;
         }
 
-        let targetRunId = values.run || positionals[0];
-        if (!targetRunId) {
-          targetRunId = await resolveLatestRunId(cwd);
-        }
-
-        const run =
-          ctx?.run && ctx.run.runId === targetRunId
-            ? ctx.run
-            : await Run.open({
-                runId: targetRunId,
-                repoRoot: cwd,
-                executor,
-              });
+        const run = await resolveTargetRun(values, positionals, ctx, cwd, executor);
 
         const obs = await run.observe();
         stdout(
@@ -606,11 +681,6 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
           return 0;
         }
 
-        let targetRunId = values.run || positionals[0];
-        if (!targetRunId) {
-          targetRunId = await resolveLatestRunId(cwd);
-        }
-
         let evidence: string[] = [];
         if (values.evidence) {
           try {
@@ -620,14 +690,7 @@ export async function runCli(argv: string[], ctx?: CliContext): Promise<number> 
           }
         }
 
-        const run =
-          ctx?.run && ctx.run.runId === targetRunId
-            ? ctx.run
-            : await Run.open({
-                runId: targetRunId,
-                repoRoot: cwd,
-                executor,
-              });
+        const run = await resolveTargetRun(values, positionals, ctx, cwd, executor);
 
         const res = await run.finish({
           conclusion: values.conclusion ?? 'Run finished',

@@ -664,6 +664,23 @@ describe('Run Lifecycle: Stop & Safe Teardown (#31)', () => {
       expect(obs.result?.outcome).toBe('completed'); // Business conclusion
       expect(obs.snapshot.status).toBe('completed'); // Overall status
       expect(finishResult.worktreeRetired).toBe(true); // Resource release
+
+      // Reopening a completed run does not recreate the deleted git worktree
+      const reopenedRun = await Run.open({
+        runId: 'run-finish-clean-test',
+        repoRoot: repoDir,
+        worktreeRoot: repoDir,
+        storageRoot,
+        executor,
+      });
+      const reopenedWorktreeExists = await fs
+        .access(reopenedRun.worktreePath)
+        .then(() => true)
+        .catch(() => false);
+      expect(reopenedWorktreeExists).toBe(false);
+
+      const reopenedObs = await reopenedRun.observe();
+      expect(reopenedObs.status).toBe('completed');
     });
   });
 });
