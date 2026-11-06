@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import type {
   ExecutionHandle,
   RoleDefinitions,
+  RunContext,
   RunEvent,
   RunStatus,
   TaskResult,
@@ -26,7 +27,7 @@ export interface TaskRecord {
   /** Task type identifier. */
   taskType: string;
   /** Internal task status. */
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'uncertain';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'uncertain' | 'stopped';
   /** Provider execution handle if launched. */
   handle?: ExecutionHandle;
   /** Generated prompt. */
@@ -55,6 +56,7 @@ export type RunOperation =
         runId: string;
         repository?: string;
         issue?: number;
+        goal?: string;
         worktreePath?: string;
         provider?: string;
       };
@@ -72,7 +74,7 @@ export type RunOperation =
   | { type: 'task_launch_failed'; taskId: string; error: string }
   | { type: 'result_submitted'; taskId: string; result: TaskResult }
   | { type: 'task_terminated'; taskId: string; handle: ExecutionHandle; stopped: boolean }
-  | { type: 'stop_requested'; reason?: string }
+  | { type: 'stop_requested'; reason?: string; uncertain?: boolean }
   | { type: 'run_finished'; conclusion: string; evidence: string[] };
 
 /**
@@ -87,6 +89,8 @@ export interface RunSnapshot {
   repository?: string;
   /** Target issue number. */
   issue?: number;
+  /** Target goal or objective. */
+  goal?: string;
   /** Dedicated worktree path. */
   worktreePath?: string;
   /** Designated provider identifier. */
@@ -136,6 +140,13 @@ function runPolicy(snapshot: RunSnapshot | null, operation: RunOperation): void 
   }
 
   if (snapshot.status === 'completed') {
+    if (
+      operation.type === 'run_finished' &&
+      snapshot.finishConclusion === operation.conclusion &&
+      JSON.stringify(snapshot.finishEvidence ?? []) === JSON.stringify(operation.evidence ?? [])
+    ) {
+      return;
+    }
     throw new Error(
       `Cannot apply operation "${operation.type}": Run "${snapshot.runId}" is already completed.`,
     );
@@ -209,11 +220,30 @@ function runPolicy(snapshot: RunSnapshot | null, operation: RunOperation): void 
   }
 
   if (operation.type === 'run_finished') {
+    if (snapshot.status === 'uncertain') {
+      throw new Error(
+        `Cannot finish Run: Run "${snapshot.runId}" is in uncertain state. Resolve uncertain tasks before finishing.`,
+      );
+    }
+
     if (snapshot.activeTaskId) {
       const active = snapshot.tasks.get(snapshot.activeTaskId);
       if (active && (active.status === 'running' || active.status === 'pending')) {
         throw new Error(
           `Cannot finish Run: Task "${snapshot.activeTaskId}" is still active.`,
+        );
+      }
+    }
+
+    for (const [taskId, task] of snapshot.tasks) {
+      if (task.status === 'running' || task.status === 'pending') {
+        throw new Error(
+          `Cannot finish Run: Task "${taskId}" is still active.`,
+        );
+      }
+      if (task.status === 'uncertain') {
+        throw new Error(
+          `Cannot finish Run: Task "${taskId}" has unconfirmed or uncertain status.`,
         );
       }
     }
@@ -236,18 +266,31 @@ function runView(events: RunEvent[]): RunSnapshot {
   for (const event of events) {
     switch (event.type) {
       case 'run_created': {
-        const payload = event.payload as {
+        const rawPayload = event.payload as {
+          context?: {
+            run_id?: string;
+            runId?: string;
+            repository?: string;
+            issue?: number;
+            goal?: string;
+            worktree_path?: string;
+            worktreePath?: string;
+            provider?: string;
+          };
           run_id?: string;
           runId?: string;
           repository?: string;
           issue?: number;
+          goal?: string;
           worktree_path?: string;
           worktreePath?: string;
           provider?: string;
         };
+        const payload = rawPayload.context ?? rawPayload;
         snapshot.runId = event.run_id || payload.run_id || payload.runId || '';
         snapshot.repository = payload.repository;
         snapshot.issue = payload.issue;
+        snapshot.goal = payload.goal;
         snapshot.worktreePath = payload.worktree_path || payload.worktreePath;
         snapshot.provider = payload.provider;
         snapshot.createdAt = event.timestamp;
@@ -333,17 +376,28 @@ function runView(events: RunEvent[]): RunSnapshot {
       case 'task_terminated': {
         const p = event.payload as {
           taskId: string;
+          stopped?: boolean;
         };
         const task = snapshot.tasks.get(p.taskId);
-        if (task && task.status === 'running') {
-          task.status = 'uncertain';
+        if (task) {
+          if (p.stopped === false) {
+            task.status = 'uncertain';
+          } else {
+            task.status = 'stopped';
+          }
+        }
+        if (snapshot.activeTaskId === p.taskId) {
+          snapshot.activeTaskId = undefined;
         }
         snapshot.activeHandle = undefined;
         break;
       }
       case 'stop_requested': {
-        snapshot.status = 'paused';
-        snapshot.stopReason = (event.payload as { reason?: string }).reason;
+        const p = event.payload as { reason?: string; uncertain?: boolean };
+        snapshot.status = p.uncertain ? 'uncertain' : 'paused';
+        snapshot.stopReason = p.reason;
+        snapshot.activeTaskId = undefined;
+        snapshot.activeHandle = undefined;
         break;
       }
       case 'run_finished': {
@@ -438,7 +492,8 @@ export class RunState {
         config: {} as unknown as WorkflowConfig,
         workflow: {} as unknown as WorkflowDefinition,
         roles: {} as unknown as RoleDefinitions,
-      });
+        ...operation.context,
+      } as unknown as RunContext);
       events = [newEvent];
     } else {
       await this.files.record(runId, newEvent);

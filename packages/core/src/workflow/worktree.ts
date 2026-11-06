@@ -83,27 +83,28 @@ export class Worktree {
       repository?: string;
     },
   ): Promise<WorktreeInfo> {
-    if (options?.worktreePath) {
-      const absPath = path.resolve(options.worktreePath);
-      const existingOwner = await readWorktreeOwner(absPath);
-      if (existingOwner) {
-        if (existingOwner.version !== '1.0') {
-          throw new WorkflowOwnershipError(
-            `Unsupported owner marker version "${existingOwner.version}". Version "1.0" is strictly required.`,
-          );
-        }
-        if (existingOwner.run_id !== runId) {
-          throw new WorkflowOwnershipError(
-            `Worktree at "${absPath}" is owned by Run "${existingOwner.run_id}", not "${runId}".`,
-          );
-        }
-        return {
-          worktreePath: absPath,
-          branch: options.branchName ?? `codex/${runId}`,
-          runId,
-          repository: existingOwner.repository,
-        };
+    const candidatePath = path.resolve(
+      options?.worktreePath ??
+        path.join(options?.worktreeRoot ?? path.join(this.repoRoot, '.worktrees'), runId),
+    );
+    const existingOwner = await readWorktreeOwner(candidatePath);
+    if (existingOwner) {
+      if (existingOwner.version !== '1.0') {
+        throw new WorkflowOwnershipError(
+          `Unsupported owner marker version "${existingOwner.version}". Version "1.0" is strictly required.`,
+        );
       }
+      if (existingOwner.run_id !== runId) {
+        throw new WorkflowOwnershipError(
+          `Worktree at "${candidatePath}" is owned by Run "${existingOwner.run_id}", not "${runId}".`,
+        );
+      }
+      return {
+        worktreePath: candidatePath,
+        branch: options?.branchName ?? `codex/${runId}`,
+        runId,
+        repository: existingOwner.repository,
+      };
     }
 
     const created = await createGitWorktree(runId, {
