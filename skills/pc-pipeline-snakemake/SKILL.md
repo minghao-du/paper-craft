@@ -41,6 +41,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 │   │   └── parse_output.py
 │   └── report/                  # HTML report captions and markdown descriptions
 ├── tests/                       # Unit tests and fixtures (tracked in Git)
+│   ├── AGENTS.md                # Test authoring guidance and runtime budget constraints
 │   └── data/
 │       └── smoke/               # Small raw inputs for the production workflow
 ├── data/                        # Raw, immutable input data (production; read-only; never written to by rules)
@@ -149,6 +150,7 @@ When generating a new Snakemake workflow or expanding an existing one:
    - Read [rule.smk](templates/rule.smk) as a syntax reference for both `conda:` binary rules and `uv run` Python rules.
    - Read [script.py](templates/script.py) as a syntax reference for isolated Python scripts with PEP 723 inline dependency metadata.
    - Read [workflow-agents.md](templates/workflow-agents.md) to establish `workflow/AGENTS.md` restricting SLURM execution to the native scheduler.
+   - Read [tests-agents.md](templates/tests-agents.md) to establish `tests/AGENTS.md` enforcing test budget and authoring standards.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
    - Author domain logic in `workflow/rules/*.smk` using the **Stage Output Organization** and **Research State** conventions above.
    - For cluster execution, apply **Independent Cluster Jobs**: declare per-rule `threads:` and `resources:`, configure native Slurm execution via `config/profiles/slurm/config.yaml`, and never author step-level `.sbatch` scripts or monolithic wrappers.
