@@ -56,14 +56,29 @@ Accept delivery only for `landed` with verified merge evidence.
 
 ## Stage 4 — Pipeline Reorganization (`pc-pipeline-refactor`)
 
-- **Role**: `pc-pipeline-refactor`
-- **Objective**: Organize touched pipeline files under scientific invariance.
-- **Inputs**: Touched pipeline scope and scientific-invariance constraints. Prepare and record fresh branch/worktree from integrated base before changes, preserving merged delivery environment as history.
-- **Expected Result**: Native `result.outcome` (`completed`, `no_change`, or `out_of_scope`) and whether files changed. Receipt records changed files, verification, current worktree state, and remaining consistency work.
-- **Routing**:
-  - `completed` with changes: Transition to Stage 5 after required checks.
-  - `no_change` with verification evidence: Transition to Stage 6.
-  - `out_of_scope`: Route to Replanning for Scope Boundaries below. Require rationale, affected objectives, and partial-change state in receipt.
+Organize touched pipeline files under scientific invariance with a human steering gate on proposed structural changes.
+
+1. **Refactoring Audit & Plan (`pc-pipeline-refactor`)**:
+   - **Role**: `pc-pipeline-refactor`
+   - **Objective**: Audit touched pipeline scope and generate the migration ledger without modifying code or filesystem structures.
+   - **Inputs**: Touched pipeline scope, target pipeline path, and migration ledger template.
+   - **Expected Result**: Native `result.outcome` (`plan_ready`, `no_change`, or `out_of_scope`). For `plan_ready`, include `ledgerPath` and a concise summary of proposed path mappings and rewiring in `result`.
+   - **Routing**:
+     - `no_change` with verification evidence: Layout already conforms; transition to Stage 6.
+     - `plan_ready`: Present the refactoring plan (Migration Ledger summary and path) to the human user via Decision Board for confirmation before proceeding.
+       - If approved: Dispatch Step 2 (Execution) with the approved ledger receipt.
+       - If skipped/rejected: Skip pipeline reorganization and transition to Stage 6.
+       - If scope adjustments requested: Dispatch replan or adjust scope.
+     - `out_of_scope`: Route to Replanning for Scope Boundaries below. Require rationale, affected objectives, and partial-change state in receipt.
+
+2. **Refactoring Execution (`pc-pipeline-refactor`)**:
+   - **Role**: `pc-pipeline-refactor`
+   - **Objective**: Execute approved migration ledger atomically under scientific invariance.
+   - **Inputs**: Approved migration ledger receipt, target pipeline path, compute environment. Prepare and record fresh branch/worktree from integrated base before changes, preserving merged delivery environment as history.
+   - **Expected Result**: Native `result.outcome` (`completed`, `failed`, or `blocked`) and whether files changed. Receipt records changed files, verification evidence, current worktree state, and remaining consistency work.
+   - **Routing**:
+     - `completed` with changes: Transition to Stage 5 after required checks.
+     - `failed` or `blocked`: Present Decision Board.
 
 ---
 

@@ -21,6 +21,7 @@ For the supplied target and scope, apply these constraints.
 - **Out-of-scope guardrail:** If computational logic changes or scientific parameter alterations are required, do NOT alter them or expand the task. Report `out_of_scope` with the rationale.
 - **Professional conclusions:**
   - `completed`: Pipeline files reorganized and paths synced with verification evidence (`changedFiles`, `verificationEvidence`).
+  - `plan_ready`: Audit completed and migration ledger generated for caller/human review (`ledgerPath`, `proposedChanges`, `summary`). No files moved or modified.
   - `no_change`: Layout already conforms; no modifications necessary (`verificationEvidence`).
   - `out_of_scope`: Computational or scientific logic changes required. Identify affected objectives, rationale, changes already made, current consistency, and remaining recovery work.
   - `blocked`: Environment, dependency, or permissions barrier.
@@ -30,8 +31,9 @@ For the supplied target and scope, apply these constraints.
 Before beginning refactoring, ensure the following inputs are available:
 1. **Target pipeline & repository path:** Directory root of the target workflow (e.g. `workflow/`, `Snakefile`, `config/`).
 2. **Refactoring brief & scope:** Specific stages, rules, scripts, or structural debt targeted for migration.
-3. **Compute environment:** Local workstation environment and remote HPC connection details specified in `.paper-craft/compute.md` or configuration.
-4. **Migration ledger template:** Template located at [templates/migration-ledger.md](templates/migration-ledger.md).
+3. **Approved migration ledger (optional for execution pass):** Pre-approved migration ledger path or predecessor receipt when executing a previously confirmed plan.
+4. **Compute environment:** Local workstation environment and remote HPC connection details specified in `.paper-craft/compute.md` or configuration.
+5. **Migration ledger template:** Template located at [templates/migration-ledger.md](templates/migration-ledger.md).
 
 ## Core Principles
 
@@ -91,6 +93,8 @@ The ledger must specify:
 
 **Completion Criterion**:
 The migration ledger is reviewed and confirmed with the user or caller.
+When invoked in planning mode or as an audit step, record the migration ledger, return conclusion `plan_ready` with the ledger path and summary, and halt before any filesystem modification.
+When invoked with an approved ledger or when confirmed by the interactive caller, proceed to Phase 3.
 No file is moved, converted, or deleted until the ledger is settled.
 
 ---

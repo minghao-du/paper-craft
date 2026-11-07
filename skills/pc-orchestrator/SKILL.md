@@ -155,6 +155,7 @@ For each stage defined in the loaded workflow:
    - Match the returned native `result` against the stage's routing table.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
+   - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
    - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
    - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
 5. **Completion Gate**: Conclude the orchestration session only when the workflow's terminal gates are satisfied and recorded.
@@ -163,13 +164,14 @@ For each stage defined in the loaded workflow:
 
 ## Halt & Escalation Protocol
 
-Halt and present a Blocker Decision Board for execution status `blocked` or `failed`,
-a planning conclusion requiring human steering, a required additional attempt beyond its
-delivery/replanning allowance, or an unexpected fatal dispatch failure. A successful final
-allowed attempt proceeds through its normal acceptance gates. Valid professional conclusions
-route according to the loaded workflow definition. `out_of_scope` enters the workflow's replanning procedure.
+Halt and present a Decision Board for execution status `blocked` or `failed`,
+a workflow human-steering gate (such as refactoring plan approval), a planning conclusion
+requiring human steering, a required additional attempt beyond its delivery/replanning allowance,
+or an unexpected fatal dispatch failure. A successful final allowed attempt proceeds through its
+normal acceptance gates. Valid professional conclusions route according to the loaded workflow
+definition. `out_of_scope` enters the workflow's replanning procedure.
 
-### Blocker Decision Board Format
+### Decision Board Format
 When halting, the Orchestrator outputs a structured status board:
 
 ```markdown
@@ -178,13 +180,13 @@ When halting, the Orchestrator outputs a structured status board:
 - **Root Issue**: #<root_issue_id>
 - **Current Issue**: #<current_issue_id>
 - **Stage**: <stage_name> (Attempt <attempt>)
-- **Blocker Reason**: <Clear description of the obstacle or defect summary>
+- **Reason**: <Clear description of the obstacle, decision required, or plan for review>
 - **Completed Receipts**: `<receipt_root>`
 
 #### Options:
-1. **Retry with manual fix**: [Description of manual intervention]
-2. **Adjust requirements**: [Description of scope adjustment]
-3. **Abort workflow**: Terminate current issue run
+1. **[Option 1]**: [Description of option, e.g. Approve plan / Retry with manual fix]
+2. **[Option 2]**: [Description of option, e.g. Skip reorganization / Adjust requirements]
+3. **[Option 3]**: [Description of option, e.g. Abort workflow / Adjust scope]
 ```
 
 Wait for the human user's prompt instruction before proceeding.
