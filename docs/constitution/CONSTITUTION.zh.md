@@ -10,7 +10,7 @@ paper-craft 项目的开发原则。
 
 ## Skills 即产品
 
-Skills 是人类、agent 与 CLI 之间的主要接口。Skill 文档是权威依据——CLI 行为改变时，必须在同一 PR 中更新 skill 文档。Skill 行为必须与 `--help` 输出完全一致。新能力先以 skill 交付，再以 CLI 命令交付。
+Skills 是当前项目的核心产品，也是人类与 agent 之间唯一的执行接口。Skill 文档是权威依据——所有能力、契约与流程门禁均直接以 skill 形式定义和交付。现阶段不维护也不交付任何 CLI 层。
 
 ## 质量门禁优先于人工审查
 

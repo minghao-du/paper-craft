@@ -13,6 +13,5 @@ Before authoring, editing, or splitting any skill:
 ## Repository Rules
 
 - **Naming**: All skill directories and skill names must use the `pc-` prefix (e.g., `pc-research-state`).
-- **CLI Alignment**: When a change adds or alters a CLI command, run `./pc <cmd> --help` and ensure the corresponding skill documentation strictly matches the real flags and workflow.
 - **Standalone Invocability**: Skills must provide a clean manual entry point using normal task prompts, repository environment, and standard parameters. Scheduling protocols (task identities, permitted outcomes, and delivery expectations) are injected dynamically at dispatch time rather than hardcoded in the skill definition. Specialist skills have zero awareness of workflow or scheduling protocols.
 - **Lean by Default**: Follow the principles in `docs/constitution/CONSTITUTION.md`. Skills are the product; maintain downward pressure on context size. Prune no-ops, eliminate fuzzy completion criteria, and favor deleting over adding.

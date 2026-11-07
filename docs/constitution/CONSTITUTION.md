@@ -10,7 +10,7 @@ Automate execution up to the point where judgment is required. Autonomous worker
 
 ## Skills Are the Product
 
-Skills are the primary interface between humans, agents, and the CLI. Skill documentation is canonical—when CLI behavior changes, skill docs must be updated in the same PR. Skill behavior must strictly match `--help` output. Deliver new capabilities as skills first, then as CLI commands.
+Skills are the primary product and sole execution interface between humans and agents. Skill documentation is canonical—every capability, contract, and workflow gate is defined and delivered directly as a skill. We do not maintain or deliver a CLI layer at this stage.
 
 ## Quality Gates over Human Review
 

@@ -20,7 +20,6 @@
   },
   "include": [
     "scripts/**/*.ts",
-    "packages/**/*.ts",
     "tests/**/*.ts"
   ],
   "exclude": [

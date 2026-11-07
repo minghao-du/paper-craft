@@ -1,17 +1,14 @@
 {
   "name": "paper-craft",
   "version": "0.1.0",
-  "description": "Agent-first research workflow CLI",
+  "description": "Agent-first research skills suite",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
-  "bin": {
-    "pc": "./pc"
-  },
   "scripts": {
     "build": "tsc",
-    "lint": "eslint --no-error-on-unmatched-pattern \"scripts/**/*.ts\" \"packages/**/*.ts\" \"tests/**/*.ts\"",
+    "lint": "eslint --no-error-on-unmatched-pattern \"scripts/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
