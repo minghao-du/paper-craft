@@ -5,6 +5,7 @@ _ignore/
 /AGENTS.md
 .env
 reports/
+.vitest/
 
 site/
 /ISSUE-*.md

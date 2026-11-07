@@ -15,4 +15,7 @@ exclude:
   - "**/templates/**"
   - docs/prompts/**
   - docs/research/**
+  - PROJECT.md
+  - TEST_INFRA.md
+  - TEST_READY.md
 backlog: {}

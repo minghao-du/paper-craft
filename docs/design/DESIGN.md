@@ -13,14 +13,84 @@ Modules follow these principles:
 
 ## Skill and execution boundaries
 
-The agreed target architecture separates professional task knowledge from workflow policy. This section describes the refactoring target, not the current implementation.
+The architecture separates professional task knowledge from workflow policy.
 
-- **Skill**: teaches how to complete a coherent professional task. Specialist skills know neither workflows nor the orchestrator and require no CLI. Genuine dependencies on other skills are permitted; dispatch-specific modes and receipt commands are not. Audit all specialist skills for workflow awareness and mixed responsibilities; retain useful professional collaboration without introducing a separate skill for every operation.
+- **Skill**: teaches how to complete a coherent professional task. Specialist skills know neither workflows nor the orchestrator and require no dispatch CLI. Genuine dependencies on other skills are permitted; dispatch-specific modes and workflow routing logic are not. Specialist skills focus on professional collaboration without introducing a separate skill for every operation.
 - **Orchestrator**: owns ordering, executor selection, result associations, failure branches and overall completion. It understands failure reasons to choose subsequent work but does not manually copy findings or assemble input fields.
 
-Every dispatch starts a new agent conversation, including repeated roles and repair attempts. Context travels through explicit inputs rather than conversation reuse. Dispatch supplies a common report envelope containing `execution_status` (`succeeded`, `blocked`, or `failed`), task-specific `result`, absolute `receipt_path`, and a short `summary`. Professional agents own domain judgments. The Orchestrator owns routing and acceptance. A successfully executed review can conclude that changes are required, and a successful scope assessment can identify work outside its authorization. Detailed evidence stays in file receipts.
+Every dispatch starts a new agent conversation, including repeated roles and repair attempts. Context travels through explicit inputs rather than conversation reuse. Professional agents own domain judgments. The Orchestrator owns routing and acceptance. A successfully executed review can conclude that changes are required, and a successful scope assessment can identify work outside its authorization. Detailed evidence stays in file receipts.
 
-The skills implement report checks through agent instructions. Programmatic enforcement belongs to a future execution adapter. Operational limits, report repair, scope reassessment, and recovery procedures belong in the orchestrator skill.
+The skills enforce contracts through kernel scripts and agent instructions. Programmatic verification and state machine enforcement guard every dispatch and receipt. Operational limits, report repair, scope reassessment, and recovery procedures belong in the orchestrator skill.
+
+## Stage-provider decoupling
+
+Workflow stages decouple abstract logical tasks from concrete execution providers. The workflow state machine tracks task progress, state transitions, and receipt validation without hardcoding how a stage is executed. Each stage declares a polymorphic provider specification:
+
+```yaml
+provider:
+  type: "skill" | "script"
+  target: "<skill-name> | <script-path>"
+  args: []
+```
+
+Two provider types fulfill the contract:
+
+- **`skill` provider**: The Orchestrator dispatches an autonomous LLM Specialist Subagent via the platform adapter, loading `skills/<target>/SKILL.md` with a standardized slim prompt referencing the task input envelope.
+- **`script` provider**: The Orchestrator or headless runner executes a deterministic CLI kernel script (`target`) with `--input-envelope <path>`, capturing the compact execution report from standard output.
+
+Because both provider pathways consume the identical task input envelope and produce the identical receipt contract, substituting a `skill` provider with a `script` provider requires zero modifications to workflow stage logic, routing tables, or state persistence.
+
+## Task input envelope
+
+Context passing is fully structured and file-based. The Orchestrator never concatenates large, unstructured free-text prompts across stages. Before dispatching any provider, the Orchestrator materializes the complete execution context as an immutable JSON file at `<receipt_root>/<step_index>-input.json`.
+
+The Task Input Envelope adheres to a standardized 7-block schema (`schema_version: "1.0"`):
+
+```json
+{
+  "schema_version": "1.0",
+  "task": { "logical_stage": "...", "step_index": 0, "attempt": 1, "root_issue_id": "...", "current_issue_id": "..." },
+  "provider": { "type": "skill | script", "target": "...", "args": [] },
+  "environment": { "working_directory": "...", "repository": "...", "base_branch": "...", "branch": "...", "commit": "..." },
+  "inputs": { "objective": "...", "scope": "...", "acceptance_criteria": [], "predecessor_receipts": [], "parameters": {} },
+  "contract": { "receipt_path": "...", "receipt_template": "..." },
+  "budgets": { "delivery_attempts_used": 0, "delivery_attempts_max": 3, "replans_used": 0, "replans_max": 2 }
+}
+```
+
+This protocol establishes two operational invariants:
+
+- **Standardized slim prompt standard (~15 lines)**: When dispatching LLM subagents, the prompt contains only the assigned stage name, the absolute envelope path, directory binding instructions, and the compact JSON return requirement. Domain context, acceptance criteria, predecessor receipts, and budget limits are read directly from the envelope file, eliminating prompt drift.
+- **Atomic write and isolation**: Envelopes and state files are written atomically using temporary files, buffer flush, fsync, and atomic replace within `<receipt_root>`. `<receipt_root>` resides outside disposable git worktrees to prevent accidental deletion during branch switches or worktree pruning.
+
+## Skill kernel-wrapper pattern
+
+Skills bifurcate deterministic mechanical operations from cognitive heuristic reasoning through the Kernel-Wrapper Pattern:
+
+- **Deterministic kernel (`scripts/`)**: Repetitive, invariant, and programmatic logic—such as Git worktree preparation, repository cleanliness checks, receipt generation, and envelope serialization—is encapsulated as self-contained CLI scripts under `skills/<skill>/scripts/`. The kernel consumes `--input-envelope <path>`, executes deterministically, writes the Markdown receipt, and emits the compact JSON report to standard output.
+- **Cognitive wrapper (`SKILL.md`)**: The skill document serves as a lean cognitive interface for LLM subagents. It instructs the subagent to run the internal kernel script with `--input-envelope`, inspect stdout, and apply domain heuristics or fallback recovery procedures only when non-deterministic judgments or environmental obstacles arise.
+
+This pattern provides a single underlying implementation for both execution modes. LLM subagents achieve high leverage by delegating mechanical execution to internal scripts, while future automated runners can invoke the kernel scripts directly without rewriting core logic.
+
+## Unified receipt contract
+
+Every execution provider concludes by fulfilling the Unified Receipt Contract across two mandatory channels:
+
+```json
+{
+  "execution_status": "succeeded",
+  "result": { "outcome": "verified" },
+  "receipt_path": "/path/to/receipt.md",
+  "summary": "Execution completed successfully"
+}
+```
+
+The contract enforces dual reporting:
+
+- **Compact execution report (stdout)**: A machine-parseable JSON object emitted to standard output. `execution_status` is strictly constrained to `"succeeded"`, `"blocked"`, or `"failed"`. Valid professional conclusions (including rework findings or `out_of_scope`) report `"succeeded"`, reserving `"blocked"` for unmet prerequisites and `"failed"` for unrecoverable crashes. The `result` object contains domain-specific routing outcomes.
+- **Durable disk receipt (Markdown)**: A comprehensive Markdown audit record written to `contract.receipt_path` conforming to `subagent-receipt.template.md`. It records complete verification logs, git revisions, modified artifacts, and predecessor receipt links outside disposable checkouts.
+
+The Orchestrator validates all four report fields and verifies physical existence of the receipt file. Any protocol violation, unparseable output, or missing receipt triggers fail-fast halting to the Decision Board without speculative repair.
 
 ## Workspace ownership
 

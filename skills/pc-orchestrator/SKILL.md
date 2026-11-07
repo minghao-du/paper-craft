@@ -24,37 +24,43 @@ exclusively by dedicated Specialist Subagents.
 The Orchestrator's sole responsibilities are:
 1. Receiving the root Issue and goal from the user.
 2. Maintaining workflow runtime state directly by recording state snapshots to `<receipt_root>/state.json`.
-3. Assigning execution environments and dispatching workspace preparation, professional tasks, and cleanup through Specialist Subagents.
+3. Generating Task Input Envelopes (`<receipt_root>/<step>-input.json`) and dispatching execution environments, professional tasks, and cleanup through resolved Execution Providers (Specialist Subagents or direct Script Runners).
 4. Checking compact execution reports and consuming professional conclusions.
 5. Routing to the next stage or dispatching repair subagents.
 6. Halting and presenting a Blocker Decision Board when blocked, failed, or when retry budgets expire. Request a concise blocker or decision-options summary from a specialist when needed for the board.
 
 ---
 
-## Platform Dispatch Adapter
+## Platform Dispatch Adapter & Execution Providers
 
-Subagents are invoked through platform-specific dispatch primitives. The target platform can be
-provided by the user (defaults to `antigravity`).
+Workflow stages are executed through modular Execution Providers resolved at runtime. The Orchestrator
+decouples the abstract workflow task from how it is executed, supporting two provider types:
 
-### 1. Antigravity Adapter (Default)
-In Antigravity, dispatch subagents using `invoke_subagent`:
-```json
-{
-  "TypeName": "self",
-  "Role": "<Specialist Role Name>",
-  "Prompt": "<Assembled Subagent Prompt>"
-}
-```
+### 1. Execution Provider Resolution
+For every stage, the Orchestrator evaluates `stage.provider`:
+- **`skill` Provider** (`type: "skill"`): Dispatches an autonomous LLM Specialist Subagent via platform adapter (`invoke_subagent`), loading the designated skill (`target: "<skill-name>"`) with a standardized slim prompt pointing to the Task Input Envelope file.
+- **`script` Provider** (`type: "script"`): Directly invokes the deterministic kernel script (`target: "<path/to/script>"`) with CLI arguments (`--input-envelope <envelope-path> <args...>`), capturing the compact JSON execution report from stdout.
 
-### 2. Extensible Dispatch Signature
+### 2. Antigravity Adapter (Default)
+In Antigravity:
+- **Skill Dispatch**:
+  ```json
+  {
+    "TypeName": "self",
+    "Role": "<Specialist Role Name>",
+    "Prompt": "<Standardized Slim Prompt>"
+  }
+  ```
+- **Script Dispatch**:
+  Executed via command execution runner:
+  `<script_path> --input-envelope "<receipt_root>/<step_index>-input.json" [args...]`
+
+### 3. Extensible Dispatch Signature
 Any supporting platform must implement the abstract contract:
-`dispatch(role, skillPath, working_directory, promptInputs, receiptTemplatePath)` -> `{ execution_status, result, receipt_path, summary }`
+- `dispatch_skill(role, envelope_path)` -> `{ execution_status, result, receipt_path, summary }`
+- `dispatch_script(script_path, envelope_path, args)` -> `{ execution_status, result, receipt_path, summary }`
 
-Use a native working-directory field when supported. For prompt-only adapters such as the example
-above, inject explicit per-command directory binding as defined in [Workspace lifecycle and dispatch](references/workspaces.md).
-
-The dispatch boundary supplies the report contract below. In this skills-only implementation,
-agents check it through instructions. Programmatic validation belongs in a future execution adapter.
+Both provider pathways consume the identical Task Input Envelope file and return the identical compact report contract.
 
 ---
 
@@ -65,34 +71,56 @@ Every workflow maintains two issue identifiers:
 - `root_issue_id`: The originating parent Issue assigned to this Orchestrator workflow.
 - `current_issue_id`: The specific Issue currently in flight (equals `root_issue_id` for atomic issues; represents child sub-issue during decomposed execution).
 
-### Prompt Assembly Standard
+### Task Input Envelope Standard
 
-Every dispatch opens a fresh agent conversation, including repeated roles, rework,
-and replanning. Supply the following inputs.
+The Orchestrator **never concatenates massive free-text prompts**. Before dispatching any provider,
+the Orchestrator writes a structured JSON envelope to `<receipt_root>/<step_index>-input.json`
+using the bundled helper (`scripts/envelope.py create`).
 
-1. **Role and objective** — Target `current_issue_id`, authorized scope, acceptance criteria,
-   and the professional skill to load and follow.
-2. **Predecessor references** — Absolute receipt paths. Specialists read detailed environment,
-   evidence, and findings from these files directly.
-3. **Report contract** — Absolute template and assigned `receipt_path`, the execution-status
-   definitions below, and the task-specific routing fields required in `result`. Inject this
-   envelope at dispatch time. Professional skills own their domain outputs.
-4. **Execution environment** — Required absolute `working_directory`, accepted environment receipt,
-   repository, branch or detached HEAD, base branch, expected revision, fixed research entry, and
-   required artifact locations. Apply [Workspace lifecycle and dispatch](references/workspaces.md)
-   to every stage and nested dispatch.
-5. **Completion evidence** — What must be verified before the assigned task can be accepted.
-   Preserve available repository, worktree, branch, base branch, and implementation SHA in
-   successor receipts, updating the SHA after repairs.
+The Task Input Envelope schema contains 7 top-level sections:
+1. `schema_version`: Always `"1.0"`.
+2. `task`: `{ "logical_stage": string, "step_index": int, "attempt": int, "root_issue_id": string, "current_issue_id": string }`.
+3. `provider`: `{ "type": "skill" | "script", "target": string, "args": string[] }`.
+4. `environment`: `{ "working_directory": string, "repository": string, "base_branch": string, "branch": string | null, "commit": string | null }`.
+5. `inputs`: `{ "objective": string, "scope": string, "acceptance_criteria": string[], "predecessor_receipts": string[], "parameters": object }`.
+6. `contract`: `{ "receipt_path": string, "receipt_template": string }`.
+7. `budgets`: `{ "delivery_attempts_used": int, "delivery_attempts_max": int, "replans_used": int, "replans_max": int }`.
 
 Resolve `receipt_root` once from the initial absolute checkout supplied in the task environment,
 defaulting to `<initial-checkout>-worktrees/.paper-craft/receipts/issue-<root_issue_id>/`.
 An explicit root takes precedence. Keep it fixed across worktrees, stages, and retries.
-Use filenames `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md`.
+Use filenames:
+- Task Input Envelope: `<receipt_root>/<step_index>-input.json`
+- Durable Markdown Receipt: `<receipt_root>/<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md`
 Assign a unique, increasing `step_index` to each invocation and retain it on recovery.
 Use the receipt basename as `dispatch_id`. Rework tasks also identify `original_dispatch_id`.
-The assigned absolute path separately authorizes the report write. Specialists create parent
-directories as needed. Receipts remain outside source checkouts and source commits.
+The assigned absolute path authorizes the report write. Providers create parent directories as needed.
+Envelopes and receipts remain outside source checkouts and source commits.
+
+### Standardized Slim Prompt Standard (~15 lines)
+
+When dispatching a `skill` provider, the Orchestrator sends a concise, standardized prompt (~15 lines).
+The subagent reads its full task context directly from `<step_index>-input.json`, eliminating prompt drift:
+
+```markdown
+You are the specialist agent executing stage: `<logical_stage>`.
+Task Input Envelope: `<receipt_root>/<step_index>-input.json`
+
+Instructions:
+1. Read the Task Input Envelope at the path above to obtain your full task context, inputs, predecessor receipts, environment, and contract requirements.
+2. Bind your execution to `environment.working_directory` and follow the specialized instructions in `skills/<skill_name>/SKILL.md`.
+3. Complete the assigned objective adhering to `inputs.acceptance_criteria`.
+4. Write your full durable Markdown receipt to `contract.receipt_path` matching `contract.receipt_template`.
+5. Return ONLY the standard compact JSON execution report:
+```json
+{
+  "execution_status": "succeeded" | "blocked" | "failed",
+  "result": { "outcome": "<domain_outcome>", ... },
+  "receipt_path": "<assigned_receipt_path>",
+  "summary": "<one_sentence_summary>"
+}
+```
+```
 
 ### Execution Report Contract
 
@@ -150,17 +178,23 @@ are fully decoupled into modular workflow files.
 
 ### 2. Execution Loop
 For each stage defined in the loaded workflow:
-1. **Identify Stage Contract & Prepare Environment**: Read the stage's role, inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules. Apply [Workspace lifecycle and dispatch](references/workspaces.md), accepting preparation before professional execution.
-2. **Record State & Dispatch Specialist**: Update `<receipt_root>/state.json` with the current stage, attempt count, and target receipt path. Assemble the task prompt according to [Prompt Assembly Standard](#prompt-assembly-standard), then dispatch a fresh specialist subagent using the platform adapter.
-3. **Verify Report & Receipt**: Check the compact report and receipt integrity according to [Report Checks and Protocol Integrity](#report-checks-and-protocol-integrity). If malformed, missing, or contradictory, halt to the Decision Board.
-4. **Evaluate Routing**:
+1. **Identify Stage Contract & Resolve Provider**: Read the stage's `logical_stage`, `provider` (`type`, `target`, `args`), inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules.
+2. **Prepare Environment**: Apply [Workspace lifecycle and dispatch](references/workspaces.md), verifying or creating the assigned workspace before professional execution.
+3. **Generate Task Input Envelope & Update State**:
+   - Update `<receipt_root>/state.json` with current stage, attempt, and target receipt path.
+   - Generate and validate `<receipt_root>/<step_index>-input.json` using `scripts/envelope.py create` (or `--from-state <receipt_root>/state.json`).
+4. **Dispatch via Resolved Provider**:
+   - **If `provider.type == "skill"`**: Dispatch fresh specialist subagent using platform adapter with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
+   - **If `provider.type == "script"`**: Execute `<provider.target> --input-envelope "<receipt_root>/<step_index>-input.json" <provider.args>` and capture the compact report from stdout.
+5. **Verify Report & Receipt**: Check compact report and receipt integrity according to [Report Checks and Protocol Integrity](#report-checks-and-protocol-integrity). If malformed, missing, or contradictory, halt to the Decision Board.
+6. **Evaluate Routing**:
    - Match the returned native `result` against the stage's routing table.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
    - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
    - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
-5. **Completion Gate**: After the workflow's required professional gates succeed, dispatch workspace cleanup and record removed or retained paths with reasons. Conclude only when terminal gates and cleanup results are recorded.
+7. **Completion Gate**: After the workflow's required professional gates succeed, dispatch workspace cleanup and record removed or retained paths with reasons. Conclude only when terminal gates and cleanup results are recorded.
 
 ---
 
@@ -226,6 +260,10 @@ Wait for the human user's prompt instruction before proceeding.
   - Transition: `python3 <skill-dir>/scripts/state_machine.py transition --receipt-root "<receipt_root>" --stage <stage> --status <status> [--outcome <outcome>] [--receipt "<receipt_path>"] [--incr-budget delivery_attempts_used] [--set <key=val>]`
   - Inspect / Resume: `python3 <skill-dir>/scripts/state_machine.py show --receipt-root "<receipt_root>" [--json]`
   - Check Budget: `python3 <skill-dir>/scripts/state_machine.py check-budget --receipt-root "<receipt_root>" --type <delivery|replan> --limit <max>`
+- **Task Input Envelope Engine (`scripts/envelope.py`)** — The Orchestrator generates and validates structured task envelopes:
+  - Generate from State: `python3 <skill-dir>/scripts/envelope.py create --from-state "<receipt_root>/state.json" --output "<receipt_root>/<step>-input.json" --step <step> --provider-type <skill|script> --provider-target <target> --objective "<objective>" --receipt-path "<receipt_path>"`
+  - Validate: `python3 <skill-dir>/scripts/envelope.py validate "<receipt_root>/<step>-input.json"`
+  - Inspect: `python3 <skill-dir>/scripts/envelope.py show "<receipt_root>/<step>-input.json" [--json]`
 - **Durable File Receipts** — Specialist agents write their evidence, logs, and verification outputs to their assigned `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md` file using [the receipt template](templates/subagent-receipt.template.md). Receipts remain outside source checkouts.
 - **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator reads `<receipt_root>/state.json` directly:
   1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using the recorded receipt references, workspace assignments, and consumed budgets. If an older snapshot lacks workspace assignments, have `pc-workspace` validate the environment in the last accepted receipt before professional work. Preserve uncertain ownership as reused for automatic cleanup.

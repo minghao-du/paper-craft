@@ -5,8 +5,20 @@
   en: 7ac577d46746b118
   zh: a931b86c8e8dc48a
 /paper-craft-design-decisions/skill-and-execution-boundaries:
-  en: d3c0dd1cf682e1ea
-  zh: b251b50999dc2a0f
+  en: dd8ef6258b813914
+  zh: ffebd59230e9ef9b
+/paper-craft-design-decisions/stage-provider-decoupling:
+  en: dd87da43cccdb017
+  zh: fd7ea8616cb29f6a
+/paper-craft-design-decisions/task-input-envelope:
+  en: 4bef6dc3135f883b
+  zh: b62f0dc4a8f5b112
+/paper-craft-design-decisions/skill-kernel-wrapper-pattern:
+  en: bbec6b66430f42f0
+  zh: c8ee3b3608a22b04
+/paper-craft-design-decisions/unified-receipt-contract:
+  en: 9f099fe5722c66ee
+  zh: cf4624e0c635dec8
 /paper-craft-design-decisions/workspace-ownership:
   en: e1a2382ad5e44abc
   zh: 962bbd979ff5b8d7

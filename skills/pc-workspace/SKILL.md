@@ -7,70 +7,142 @@ allowed-tools: Bash, Read, Write, Glob, Grep
 # /pc-workspace
 
 Manage Git working directories for implementation, review, integrated verification, and manual use.
-Prepared means that Git identity, path, branch, revision, and required cleanliness are verified.
-Project dependency installation, compute connections, and data checks belong to the consuming task.
+`pc-workspace` follows the **Kernel-Wrapper Pattern**: deterministic workspace operations are implemented in the internal kernel script `scripts/prepare-worktree.py`, while this document serves as the cognitive wrapper guiding subagents through envelope execution, fallback recovery, and cleanup.
 
-## Inputs
+Prepared means that Git repository identity, absolute path, branch, revision, and required cleanliness are verified. Project dependency installation, compute connections, and data checks belong to the consuming task.
 
-- Operation and absolute source checkout, with the expected repository identity.
-- For a feature worktree, issue number or explicit branch, base branch, and destination.
-- For integrated verification, base branch, destination, and optional full integrated commit SHA.
-- For reuse, assigned path, branch or detached revision, and expected HEAD when known.
-- For cleanup, exact candidate paths, creation ownership, completion/merge evidence, active users,
-  and locations of records and artifacts to retain.
+---
 
-Use ordinary task prompts for manual invocation. Resolve defaults from the source repository.
-Read [the environment contract](references/environment.md) before validating or returning an environment.
+## 1. Kernel-Wrapper Execution Standard
 
-## Prepare or reuse
+Specialist subagents dispatched for workspace preparation should execute the deterministic kernel script driven by the Task Input Envelope file (`<receipt_root>/<step>-input.json`).
 
-The bundled helper requires Python 3, Git, authenticated GH CLI, and an `origin` remote.
-Run it through this skill's absolute installation path.
+### Standard Envelope Invocation
+Run the bundled helper with the assigned input envelope:
 
 ```bash
-python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --issue <number>
+python3 <skill-dir>/scripts/prepare-worktree.py --input-envelope "<envelope_path>"
 ```
 
-This preserves the existing `issue-<number>` branch and `<primary-checkout>-worktrees/issue-<number>`
-defaults. Explicit assignments take precedence. Existing registered worktrees are validated and reused.
-For a feature task without an issue, supply `--worktree`, `--branch`, and `--base`.
-For rework, add `--expected-head "<delivered-commit>"` to require the existing environment.
-For a new repair or refactor, choose a fresh path and branch from the current remote base.
+### Automated Kernel Actions
+When invoked with `--input-envelope`, the kernel script automatically:
+1. Loads and parses the input envelope (`schema_version: "1.0"`).
+2. Extracts source checkout (`environment.working_directory`), base branch (`environment.base_branch`), issue identity (`task.current_issue_id` or `task.root_issue_id`), branch (`environment.branch`), integrated revision (`environment.commit`), explicit worktree target (`inputs.parameters.worktree` if specified), and receipt path (`contract.receipt_path`).
+3. Validates source repository cleanliness, resolves default base branch from GitHub (`gh repo view`), and checks branch ref formats.
+4. Prepares or reuses the target worktree (creating `<primary>-worktrees/issue-<number>` or an explicit path, or checking out a detached revision for integrated verification).
+5. Writes the standard Markdown receipt file to `contract.receipt_path` adhering to the unified receipt contract.
+6. Emits the compact JSON report to stdout.
 
-For integrated verification, fetch the requested base, resolve its full commit SHA, and prepare
-an isolated detached checkout. Preserve an explicitly requested SHA instead of advancing it.
+The subagent captures stdout and returns the compact JSON report to the Orchestrator without further manual Git commands.
+
+---
+
+## 2. Compact Report & Receipt Contract
+
+### Compact Report (stdout)
+The kernel emits a machine-parseable JSON object:
+
+```json
+{
+  "execution_status": "succeeded",
+  "result": {
+    "repository": "owner/repo",
+    "working_directory": "/path/to/worktree",
+    "worktree": "/path/to/worktree",
+    "branch": "issue-12",
+    "baseBranch": "main",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "created": true
+  },
+  "receipt_path": "/path/to/receipts/01-workspace-prepare-receipt.md",
+  "summary": "Prepared feature worktree for issue 12 at /path/to/worktree"
+}
+```
+
+- **`succeeded`**: Environment prepared or verified cleanly; receipt written.
+- **`blocked`**: Preconditions unmet (e.g. uncommitted dirty files in source or target, missing predecessor commit, conflicting active branch checkout).
+- **`failed`**: Unrecoverable Git or environment error (corrupted envelope, invalid repository remote).
+
+### Markdown Receipt (`contract.receipt_path`)
+The receipt file written by the kernel contains:
+- Metadata header: `root_issue_id`, `current_issue_id`, `task_type: workspace_prepare`, `execution_status`.
+- `## Compact Report`: JSON report block.
+- `## Artifacts`: `working_directory`, `repository`, `worktree`, `baseBranch`, `branch`, `commit`.
+- `## Verification`: Creation/reuse status, Git status checks, and repository identity verification.
+- `## Task Result`: Operational summary and worktree registration details.
+- `## Current State and Feedback`: Cleanliness confirmation and any non-fatal diagnostics.
+- `## Recovery and Budgets`: Origin stage and execution attempt details.
+
+---
+
+## 3. Direct / CLI Flag Invocation (Manual & Backward Compatibility)
+
+When invoked manually without an envelope, the kernel accepts explicit CLI arguments:
 
 ```bash
+# Feature worktree by issue number
+python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --issue <number> [--receipt-path "<path>"]
+
+# Feature worktree by explicit branch and destination
+python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --branch "<branch>" --worktree "<absolute-path>" [--base "<base>"]
+
+# Rework requiring verified predecessor HEAD
+python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --issue <number> --expected-head "<delivered-commit>"
+
+# Integrated verification (detached HEAD pinned to full commit SHA)
 git -C "<checkout>" fetch origin "+refs/heads/<base>:refs/remotes/origin/<base>"
-git -C "<checkout>" rev-parse "refs/remotes/origin/<base>"
-python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --base "<base>" --worktree "<absolute-path>" --commit "<full-sha>"
+python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --base "<base>" --worktree "<absolute-path>" --commit "<full-sha>" [--receipt-path "<path>"]
 ```
 
-An existing checkout may be assigned for planning or research records. Validate it in place.
-Record whether each path was created or reused, including partially prepared environments on failure.
-Preserve conflicts and report expected and observed state for resolution.
+When `--receipt-path` is provided, a Markdown receipt is generated and a standard compact report is emitted.
 
-Completion requires a verified environment with absolute `working_directory` equal to `worktree`,
-`repository`, `branch` (null for detached HEAD), `baseBranch`, and `commit`. Return creation ownership
-and any fixed research entry or artifact locations supplied by the caller. Preparation in this agent
-establishes the directory for subsequent assignment. Each consumer must bind its own execution to it.
+---
 
-## Cleanup
+## 4. Fallback Procedure for Constrained Environments
 
-Accept only explicitly assigned candidates. Automatic cleanup applies to directories created for
-completed work whose users have finished. Manual cleanup requires an explicit request for the path.
+If script execution is blocked by environment constraints (e.g., Python unavailable or restricted subshell permissions), the subagent must execute the manual fallback procedure while preserving contract compliance:
 
-1. Validate repository, registered path, branch, and recorded final HEAD. Retain missing or
-   conflicting environments with their observed state for resolution.
-2. Check tracked and untracked changes, plus ignored files with `git status --short --ignored`.
-   Identify research records, data, outputs, logs, and other material that must survive removal.
-   Confirm their durable destinations and update evidence paths through the appropriate writer.
-   Retain candidates containing unpreserved material or active users.
-3. Confirm feature work is delivered using merge evidence for the exact final commit. Squash merges
-   require the PR's merged state, delivered head, and merge commit rather than branch ancestry alone.
-   Detached verification environments require completed verification evidence.
-4. Run `git -C "<retained-checkout>" worktree remove "<candidate>"` from a surviving checkout.
-   Preserve directories Git refuses to remove and report the reason. Keep branch refs unless their
-   deletion was separately requested. Leave shared research homes, receipts, and external artifacts intact.
+1. **Validate Source**:
+   ```bash
+   git -C "<source-checkout>" status --porcelain --untracked-files=all
+   ```
+   Halt if uncommitted modifications exist.
+2. **Fetch Base Branch**:
+   ```bash
+   git -C "<source-checkout>" fetch origin "+refs/heads/<base>:refs/remotes/origin/<base>"
+   ```
+3. **Create or Validate Worktree**:
+   - *Feature worktree*:
+     ```bash
+     git -C "<source-checkout>" worktree add -b <branch> "<target-path>" "refs/remotes/origin/<base>"
+     ```
+   - *Detached verification worktree*:
+     ```bash
+     git -C "<source-checkout>" worktree add --detach "<target-path>" "<commit-sha>"
+     ```
+4. **Verify Target Cleanliness & Identity**:
+   ```bash
+   git -C "<target-path>" status --porcelain
+   git -C "<target-path>" rev-parse HEAD
+   ```
+5. **Write Markdown Receipt**:
+   Write the receipt to `contract.receipt_path` conforming to `templates/subagent-receipt.template.md`.
+6. **Return Compact JSON Report**:
+   Output the standard compact report `{ execution_status, result, receipt_path, summary }` to the caller.
+
+---
+
+## 5. Cleanup Protocol
+
+Accept only explicitly assigned candidate directories. Automatic cleanup applies to directories created for completed work whose consumers have finished.
+
+1. **Verify State**: Confirm registered path, branch, and recorded final HEAD. Retain missing or conflicting environments with observed state.
+2. **Inspect Material**: Check tracked/untracked/ignored changes with `git status --short --ignored`. Retain candidates containing unpreserved research records, data, logs, or active users.
+3. **Confirm Delivery**: Verify feature work is merged into base via PR merge commit evidence. Detached verification environments require completed verification evidence.
+4. **Remove Worktree**:
+   ```bash
+   git -C "<retained-checkout>" worktree remove "<candidate-path>"
+   ```
+   Preserve directories Git refuses to remove and report the reason. Keep branch refs unless deletion was explicitly requested.
 
 Return removed and retained paths with reasons. A retained directory is an explicit cleanup result.
