@@ -149,7 +149,7 @@ are fully decoupled into modular workflow files.
 ### 2. Execution Loop
 For each stage defined in the loaded workflow:
 1. **Identify Stage Contract**: Read the stage's target specialist role, required inputs, predecessor receipts, expected `result` schema, and routing rules.
-2. **Dispatch Specialist**: Assemble the task prompt according to [Prompt Assembly Standard](#prompt-assembly-standard) and dispatch a fresh specialist subagent using the platform adapter.
+2. **Dispatch Specialist**: Assemble the task prompt according to [Prompt Assembly Standard](#prompt-assembly-standard), complete the [pre-dispatch reservation](#state-persistence--session-recovery), then dispatch a fresh specialist subagent using the platform adapter.
 3. **Verify Report & Receipt**: Check the compact report and receipt integrity according to [Report Checks and Repair](#report-checks-and-repair). If malformed or missing, invoke the report-repair agent.
 4. **Evaluate Routing**:
    - Match the returned native `result` against the stage's routing table.
@@ -196,7 +196,7 @@ Wait for the human user's prompt instruction before proceeding.
 ## State Persistence & Session Recovery
 
 - **In-Memory Tracking** — Keep stage progression, issue/attempt identifiers, fixed `receipt_root`, compact reports, and separate delivery, report-repair, and replanning counters in context.
-- **Durable File Receipts** — Before a domain task, report repair, or replan, dispatch a recording-only specialist to reserve its identity and consumed budgets in a separate `-dispatch.md` file. Wait for confirmation before dispatching the task. State-maintenance calls use the compact report envelope and are exempt from reservation, ending this bookkeeping step. An unconfirmed reservation halts dispatch. Result receipts copy the reserved identity and budgets. The fixed folder is the recovery source.
+- **Durable File Receipts** — Before a domain task, report repair, or replan, assign an absolute reservation path and dispatch a recording-only specialist with [the dispatch template](templates/dispatch.template.md), the task's assigned receipt path, identity, and consumed budgets. Match its confirmation to the assigned reservation path, `dispatch_id`, and task receipt path before dispatching the task. State-maintenance calls use the compact report envelope and are exempt from reservation, ending this bookkeeping step. An unconfirmed reservation halts dispatch. Result receipts copy the reserved identity and budgets. The fixed folder is the recovery source.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.
 - **Resumption**: To resume an interrupted workflow, dispatch a specialist to inspect the fixed `receipt_root` and return a compact recovery report identifying accepted stages, relevant receipt paths, pending side effects, and consumed budgets. Resume from the next pending step. If the root is absent from session context, resolve it from the original checkout or user-supplied receipt location.
 
