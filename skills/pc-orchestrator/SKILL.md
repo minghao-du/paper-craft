@@ -89,7 +89,7 @@ The Orchestrator dispatches subagents across the 6 standard stages:
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 3. pc-issue-plan (Integrated Verification mode)                 │
+│ 3. pc-issue-verify (Integrated Acceptance Verification)         │
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -116,8 +116,8 @@ For each target issue in dependency order:
 2. **Landing & Merge (`pc-pr-land`)**: Dispatch subagent to create/update PR, trigger review, verify HEAD commit, and merge onto the base branch.
 3. **Rework Handling**: If `pc-pr-land` reports `rework_needed`, dispatch a fresh repair subagent to `pc-issue-work` supplying the review feedback and predecessor commit SHA. Re-evaluate with a fresh `pc-pr-land`. Repeat up to 3 attempts.
 
-### Stage 3: Integrated Acceptance Verification (`pc-issue-plan`)
-Dispatch subagent in verification mode (`pc-issue-verify`) with the parent objective, acceptance criteria, and aggregated delivery receipts. If acceptance gaps remain, dispatch targeted repair tasks back to Stage 2.
+### Stage 3: Integrated Acceptance Verification (`pc-issue-verify`)
+Dispatch verification subagent using `skills/pc-issue-verify/SKILL.md` with the parent objective, acceptance criteria, and aggregated delivery receipts. If acceptance gaps remain, dispatch targeted repair tasks back to Stage 2.
 
 ### Stage 4: Pipeline File Reorganization (`pc-pipeline-refactor`)
 Dispatch subagent to organize workflow files touched during delivery, strictly preserving scientific invariance. If computational logic changes are required, subagent reports `out_of_scope` and aborts refactoring.

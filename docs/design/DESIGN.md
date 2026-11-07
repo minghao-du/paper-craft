@@ -26,7 +26,7 @@ The default sequence belongs in the orchestrator skill as an editable reference,
 
 1. Invoke `pc-issue-plan` to determine whether subissues are needed and establish the plan.
 2. For each issue in dependency order, invoke `pc-issue-work` to implement and verify it, then `pc-pr-land` to create or update its PR, invoke `pc-pr-review`, and merge only after verification passes. Findings return to the orchestrator for a fresh repair dispatch.
-3. Invoke `pc-issue-plan` to verify the original objective against the combined delivery evidence. It reports gaps without scheduling repairs itself.
+3. Invoke `pc-issue-verify` to verify the original objective against the combined delivery evidence. It reports gaps without scheduling repairs itself.
 4. Invoke `pc-pipeline-refactor` to organize only the pipeline files involved in this work. Preserve scientific methods, results and conclusions; update affected path references and perform necessary structural and operability checks without rerunning unrelated computation. Report changes requiring computational logic changes as out of scope.
 5. If file organization produced changes, invoke a fresh `pc-pr-land` agent to deliver them. No additional scientific acceptance pass is required solely for file organization.
 6. Invoke `pc-research-state` to record final research state, artifact locations and reproduction entry points.

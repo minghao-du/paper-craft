@@ -2,7 +2,7 @@
 
 - root_issue_id: <root_issue_id>
 - current_issue_id: <current_issue_id>
-- task_type: <pc-issue-plan | pc-issue-work | pc-pr-land | pc-pipeline-refactor | pc-research-state>
+- task_type: <pc-issue-plan | pc-issue-verify | pc-issue-work | pc-pr-land | pc-pipeline-refactor | pc-research-state>
 - attempt: <1 | 2 | 3>
 - outcome: <completed | rework_needed | blocked | failed>
 
