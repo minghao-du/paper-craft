@@ -14,42 +14,19 @@ This skill can be invoked directly by a human or agent with an ordinary task pro
 Before starting work, ensure the following inputs are available:
 1. **Issue context:** Issue number, title, description, and comments from GitHub (`gh issue view <issue> --comments`).
 2. **Task brief & objectives:** The specific goals, scope, and instructions provided in the task prompt or assignment.
-3. **Environment & working directory:** Repository checkout and optional assigned worktree, feature branch, and base branch. When given a predecessor file, read its environment and verification evidence before starting. Pre-merge rework uses its worktree, branch, base branch, and commit. Post-merge repairs use a fresh assigned worktree and branch from the current base branch. The predecessor provides historical evidence and findings.
+3. **Environment & working directory:** Prepared absolute working directory, repository identity, feature branch, and base branch. When given a predecessor file, read its environment and verification evidence before starting. Pre-merge rework uses its worktree, branch, base branch, and commit. Post-merge repairs use a fresh assigned worktree and branch from the current base branch. The predecessor provides historical evidence and findings.
 4. **Prerequisites & dependencies:** Required external files, weights, datasets, environment variables, or upstream build artifacts.
 5. **Rework context (conditional):** If addressing review findings or repair feedback, inspect predecessor findings, previous HEAD SHA, and original constraints.
 
 ## Implementation Method
 
-### Step 0: Prepare the issue worktree
+### Step 0: Validate the assigned environment
 
-Before editing source files, run the bundled helper using the skill's absolute installation path. It requires Python 3, Git, authenticated GH CLI, and an `origin` remote for the target GitHub repository.
-
-```bash
-python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --issue <number>
-```
-
-The helper queries GitHub repository metadata and creates a local branch `issue-<number>` from the latest remote default branch in `<primary-checkout>-worktrees/issue-<number>`. It prints JSON containing `repository`, `worktree`, `branch`, `baseBranch`, and `commit`. New branches stay local until PR delivery.
-
-- For an assigned environment, supply `--worktree "<absolute-path>" --branch "<branch>" --base "<baseBranch>"`. For rework, also supply `--expected-head "<predecessor-commit>"` to require the existing environment and exact predecessor HEAD.
-- For post-merge repairs, use the fresh assigned `--worktree`, `--branch`, and `--base`. Omit the merged predecessor's `--expected-head` when creating the new environment.
-- Existing registered issue worktrees are validated and reused. Occupied paths, uncommitted changes, base-branch targets, conflicting branches, and missing rework environments stop preparation with an actionable error. Preserve the reported state for resolution.
-- Enter the returned absolute `worktree` for source edits, tests, and commits. A separately assigned result or receipt file may be written at its explicit absolute path.
-- Retain the worktree after completion for review and rework. The helper leaves the original checkout's branch and files in place.
-
-The underlying local creation commands are shown below. Use the helper for the validation and reuse rules.
-
-```bash
-git fetch origin "+refs/heads/<base>:refs/remotes/origin/<base>"
-git worktree add --no-track -b "issue-<number>" "<absolute-worktree-path>" "refs/remotes/origin/<base>"
-```
-
-When the task explicitly calls for creating a linked branch on GitHub during setup, GH also supports the following command. It creates the remote branch before local checkout, so inspect both states after a partial failure.
-
-```bash
-gh issue develop <number> --repo "<owner/repo>" --name "<branch>" --base "<base>" --checkout --worktree "<absolute-worktree-path>"
-```
-
-Completion requires a validated issue worktree, clean working tree, and recorded environment JSON.
+Follow [the environment contract](../pc-workspace/references/environment.md).
+Require a prepared feature worktree before implementation. For manual use, prepare it first with
+[pc-workspace](../pc-workspace/SKILL.md). Validate the assigned repository, branch, expected HEAD,
+and clean working tree. Preserve conflicts and return expected and observed values to the caller.
+Keep the worktree for review and rework, and record the validated environment before editing.
 
 ### Step 1: Input and prerequisite verification
 
@@ -77,7 +54,7 @@ Prerequisite input verification is blocked; the task cannot proceed:
 
 ### Step 2: Implementation via TDD red-green loop
 
-- Work inside the validated issue worktree from Step 0.
+- Work inside the validated assigned worktree from Step 0.
 - Follow the TDD red-green loop:
   1. Write failing tests first at public seams.
   2. Implement minimal code to pass the tests.
@@ -101,7 +78,7 @@ Apply adaptive checks to local and remote computation, training, experiments, an
 
 After implementation and verification finish, complete self-review before the final commit and delivery.
 
-1. Fix the review scope to the issue's full changes from the merge-base with `origin/<baseBranch>`, including committed, staged, unstaged, and new issue files. Give each reviewer the same absolute worktree, base SHA, current HEAD, changed-file list, issue requirements, and verification evidence. Keep the reviewed files unchanged while reviewers run.
+1. Fix the review scope to the issue's full changes from the merge-base with `origin/<baseBranch>`, including committed, staged, unstaged, and new issue files. Give each reviewer the same absolute working directory, repository, branch, base SHA, current HEAD, changed-file list, issue requirements, and verification evidence. Bind its execution to that directory under the environment contract. Keep the reviewed files unchanged while reviewers run.
 2. Launch separate read-only subagents in parallel, each instructed to read and follow its assigned skill at the resolved absolute path. Resolve the following paths relative to this skill's installation directory.
    - One follows [pc-review-clean-code](../pc-review-clean-code/SKILL.md).
    - One follows [pc-review-code-reuse](../pc-review-code-reuse/SKILL.md).
@@ -140,4 +117,4 @@ A task is complete only when all criteria are met:
 1. **Git commits / Diff:** Clean, conventional commits on the feature branch, or git diff / commit SHA capturing verified changes.
 2. **Verification evidence:** Test execution outputs, benchmark metrics, or check results demonstrating passing quality gates. Include self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker.
 3. **Summary:** Concise report of implementation details and verification evidence.
-4. **Environment:** `repository` (`owner/repo`), absolute `worktree`, `branch`, `baseBranch`, and final verified `commit` SHA. Refresh `commit` after implementation so the next worker can validate the delivered HEAD. Include this context in any assigned result file, including blocked or rework results when available.
+4. **Environment:** `repository` (`owner/repo`), absolute `working_directory` / `worktree`, `branch`, `baseBranch`, and final verified `commit` SHA. Refresh `commit` after implementation so the next worker can validate the delivered HEAD. Include this context in any assigned result file, including blocked or rework results when available.

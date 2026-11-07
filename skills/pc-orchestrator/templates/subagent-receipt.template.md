@@ -28,16 +28,22 @@ execution too, preserving partial findings and an explicit reason when no conclu
 
 ## Artifacts
 
+- working_directory: <absolute_assigned_execution_directory>
 - repository: <owner/repo_or_N/A>
 - worktree: <absolute_worktree_path_or_N/A>
 - baseBranch: <base_branch_or_N/A>
-- branch: <branch_name_or_N/A>
+- branch: <branch_name_or_null_for_detached_HEAD>
 - commit: <implementation_sha_or_N/A>
+- environment_receipt: <absolute_preparation_receipt_path_or_N/A>
+- research_entry: <fixed_absolute_shared_entry_or_N/A>
+- artifact_locations: <absolute_local_or_host_qualified_paths_or_N/A>
 - pr: <pr_url_or_N/A>
 
 ## Verification
 
-<Commands, results, evaluated revision, and evidence required for acceptance and handoff.>
+<Entry environment validation, commands with their working directories, results, evaluated revision,
+and evidence required for acceptance and handoff. For workspace tasks, record created/reused ownership
+and cleanup removed/retained paths with reasons.>
 
 ## Task Result
 

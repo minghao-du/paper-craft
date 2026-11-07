@@ -4,6 +4,25 @@
 - **Initial Stage**: Stage 1
 - **Target**: Coordinate end-to-end issue delivery from planning through implementation, landing, verification, refactoring, and state recording.
 
+## Environment assignments
+
+Apply [workspace lifecycle and dispatch](../references/workspaces.md) before every task.
+
+| Task | Assigned environment |
+| --- | --- |
+| Planning and scope reassessment | Explicit existing repository checkout validated by `pc-workspace` |
+| Implementation | Prepared isolated feature worktree for the current issue |
+| Implementation self-review, landing, PR review, pre-merge repairs | Same feature worktree with latest delivered SHA and task-specific working-tree scope |
+| Integrated acceptance | Prepared detached worktree pinned to the integrated base commit |
+| Pipeline audit | Accepted integrated environment |
+| Pipeline execution | Fresh feature worktree from current integrated base |
+| Pipeline re-delivery and repairs | Same refactor worktree with latest delivered SHA |
+| Research records | Validated persistent checkout plus the fixed shared research entry |
+
+Carry explicit artifact locations into verification and research recording. After all professional
+stages succeed, dispatch cleanup for this run's eligible created environments and record retention
+reasons before declaring root completion.
+
 ---
 
 ## Stage 1 — Planning and Decomposition (`pc-issue-plan`)
@@ -25,7 +44,7 @@ Deliver the `current_issue_id` through an implementation and landing loop.
 
 1. **Implementation (`pc-issue-work`)**:
    - **Role**: `pc-issue-work`
-   - **Inputs**: Current issue ID, acceptance criteria, predecessor receipts.
+   - **Inputs**: Current issue ID, acceptance criteria, predecessor receipts, and accepted workspace preparation with an explicit execution directory.
    - **Expected Result**: Verified implementation `commit` and verification conclusion in `result`. Accept only with the required checks and recorded environment.
    - **Routing**: Pass implementation receipt to a fresh landing specialist.
 
@@ -46,11 +65,11 @@ Accept delivery only for `landed` with verified merge evidence.
 
 - **Role**: `pc-issue-verify`
 - **Objective**: Verify parent objective against the integrated HEAD across delivered work.
-- **Inputs**: Parent objective, acceptance criteria, delivery receipt paths. Verifier resolves integrated base-branch checkout and pins HEAD before checks, recording repository, checkout, and evaluated SHA in receipt. Feature-branch receipts serve as delivery evidence when verifying the integrated tree.
+- **Inputs**: Parent objective, acceptance criteria, delivery receipt paths. Dispatch `pc-workspace` to prepare the integrated base in an isolated detached worktree and pin its commit before dispatching the verifier. Supply that directory and expected SHA; the verifier validates and records them before checks. Feature-branch receipts serve as delivery evidence when verifying the integrated tree.
 - **Expected Result**: Native `result.outcome` and `evaluatedHead`.
 - **Routing**:
   - `verified`: Satisfies acceptance for that integrated HEAD; transition to Stage 4.
-  - `rework_needed`: Routes targeted repairs to Stage 2, followed by another integrated verification. For gaps discovered after merge, assign a fresh repair branch and worktree based on the current base branch, retaining the original issue and delivery-attempt count. Supply explicit environment assignments to the worker. Use the merged predecessor for findings and historical evidence. Create repair environment from current base branch. Keep issue delivery-attempt budget across repairs.
+  - `rework_needed`: Routes targeted repairs to Stage 2, followed by another integrated verification. For gaps discovered after merge, assign a fresh repair branch and worktree based on the current base branch, retaining the original issue and delivery-attempt count. Dispatch `pc-workspace` first, then supply the accepted environment assignment to the worker. Use the merged predecessor for findings and historical evidence. Create repair environment from current base branch. Keep issue delivery-attempt budget across repairs.
 
 ---
 
@@ -74,7 +93,7 @@ Organize touched pipeline files under scientific invariance with a human steerin
 2. **Refactoring Execution (`pc-pipeline-refactor`)**:
    - **Role**: `pc-pipeline-refactor`
    - **Objective**: Execute approved migration ledger atomically under scientific invariance.
-   - **Inputs**: Approved migration ledger receipt, target pipeline path, compute environment. Prepare and record fresh branch/worktree from integrated base before changes, preserving merged delivery environment as history.
+   - **Inputs**: Approved migration ledger receipt, target pipeline path, compute environment. Dispatch `pc-workspace` to prepare a fresh branch/worktree from the current integrated base before dispatching execution. Pass the accepted environment and approved ledger, preserving the merged delivery environment as history. Reconcile ledger source paths with the new checkout before changes.
    - **Expected Result**: Native `result.outcome` (`completed`, `failed`, or `blocked`) and whether files changed. Receipt records changed files, verification evidence, current worktree state, and remaining consistency work.
    - **Routing**:
      - `completed` with changes: Transition to Stage 5 after required checks.
@@ -98,10 +117,10 @@ Organize touched pipeline files under scientific invariance with a human steerin
 
 - **Role**: `pc-research-state`
 - **Objective**: Record final research state, artifact locations, and reproduction entry points.
-- **Inputs**: Completed delivery and verification receipts.
+- **Inputs**: Completed delivery and verification receipts, validated persistent checkout, fixed shared research entry, and durable artifact locations.
 - **Expected Result**: Updated record paths and pending decisions in `result`.
 - **Routing**:
-  - All gates satisfied: Declare root issue completion.
+  - All gates satisfied: Dispatch workspace cleanup, record removed and retained paths with reasons, then declare root issue completion.
   - Unresolved decisions affecting required acceptance: Return to planning or human steering.
 
 ---
@@ -110,7 +129,7 @@ Organize touched pipeline files under scientific invariance with a human steerin
 
 When any stage reports `out_of_scope`:
 
-1. Dispatch a fresh `pc-issue-plan` agent with a scope-reassessment brief, original acceptance criteria, current authorization, predecessor receipts, and current artifact state. Reassessment only; preserve existing issue-tracker state.
+1. Dispatch a fresh `pc-issue-plan` agent with a scope-reassessment brief, original acceptance criteria, current authorization, predecessor receipts, current artifact state, and a validated planning checkout with explicit directory binding. Reassessment only; preserve existing issue-tracker state.
 2. Route based on the planner's professional reassessment conclusion:
    | Planning conclusion | Orchestrator action |
    | --- | --- |

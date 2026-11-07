@@ -22,6 +22,22 @@ Every dispatch starts a new agent conversation, including repeated roles and rep
 
 The skills implement report checks through agent instructions. Programmatic enforcement belongs to a future execution adapter. Operational limits, report repair, scope reassessment, and recovery procedures belong in the orchestrator skill.
 
+## Workspace ownership
+
+The orchestrator assigns environments and decides preparation, reuse, and cleanup timing. A
+`pc-workspace` specialist prepares and validates Git checkouts before professional tasks start.
+Every dispatch, including nested agents, supplies an absolute working directory and relevant repository,
+branch, and revision. Platforms bind the launch directory where supported. Prompt-only adapters require
+explicit per-command directory binding and entry validation. Professional skills consume prepared
+workspaces and own their project dependency, compute, and data checks.
+
+Implementation, review, and pre-merge repairs share their feature worktree. Integrated acceptance uses
+an isolated checkout pinned to the integrated commit. Post-merge repairs and pipeline modifications
+use fresh feature worktrees. Research state has one fixed shared home, and retained artifacts have
+explicit durable locations. After successful completion, the workspace specialist cleans up eligible
+workspaces created for that run and records retained paths and reasons. Interrupted or failed work keeps
+its environments. Runtime state preserves assignments, preparation receipts, ownership, and cleanup results.
+
 ## Workflow decoupling
 
 Workflows are decoupled from both technical architecture and the core orchestrator engine. Specific execution sequences (such as issue delivery, hotfixes, or refactoring) live in dedicated workflow files under `skills/pc-orchestrator/workflows/`. The orchestrator core provides pure dispatch, receipt validation, and error recovery primitives without hardcoding any specific domain delivery stages.

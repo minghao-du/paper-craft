@@ -10,6 +10,12 @@ Authoritative instructions for evaluating GitHub issues: assessing whether an is
 
 This skill is invoked directly by a human or agent with a task prompt or issue reference.
 
+## Working directory
+
+Follow [the environment contract](../pc-workspace/references/environment.md) in the prepared
+working directory supplied by the caller. For manual use, select an existing checkout or prepare
+one with [pc-workspace](../pc-workspace/SKILL.md) before starting.
+
 ## Scientific Problem Context
 
 In paper-craft, the root issue is typically a concrete scientific question or computational research problem (e.g., hypothesis validation, algorithmic implementation, baseline reproduction, scientific pipeline construction, or benchmark evaluation).

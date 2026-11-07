@@ -10,7 +10,7 @@
     "build": "tsc",
     "lint": "eslint --no-error-on-unmatched-pattern \"scripts/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && python3 skills/pc-orchestrator/scripts/test_state_machine.py",
+    "test": "vitest run && python3 skills/pc-orchestrator/scripts/test_state_machine.py && python3 skills/pc-workspace/scripts/test_prepare_worktree.py",
     "test:watch": "vitest",
     "docs:i18n:list": "tsx scripts/docs/docs-i18n.ts list",
     "docs:i18n:check": "tsx scripts/docs/docs-i18n.ts check",

@@ -11,6 +11,12 @@ Refactor existing scientific computing workflows from ad-hoc, flat, or sequentia
 Synchronize all code, rules, configurations, and data assets across local workstations and remote HPC environments without interrupting reproducible execution or losing data.
 This skill can be invoked directly by a human or agent with a target path or task prompt.
 
+## Working directory
+
+Follow [the environment contract](../pc-workspace/references/environment.md) in the prepared
+working directory supplied by the caller. For manual use, select an existing checkout or prepare
+one with [pc-workspace](../pc-workspace/SKILL.md) before starting.
+
 ## Refactoring Scope & Scientific Invariance
 
 For the supplied target and scope, apply these constraints.
@@ -47,7 +53,7 @@ Before beginning refactoring, ensure the following inputs are available:
   Retire external `.sbatch` scripts, wrapper submission loops, and monolithic fat-node allocations into declarative rule resources and executor profiles.
 - **`dry-run`**: Dependency planning via `snakemake -n`, without executing analysis jobs.
   Building the DAG still takes time and queries the filesystem; select checks by the migration risks in Phase 5.
-- **`sanitize`**: Safe environment cleanup of merged Git worktrees, unpartitioned root logs, and obsolete intermediate artifacts.
+- **`sanitize`**: Cleanup of unpartitioned root logs and obsolete intermediate artifacts identified in the ledger.
 
 ---
 
@@ -70,7 +76,7 @@ Audit for common structural debt:
 3. **Asymmetric Output Layouts**: Detect mismatches between script submodules and result directories.
 4. **Data Hygiene Violations**: Check for unpartitioned datasets in `data/`, plural-versus-singular folder inconsistencies (e.g., `processed/embeddings/` vs `processed/embedding/`), or non-data scratch files in data directories.
 5. **Log Smells**: Locate unpartitioned log files lingering in repository roots or parent `logs/` folders without rule-level and wildcard-level partitioning.
-6. **Dangling Workspaces**: List merged Git worktrees, stale branches, or abandoned scratch directories on remote hosts.
+6. **Abandoned Scratch Directories**: List obsolete scratch directories on remote hosts. Return Git worktree cleanup candidates to the caller for `pc-workspace`.
 7. **Cluster Orchestration Debt**: Locate standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local `snakemake -j` execution instead of using native executor profiles.
 
 **Completion Criterion**:
@@ -89,7 +95,7 @@ The ledger must specify:
    Use `Symlink` whenever external pipelines or historical checkpoints rely on legacy paths.
 3. **Dual-Environment Scope**: Indicate whether each path applies to Local, Remote HPC, or both.
 4. **Code and Orchestration Rewiring Matrix**: Enumerate every configuration file (`config/*.yaml`), workflow definition (`Snakefile`, `workflow/rules/*.smk`), script import, test fixture, and legacy `.sbatch` script requiring migration to rule resources (`threads:`, `resources:`) or profile settings.
-5. **Sanitization Plan**: Specify obsolete worktrees, dead directories, unpartitioned logs, and retired `.sbatch` scripts scheduled for removal.
+5. **Sanitization Plan**: Specify dead scratch directories, unpartitioned logs, and retired `.sbatch` scripts scheduled for removal. Report Git worktree candidates separately for caller-managed cleanup.
 
 **Completion Criterion**:
 The migration ledger is reviewed and confirmed with the user or caller.
@@ -134,7 +140,6 @@ Execution sequence:
    - Move production datasets, intermediate processed features, and result directories into the new mirror hierarchy.
    - Create backward-compatible symbolic links where the ledger explicitly requires external compatibility.
 3. **Environment Sanitization**:
-   - Safely remove merged Git worktrees (`git worktree remove`) after verifying branch merges.
    - Purge unpartitioned root logs, dead scratch directories, and retired `.sbatch` submission scripts identified in the ledger.
    - Consolidate orphan log files into partitioned stage folders under `logs/<stage>/`.
 

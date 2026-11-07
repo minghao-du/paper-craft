@@ -13,6 +13,12 @@ This skill is invoked directly by a human or agent with an issue reference or ex
 > [!IMPORTANT]
 > **Crucial Boundary**: The verifier only evaluates and reports findings. It does NOT schedule repairs, edit code, or dispatch rework tasks itself; all findings return directly to the caller.
 
+## Working directory
+
+Follow [the environment contract](../pc-workspace/references/environment.md) in the prepared
+working directory supplied by the caller. For manual use, select an existing checkout or prepare
+one with [pc-workspace](../pc-workspace/SKILL.md) before starting.
+
 ## Scientific Problem Context
 
 In paper-craft, the root issue represents a concrete scientific question or computational research problem. Consequently, verification is the ultimate gatekeeper: **did the delivery actually solve the scientific problem?**
@@ -44,6 +50,8 @@ The caller directly provides structured verification inputs in the prompt:
 Execute verification against the integrated Git HEAD across three sequential tiers. A failure at any tier halts subsequent tiers and triggers `rework_needed`.
 
 ### Tier 1: Engineering Sanity & Quality Gates
+Validate the assigned integrated checkout against the expected commit before checks. Record that
+fixed SHA as `evaluatedHead` throughout verification. Return environment conflicts to the caller.
 Verify repository integrity and automated checks on the integrated commit:
 - Inspect Git HEAD commit SHA (`git rev-parse HEAD`).
 - Run project build, lint, and core test suites (e.g., `npm run lint`, `npm run typecheck`, `npm test`, `pnpm docs:check`).

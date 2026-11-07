@@ -16,7 +16,7 @@ This skill can be invoked directly by a human or agent with an ordinary task pro
 2. Invoking `pc-pr-review` to evaluate the PR head commit.
 3. If review findings indicate defects or require changes, returning structured review findings without taking over implementation.
 4. If review passes, verifying the live PR head against the evaluated commit SHA and landing a guarded squash merge.
-5. Note: `pc-pr-land` does NOT reclaim or delete worktrees; workspace lifecycle is managed by the execution environment.
+5. Note: `pc-pr-land` does NOT reclaim or delete worktrees; workspace lifecycle is managed through [pc-workspace](../pc-workspace/SKILL.md).
 
 ## Task Inputs
 
@@ -29,7 +29,7 @@ This skill can be invoked directly by a human or agent with an ordinary task pro
 
 ### Step 0: Validate the delivered environment
 
-Read the predecessor file when supplied, enter its absolute `worktree`, and use that directory for all Git, GH, and review operations. Validate the local `origin` repository identity against `repository`, the current branch against `branch`, a clean working tree, and `git rev-parse HEAD` against the delivered `commit`. Resolve a missing direct-invocation commit from HEAD and record it before proceeding. Missing paths or conflicting environment fields require a blocked result with the expected and observed values.
+Follow [the environment contract](../pc-workspace/references/environment.md). Read the predecessor file when supplied, bind execution to its absolute `worktree`, and use that directory for all Git, GH, and review operations. Validate the local `origin` repository identity against `repository`, the current branch against `branch`, a clean working tree, and `git rev-parse HEAD` against the delivered `commit`. Resolve a missing direct-invocation commit from HEAD and record it before proceeding. Missing paths or conflicting environment fields require a blocked result with the expected and observed values.
 
 Use the supplied `baseBranch`, or query the repository default branch for direct invocation. Preserve the worktree for review and any repair. Write assigned result files at their explicit absolute paths.
 
@@ -40,7 +40,7 @@ Use the supplied `baseBranch`, or query the repository default branch for direct
    gh pr list --repo "<repository>" --head "<branch>" --state all --json number,url,state,headRefOid,baseRefName
    ```
    Confirm the selected PR targets `baseBranch`. If it is already merged and its head matches the delivered commit, verify the merge result and report success idempotently. A closed PR or conflicting identity requires a blocked result.
-2. Publish the verified local branch before creating or updating an open PR. New issue branches are created locally by `pc-issue-work`.
+2. Publish the verified local branch before creating or updating an open PR. Feature branches are prepared locally before this task.
    ```bash
    git push --set-upstream origin "<branch>"
    ```
@@ -53,7 +53,7 @@ Use the supplied `baseBranch`, or query the repository default branch for direct
 
 ### Step 2: Invoke pre-merge review
 
-Invoke `pc-pr-review` in the same absolute `worktree`, supplying `repository`, the PR reference, and the delivered `commit` as the expected evaluated SHA:
+Invoke `pc-pr-review` with execution bound to the same absolute `working_directory` / `worktree`, supplying `repository`, `branch`, `baseBranch`, the PR reference, and the delivered `commit` as the expected evaluated SHA:
 - Inspect PR title, squashed body format, clean working tree, test quality, and static analysis results.
 - Reviewer outputs verdict: `pass`, `rework`, or `blocked`.
 
@@ -121,7 +121,7 @@ Extract the landed squash commit SHA (`mergeCommit.oid`).
 
 When review or delivery detects HEAD drift, preserve the delivered `commit` and record the observed local/remote SHAs with the findings. Rework must reconcile the mismatch explicitly.
 
-Every result includes the available environment fields (`repository`, absolute `worktree`, `branch`, `baseBranch`, `commit`). Persist them with review findings in any assigned result file so the next worker can resume directly. Keep the implementation commit separate from `mergedCommit`.
+Every result includes the available environment fields (`repository`, absolute `working_directory` / `worktree`, `branch`, `baseBranch`, `commit`). Persist them with review findings in any assigned result file so the next worker can resume directly. Keep the implementation commit separate from `mergedCommit`.
 
 1. **Landed outcome (`landed`):**
    - `prNumber`: PR number

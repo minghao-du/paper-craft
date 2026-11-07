@@ -24,7 +24,7 @@ exclusively by dedicated Specialist Subagents.
 The Orchestrator's sole responsibilities are:
 1. Receiving the root Issue and goal from the user.
 2. Maintaining workflow runtime state directly by recording state snapshots to `<receipt_root>/state.json`.
-3. Assembling task prompts and dispatching the appropriate Specialist Subagents.
+3. Assigning execution environments and dispatching workspace preparation, professional tasks, and cleanup through Specialist Subagents.
 4. Checking compact execution reports and consuming professional conclusions.
 5. Routing to the next stage or dispatching repair subagents.
 6. Halting and presenting a Blocker Decision Board when blocked, failed, or when retry budgets expire. Request a concise blocker or decision-options summary from a specialist when needed for the board.
@@ -48,7 +48,10 @@ In Antigravity, dispatch subagents using `invoke_subagent`:
 
 ### 2. Extensible Dispatch Signature
 Any supporting platform must implement the abstract contract:
-`dispatch(role, skillPath, promptInputs, receiptTemplatePath)` -> `{ execution_status, result, receipt_path, summary }`
+`dispatch(role, skillPath, working_directory, promptInputs, receiptTemplatePath)` -> `{ execution_status, result, receipt_path, summary }`
+
+Use a native working-directory field when supported. For prompt-only adapters such as the example
+above, inject explicit per-command directory binding as defined in [Workspace lifecycle and dispatch](references/workspaces.md).
 
 The dispatch boundary supplies the report contract below. In this skills-only implementation,
 agents check it through instructions. Programmatic validation belongs in a future execution adapter.
@@ -74,7 +77,11 @@ and replanning. Supply the following inputs.
 3. **Report contract** — Absolute template and assigned `receipt_path`, the execution-status
    definitions below, and the task-specific routing fields required in `result`. Inject this
    envelope at dispatch time. Professional skills own their domain outputs.
-4. **Completion evidence** — What must be verified before the assigned task can be accepted.
+4. **Execution environment** — Required absolute `working_directory`, accepted environment receipt,
+   repository, branch or detached HEAD, base branch, expected revision, fixed research entry, and
+   required artifact locations. Apply [Workspace lifecycle and dispatch](references/workspaces.md)
+   to every stage and nested dispatch.
+5. **Completion evidence** — What must be verified before the assigned task can be accepted.
    Preserve available repository, worktree, branch, base branch, and implementation SHA in
    successor receipts, updating the SHA after repairs.
 
@@ -121,7 +128,7 @@ such as the verified implementation commit or updated record paths.
 
 Before routing, check the four required fields (`execution_status`, `result`, `receipt_path`, and `summary`),
 the execution-status enum, an object-valued `result`, the assigned absolute receipt path, and a one-sentence summary.
-Check routing fields against the dispatched task requirements.
+Check routing fields and reported execution environment against the dispatched task requirements.
 
 If a compact report is missing, unparseable, contradictory, or the referenced receipt file does not exist,
 the Orchestrator follows Constitution's **Fail Fast**:
@@ -143,7 +150,7 @@ are fully decoupled into modular workflow files.
 
 ### 2. Execution Loop
 For each stage defined in the loaded workflow:
-1. **Identify Stage Contract**: Read the stage's target specialist role, required inputs, predecessor receipts, expected `result` schema, and routing rules.
+1. **Identify Stage Contract & Prepare Environment**: Read the stage's role, inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules. Apply [Workspace lifecycle and dispatch](references/workspaces.md), accepting preparation before professional execution.
 2. **Record State & Dispatch Specialist**: Update `<receipt_root>/state.json` with the current stage, attempt count, and target receipt path. Assemble the task prompt according to [Prompt Assembly Standard](#prompt-assembly-standard), then dispatch a fresh specialist subagent using the platform adapter.
 3. **Verify Report & Receipt**: Check the compact report and receipt integrity according to [Report Checks and Protocol Integrity](#report-checks-and-protocol-integrity). If malformed, missing, or contradictory, halt to the Decision Board.
 4. **Evaluate Routing**:
@@ -153,7 +160,7 @@ For each stage defined in the loaded workflow:
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
    - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
    - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
-5. **Completion Gate**: Conclude the orchestration session only when the workflow's terminal gates are satisfied and recorded.
+5. **Completion Gate**: After the workflow's required professional gates succeed, dispatch workspace cleanup and record removed or retained paths with reasons. Conclude only when terminal gates and cleanup results are recorded.
 
 ---
 
@@ -204,6 +211,9 @@ Wait for the human user's prompt instruction before proceeding.
         "commit": "<implementation_or_merged_commit>"
       }
     ],
+    "context": {
+      "workspaces": {}
+    },
     "budgets": {
       "delivery_attempts_used": 0,
       "replans_used": 0
@@ -218,6 +228,6 @@ Wait for the human user's prompt instruction before proceeding.
   - Check Budget: `python3 <skill-dir>/scripts/state_machine.py check-budget --receipt-root "<receipt_root>" --type <delivery|replan> --limit <max>`
 - **Durable File Receipts** — Specialist agents write their evidence, logs, and verification outputs to their assigned `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md` file using [the receipt template](templates/subagent-receipt.template.md). Receipts remain outside source checkouts.
 - **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator reads `<receipt_root>/state.json` directly:
-  1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using the recorded receipt references and consumed budgets.
+  1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using the recorded receipt references, workspace assignments, and consumed budgets. If an older snapshot lacks workspace assignments, have `pc-workspace` validate the environment in the last accepted receipt before professional work. Preserve uncertain ownership as reused for automatic cleanup.
   2. If `state.json` is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.

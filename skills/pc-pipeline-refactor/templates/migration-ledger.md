@@ -13,7 +13,7 @@ List identified discrepancies between the existing pipeline and `pc-pipeline-sna
 - [ ] **Unpartitioned Script Clutter**: Loose script files exposed directly in parent stage directory instead of submodules.
 - [ ] **Asymmetric Output Layout**: Results or processed directories do not mirror the script submodule hierarchy.
 - [ ] **Tiered Data Hygiene Violations**: Raw data directory contains outputs, mixed singular/plural naming, or unpartitioned root logs.
-- [ ] **Stale Environment Artifacts**: Merged worktrees, dangling scratch directories, or obsolete unpartitioned logs.
+- [ ] **Stale Environment Artifacts**: Dangling scratch directories or obsolete unpartitioned logs.
 - [ ] **Cluster Orchestration Debt**: Standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local execution instead of native Slurm executor profiles.
 
 ---
@@ -60,9 +60,7 @@ Record all code, configuration, rule, and test modifications required by the pat
 
 Enumerate dead artifacts to remove on local and remote environments:
 
-- **Merged Git Worktrees**:
-  - [ ] Local: `<path>`
-  - [ ] Remote: `<path>`
+Git worktree cleanup candidates are returned separately to the caller for `pc-workspace`.
 - **Obsolete Root Logs**:
   - [ ] `<path>`
 - **Retired Cluster Submission Scripts**:

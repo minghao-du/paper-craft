@@ -11,6 +11,13 @@ The calling session or human owns scientific judgments and research direction; t
 
 This skill can be invoked directly by a human or agent with an update brief.
 
+## Working directory
+
+Follow [the environment contract](../pc-workspace/references/environment.md) in the prepared
+working directory supplied by the caller. For manual use, select an existing checkout or prepare
+one with [pc-workspace](../pc-workspace/SKILL.md) before starting. Resolve the shared research
+entry independently of that checkout and write to its fixed home.
+
 ## Task Inputs
 
 Before executing, verify the following inputs:

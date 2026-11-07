@@ -10,6 +10,12 @@ Authoritative instructions for conducting a comprehensive quality review before 
 This skill can be invoked directly by a human or agent with an ordinary task prompt or parameters.
 This skill strictly reviews the specified revision, returns structured conclusions and evidence, and does not modify source code, execute automatic rebase/push operations, or schedule next steps.
 
+## Working directory
+
+Follow [the environment contract](../pc-workspace/references/environment.md) in the prepared
+working directory supplied by the caller. For manual use, select an existing checkout or prepare
+one with [pc-workspace](../pc-workspace/SKILL.md) before starting.
+
 ## Task Inputs
 
 Before starting the review, ensure the following inputs are available:
