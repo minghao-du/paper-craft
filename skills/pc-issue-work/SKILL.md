@@ -97,7 +97,21 @@ Apply adaptive checks to local and remote computation, training, experiments, an
 3. For SLURM, track submission, queue wait, and actual execution separately.
 4. Keep waiting responsive through completion events or a supported scheduled wake-up.
 
-### Step 4: Selective staging and pre-commit audit
+### Step 4: Subagent self-review and repair
+
+After implementation and verification finish, complete self-review before the final commit and delivery.
+
+1. Fix the review scope to the issue's full changes from the merge-base with `origin/<baseBranch>`, including committed, staged, unstaged, and new issue files. Give each reviewer the same absolute worktree, base SHA, current HEAD, changed-file list, issue requirements, and verification evidence. Keep the reviewed files unchanged while reviewers run.
+2. Launch separate read-only subagents in parallel, each instructed to read and follow its assigned skill at the resolved absolute path. Resolve the following paths relative to this skill's installation directory.
+   - One follows [pc-review-clean-code](../pc-review-clean-code/SKILL.md).
+   - One follows [pc-review-code-reuse](../pc-review-code-reuse/SKILL.md).
+   - When the task produces or relies on computational research conclusions, a third follows [pc-skeptic](../pc-skeptic/SKILL.md), with the exact claims and supporting artifacts or logs. Otherwise skip this subagent and record that no computational research conclusion requires audit.
+   Require each subagent to cover the supplied working-tree scope, including uncommitted and new files, and return its skill's findings and evidence. The implementation agent owns all repairs.
+3. Wait for every required review. Reconcile findings against the issue scope and repository guidance, fix confirmed defects, and record a reason for dismissed findings or optional suggestions. Re-run configured quality gates after repairs.
+4. Reassess which reviews the repairs affect, including shared dependencies and changed claims or evidence. Launch fresh subagents only for affected reviews against the updated changes, retaining unaffected review results with a reason. Repeat repair and affected re-review until every required review is complete and all confirmed defects and unresolved skeptic concerns are resolved.
+5. If a required subagent cannot run, fails, or lacks necessary evidence, preserve completed work and report a blocked outcome with the missing review or evidence and recovery action. Resume the outstanding reviews before declaring completion.
+
+### Step 5: Selective staging and pre-commit audit
 
 Maintain zero transient artifacts in git history by staging files selectively:
 1. **Selective staging:** Stage modified or new source and test files individually using per-file commands:
@@ -119,10 +133,11 @@ A task is complete only when all criteria are met:
 2. **Static verification:** Configured static analysis and lint tools report zero errors or warnings.
 3. **Test budget:** All individual tests execute within 120 seconds.
 4. **Clean working tree:** No untracked transient cruft, unstaged modifications, or unwanted files remain in the working directory.
+5. **Self-review:** Step 4 is complete for the delivered changes, with evidence for required reviews and any skeptic skip.
 
 ## Task Outputs
 
 1. **Git commits / Diff:** Clean, conventional commits on the feature branch, or git diff / commit SHA capturing verified changes.
-2. **Verification evidence:** Test execution outputs, benchmark metrics, or check results demonstrating passing quality gates.
+2. **Verification evidence:** Test execution outputs, benchmark metrics, or check results demonstrating passing quality gates. Include self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker.
 3. **Summary:** Concise report of implementation details and verification evidence.
 4. **Environment:** `repository` (`owner/repo`), absolute `worktree`, `branch`, `baseBranch`, and final verified `commit` SHA. Refresh `commit` after implementation so the next worker can validate the delivered HEAD. Include this context in any assigned result file, including blocked or rework results when available.
