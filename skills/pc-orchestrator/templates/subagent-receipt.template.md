@@ -2,14 +2,13 @@
 
 - root_issue_id: <root_issue_id>
 - current_issue_id: <current_issue_id>
-- task_type: <professional_task_or_report_repair>
+- task_type: <professional_task_or_replan>
 - dispatch_id: <unique_receipt_basename>
-- original_dispatch_id: <original_invocation_id_for_report_repair_or_N/A>
+- original_dispatch_id: <predecessor_dispatch_id_for_rework_or_N/A>
 - origin_stage: <stable_stage_identity>
 - attempt: <task_attempt>
 - delivery_attempts_used: <count_for_this_delivery>
 - replans_used: <count_for_origin_stage_and_current_issue>
-- report_repair_used: <true_or_false_for_original_invocation>
 - execution_status: <succeeded | blocked | failed>
 
 ## Compact Report
@@ -53,7 +52,6 @@ For blocked or failed execution, record the cause, missing evidence, and require
 
 ## Recovery and Budgets
 
-<Original dispatch identity, originating stage, and consumed delivery, replanning, and report-repair
-allowances. Reference the separate pre-dispatch reservation file and copy its identity and counters. For report repair,
-retain the original report and reference its path, the repaired report, and the correction made.
+<Original dispatch identity, originating stage, and consumed delivery and replanning allowances.
+For rework, reference the predecessor receipt and summarize defects being resolved.
 For replanning, record prior alternatives, proposed changes, and any invalidated acceptance gates.>

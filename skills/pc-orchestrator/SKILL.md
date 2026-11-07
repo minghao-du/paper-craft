@@ -9,21 +9,25 @@ The Orchestrator coordinates end-to-end Issue delivery strictly through subagent
 It decides execution sequence, role assignments, predecessor context passing, repair routing,
 and completion gates.
 
-## Strict Zero-Execution Discipline
+## Execution Discipline & State Authority
 
-The Orchestrator **never performs concrete work itself**. It is strictly prohibited from:
-- Editing, creating, or modifying repository code or configuration files directly.
-- Running tests, builds, linting, or shell commands via Bash.
+The Orchestrator **never performs concrete domain work itself**. It is strictly prohibited from:
+- Editing, creating, or modifying repository source code, tests, build configurations, or domain assets directly.
+- Running test suites, builds, linters, or repository code execution commands via Bash.
 - Performing Git operations (branching, commits, merges, worktrees) or GitHub CLI operations (`gh`).
-- Reviewing code diffs or judging implementation correctness directly.
+- Reviewing code diffs or judging domain implementation correctness directly.
 
 All domain work, file modifications, git/PR operations, and specialist judgments are performed
-exclusively by dedicated Specialist Subagents. The Orchestrator's sole responsibility is:
+exclusively by dedicated Specialist Subagents.
+
+### Authorized Orchestrator Responsibilities
+The Orchestrator's sole responsibilities are:
 1. Receiving the root Issue and goal from the user.
-2. Assembling task prompts and dispatching the appropriate Specialist Subagents.
-3. Checking compact execution reports and consuming professional conclusions.
-4. Routing to the next stage or dispatching repair subagents.
-5. Halting and presenting a Blocker Decision Board when blocked or when retry budgets expire. Request a concise blocker or decision-options summary from a specialist when needed for the board.
+2. Maintaining workflow runtime state directly by recording state snapshots to `<receipt_root>/state.json`.
+3. Assembling task prompts and dispatching the appropriate Specialist Subagents.
+4. Checking compact execution reports and consuming professional conclusions.
+5. Routing to the next stage or dispatching repair subagents.
+6. Halting and presenting a Blocker Decision Board when blocked, failed, or when retry budgets expire. Request a concise blocker or decision-options summary from a specialist when needed for the board.
 
 ---
 
@@ -60,7 +64,7 @@ Every workflow maintains two issue identifiers:
 
 ### Prompt Assembly Standard
 
-Every dispatch opens a fresh agent conversation, including repeated roles, report repairs,
+Every dispatch opens a fresh agent conversation, including repeated roles, rework,
 and replanning. Supply the following inputs.
 
 1. **Role and objective** — Target `current_issue_id`, authorized scope, acceptance criteria,
@@ -79,7 +83,7 @@ defaulting to `<initial-checkout>-worktrees/.paper-craft/receipts/issue-<root_is
 An explicit root takes precedence. Keep it fixed across worktrees, stages, and retries.
 Use filenames `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md`.
 Assign a unique, increasing `step_index` to each invocation and retain it on recovery.
-Use the receipt basename as `dispatch_id`. Repairs also identify `original_dispatch_id`.
+Use the receipt basename as `dispatch_id`. Rework tasks also identify `original_dispatch_id`.
 The assigned absolute path separately authorizes the report write. Specialists create parent
 directories as needed. Receipts remain outside source checkouts and source commits.
 
@@ -113,26 +117,17 @@ Keep full findings, environment, evidence, and predecessor references in the rec
 For tasks with no named domain outcome, request their concrete completion facts in `result`,
 such as the verified implementation commit or updated record paths.
 
-### Report Checks and Repair
+### Report Checks and Protocol Integrity
 
-Before routing, check the four required fields, the execution-status enum, an object-valued
-`result`, the assigned absolute receipt path, and a one-sentence summary. Check routing fields
-against the dispatched task requirements. A specialist confirms the receipt exists and agrees
-with the compact report. For a complete report, its writer performs this check before returning.
-Unknown or contradictory conclusions require report repair before routing.
+Before routing, check the four required fields (`execution_status`, `result`, `receipt_path`, and `summary`),
+the execution-status enum, an object-valued `result`, the assigned absolute receipt path, and a one-sentence summary.
+Check routing fields against the dispatched task requirements.
 
-For a missing, malformed, or inconsistent report, dispatch one fresh report-repair agent for
-that original invocation. Supply the expected contract, observed defect, assigned report path,
-and known artifact references. It may read existing evidence and repair the report only.
-It must not rerun tests, merge, migrate files, or repeat the original task. Missing evidence
-stays explicit. If one repair cannot establish a valid report, record `failed` with the protocol
-error and halt. If the agent terminated without writing a receipt, recover a conclusion only
-from existing evidence. Otherwise record the failure, missing evidence, and last confirmed state.
-
-The report-repair allowance is one per original invocation. Record its use durably and retain
-the original report before correction. Use a separate `-report-repair.md` receipt to identify
-what was corrected. Task re-execution requires a separate Orchestrator decision after a
-specialist reconciles side effects. Report repair never consumes or resets task retry budgets.
+If a compact report is missing, unparseable, contradictory, or the referenced receipt file does not exist,
+the Orchestrator follows Constitution's **Fail Fast**:
+- Record the protocol defect in `<receipt_root>/state.json`.
+- Halt immediately and present the Blocker Decision Board to the user with the observed defect and last confirmed state.
+- Do not dispatch speculative repair agents to guess missing conclusions.
 
 ---
 
@@ -149,8 +144,8 @@ are fully decoupled into modular workflow files.
 ### 2. Execution Loop
 For each stage defined in the loaded workflow:
 1. **Identify Stage Contract**: Read the stage's target specialist role, required inputs, predecessor receipts, expected `result` schema, and routing rules.
-2. **Dispatch Specialist**: Assemble the task prompt according to [Prompt Assembly Standard](#prompt-assembly-standard), complete the [pre-dispatch reservation](#state-persistence--session-recovery), then dispatch a fresh specialist subagent using the platform adapter.
-3. **Verify Report & Receipt**: Check the compact report and receipt integrity according to [Report Checks and Repair](#report-checks-and-repair). If malformed or missing, invoke the report-repair agent.
+2. **Record State & Dispatch Specialist**: Update `<receipt_root>/state.json` with the current stage, attempt count, and target receipt path. Assemble the task prompt according to [Prompt Assembly Standard](#prompt-assembly-standard), then dispatch a fresh specialist subagent using the platform adapter.
+3. **Verify Report & Receipt**: Check the compact report and receipt integrity according to [Report Checks and Protocol Integrity](#report-checks-and-protocol-integrity). If malformed, missing, or contradictory, halt to the Decision Board.
 4. **Evaluate Routing**:
    - Match the returned native `result` against the stage's routing table.
    - For linear progression, advance to the indicated successor stage.
@@ -195,12 +190,29 @@ Wait for the human user's prompt instruction before proceeding.
 
 ## State Persistence & Session Recovery
 
-- **In-Memory Tracking** — Keep stage progression, issue/attempt identifiers, fixed `receipt_root`, compact reports, and separate delivery, report-repair, and replanning counters in context.
-- **Durable File Receipts** — Before a domain task, report repair, or replan, assign an absolute reservation path and dispatch a recording-only specialist with [the dispatch template](templates/dispatch.template.md), the task's assigned receipt path, identity, and consumed budgets. Match its confirmation to the assigned reservation path, `dispatch_id`, and task receipt path before dispatching the task. State-maintenance calls use the compact report envelope and are exempt from reservation, ending this bookkeeping step. An unconfirmed reservation halts dispatch. Result receipts copy the reserved identity and budgets. The fixed folder is the recovery source.
+- **Structured State Snapshot (`state.json`)** — The Orchestrator maintains `<receipt_root>/state.json` directly as the authoritative runtime state. It updates this file before dispatching a stage and after accepting a receipt.
+  ```json
+  {
+    "root_issue_id": "<root_issue_id>",
+    "current_issue_id": "<current_issue_id>",
+    "current_stage": "<current_stage_name>",
+    "completed_stages": [
+      {
+        "stage": "<stage_name>",
+        "outcome": "<domain_outcome>",
+        "receipt_path": "<assigned_absolute_receipt_path>",
+        "commit": "<implementation_or_merged_commit>"
+      }
+    ],
+    "budgets": {
+      "delivery_attempts_used": 0,
+      "replans_used": 0
+    },
+    "last_updated": "<iso_timestamp>"
+  }
+  ```
+- **Durable File Receipts** — Specialist agents write their evidence, logs, and verification outputs to their assigned `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md` file using [the receipt template](templates/subagent-receipt.template.md). Receipts remain outside source checkouts.
+- **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator reads `<receipt_root>/state.json` directly:
+  1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using the recorded receipt references and consumed budgets.
+  2. If `state.json` is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.
-- **Resumption**: To resume an interrupted workflow, dispatch a specialist to inspect the fixed `receipt_root` and return a compact recovery report identifying accepted stages, relevant receipt paths, pending side effects, and consumed budgets. Resume from the next pending step. If the root is absent from session context, resolve it from the original checkout or user-supplied receipt location.
-
-For legacy receipts with only the old top-level `outcome`, dispatch report repair before
-routing. Recover execution status and professional conclusion from recorded evidence, preserving
-the original receipt. Never infer success from an unknown value. If consumed budgets cannot be
-established during recovery, request human steering before another automatic attempt.
