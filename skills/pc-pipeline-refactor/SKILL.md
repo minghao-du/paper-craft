@@ -11,17 +11,18 @@ Refactor existing scientific computing workflows from ad-hoc, flat, or sequentia
 Synchronize all code, rules, configurations, and data assets across local workstations and remote HPC environments without interrupting reproducible execution or losing data.
 This skill can be invoked directly by a human or agent with a target path or task prompt.
 
-## Default Workflow Refactoring Scope & Scientific Invariance
+## Refactoring Scope & Scientific Invariance
 
-When invoked as part of a delivery workflow:
+For the supplied target and scope, apply these constraints.
+
 - **Scope discipline:** The task strictly reorganizes only the workflow and pipeline files involved in the current work (`scope`), and syncs path references in affected rules, configs, and scripts.
 - **Scientific invariance:** Preserves all scientific methods, computational logic, algorithmic choices, analytical parameters, results, and conclusions.
 - **Operability checks:** Performs necessary structural, path, and operability checks (e.g. DAG dry-run `snakemake -n`, syntax verification, small-data smoke checks) without re-running unrelated computation.
 - **Out-of-scope guardrail:** If computational logic changes or scientific parameter alterations are required, do NOT alter them or expand the task. Report `out_of_scope` with the rationale.
-- **Permitted outcomes:**
+- **Professional conclusions:**
   - `completed`: Pipeline files reorganized and paths synced with verification evidence (`changedFiles`, `verificationEvidence`).
   - `no_change`: Layout already conforms; no modifications necessary (`verificationEvidence`).
-  - `out_of_scope`: Computational or scientific logic changes required.
+  - `out_of_scope`: Computational or scientific logic changes required. Identify affected objectives, rationale, changes already made, current consistency, and remaining recovery work.
   - `blocked`: Environment, dependency, or permissions barrier.
 
 ## Task Inputs

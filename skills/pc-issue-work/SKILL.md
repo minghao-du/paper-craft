@@ -14,7 +14,7 @@ This skill can be invoked directly by a human or agent with an ordinary task pro
 Before starting work, ensure the following inputs are available:
 1. **Issue context:** Issue number, title, description, and comments from GitHub (`gh issue view <issue> --comments`).
 2. **Task brief & objectives:** The specific goals, scope, and instructions provided in the task prompt or assignment.
-3. **Environment & working directory:** Repository checkout and optional assigned worktree, feature branch, and base branch. When given a predecessor file, read its environment and verification evidence before starting. Rework uses its worktree, branch, base branch, and commit.
+3. **Environment & working directory:** Repository checkout and optional assigned worktree, feature branch, and base branch. When given a predecessor file, read its environment and verification evidence before starting. Pre-merge rework uses its worktree, branch, base branch, and commit. Post-merge repairs use a fresh assigned worktree and branch from the current base branch. The predecessor provides historical evidence and findings.
 4. **Prerequisites & dependencies:** Required external files, weights, datasets, environment variables, or upstream build artifacts.
 5. **Rework context (conditional):** If addressing review findings or repair feedback, inspect predecessor findings, previous HEAD SHA, and original constraints.
 
@@ -31,6 +31,7 @@ python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --issue 
 The helper queries GitHub repository metadata and creates a local branch `issue-<number>` from the latest remote default branch in `<primary-checkout>-worktrees/issue-<number>`. It prints JSON containing `repository`, `worktree`, `branch`, `baseBranch`, and `commit`. New branches stay local until PR delivery.
 
 - For an assigned environment, supply `--worktree "<absolute-path>" --branch "<branch>" --base "<baseBranch>"`. For rework, also supply `--expected-head "<predecessor-commit>"` to require the existing environment and exact predecessor HEAD.
+- For post-merge repairs, use the fresh assigned `--worktree`, `--branch`, and `--base`. Omit the merged predecessor's `--expected-head` when creating the new environment.
 - Existing registered issue worktrees are validated and reused. Occupied paths, uncommitted changes, base-branch targets, conflicting branches, and missing rework environments stop preparation with an actionable error. Preserve the reported state for resolution.
 - Enter the returned absolute `worktree` for source edits, tests, and commits. A separately assigned result or receipt file may be written at its explicit absolute path.
 - Retain the worktree after completion for review and rework. The helper leaves the original checkout's branch and files in place.

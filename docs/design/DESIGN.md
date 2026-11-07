@@ -18,7 +18,9 @@ The agreed target architecture separates professional task knowledge from workfl
 - **Skill**: teaches how to complete a coherent professional task. Specialist skills know neither workflows nor the orchestrator and do not require the paper-craft CLI. Genuine dependencies on other skills are permitted; dispatch-specific modes and receipt commands are not. Audit all specialist skills for workflow awareness and mixed responsibilities; retain useful professional collaboration without introducing a separate skill for every operation.
 - **Orchestrator**: owns ordering, executor selection, result associations, failure branches and overall completion. It understands failure reasons to choose subsequent work but does not manually copy findings or assemble input fields.
 
-Every dispatch starts a new agent conversation, including repeated roles and repair attempts. Context travels through explicit inputs rather than conversation reuse. Execution status is distinct from the business outcome: a successfully executed review can conclude that changes are required. Professional agents supply domain judgments.
+Every dispatch starts a new agent conversation, including repeated roles and repair attempts. Context travels through explicit inputs rather than conversation reuse. Dispatch supplies a common report envelope containing `execution_status` (`succeeded`, `blocked`, or `failed`), task-specific `result`, absolute `receipt_path`, and a short `summary`. Professional agents own domain judgments. The Orchestrator owns routing and acceptance. A successfully executed review can conclude that changes are required, and a successful scope assessment can identify work outside its authorization. Detailed evidence stays in file receipts.
+
+The skills implement report checks through agent instructions. Programmatic enforcement belongs to a future execution adapter. Operational limits, report repair, scope reassessment, and recovery procedures belong in the orchestrator skill.
 
 ## Default orchestration reference
 

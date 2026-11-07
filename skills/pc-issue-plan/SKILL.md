@@ -25,6 +25,26 @@ Before starting work, ensure the relevant inputs are available:
 2. **Goal & constraints:** Primary scientific objective, delivery budget, and explicit architectural or operational constraints.
 3. **Repository context:** Current repository working tree, documentation (`CONSTITUTION.md`, `DESIGN.md`), related issues or pull requests.
 
+## Scope Reassessment
+
+When the brief asks to reassess an existing plan, inspect the original objective, unchanged
+acceptance criteria, authorized scope, prior attempts, and current artifacts. Preserve existing
+issue-tracker state for an assessment-only request. Return the assessment before the normal
+issue-filing procedure. Keep the depth-1 boundary for any proposed children.
+
+Report an evidence-backed professional conclusion with rationale and affected objectives.
+
+- `revised_plan` — A concrete alternative within the current authorization can meet all required
+  criteria. Include bounded tasks, dependencies, completion evidence, and gates invalidated by
+  the change. Identify consistency or recovery work needed for partial modifications.
+- `optional_improvement` — The outstanding work is optional under existing acceptance criteria.
+  Cite evidence that required criteria remain satisfied and that the handoff state is consistent.
+- `decision_required` — Progress requires a scope, acceptance, or prerequisite decision. State
+  the specific decision, alternatives, and consequences.
+
+Reassessment is complete when its conclusion is supported, partial-state risks are accounted
+for, and the caller can identify the next action or decision from the report.
+
 ## Planning & Decomposition Procedure
 
 ### Step 1: Establish objective & depth check
@@ -116,11 +136,12 @@ A planning task is complete only when all criteria are met:
 1. **Depth boundary strictly observed:** No sub-issues nested beneath existing sub-issues.
 2. **Explicit falsifiable criteria:** Every planned child issue includes concrete, automated acceptance gates and expected artifacts.
 3. **Accurate dependency tracking:** `blockedBy` arrays reflect actual technical prerequisites.
-4. **Issue tracker synchronization:** Parent issue tasklist matches filed child issues.
+4. **Issue tracker synchronization:** For issue-filing tasks, parent issue tasklist matches filed child issues.
 
 ## Task Outputs
 
 - Direct execution: `{ outcome: "direct", summary: "...", reason: "..." }`
 - Decomposed execution: `{ outcome: "decomposed", summary: "...", plan: { tasks: [...] } }`
-- Filed GitHub child issues and updated parent tasklist.
+- Scope reassessment: `{ outcome: "revised_plan" | "optional_improvement" | "decision_required", summary: "...", ... }` with the supporting assessment described above.
+- Filed GitHub child issues and updated parent tasklist when issue filing was requested.
 - Report the decision or plan directly to the calling agent or user.

@@ -11,7 +11,7 @@ Authoritative instructions for evaluating the integrated delivery of an issue: v
 This skill is invoked directly by a human or agent with an issue reference or explicit verification parameters.
 
 > [!IMPORTANT]
-> **Crucial Boundary**: The verifier only evaluates and reports findings. It does NOT schedule repairs, edit code, or dispatch rework tasks itself; all findings return directly to the caller or Orchestrator.
+> **Crucial Boundary**: The verifier only evaluates and reports findings. It does NOT schedule repairs, edit code, or dispatch rework tasks itself; all findings return directly to the caller.
 
 ## Scientific Problem Context
 
@@ -88,7 +88,7 @@ When any tier reveals failures, regressions, missing artifacts, or unmet scienti
     "Engineering gap: <Specific engineering failure, e.g. build failure or broken dependency>",
     "Scientific gap: <Specific research failure, e.g. metric threshold unmet, output artifact empty, or baseline reproduction mismatch>"
   ],
-  "reworkGuidance": "<Actionable diagnostic suggestions for Orchestrator to include in the repair worker brief>"
+  "reworkGuidance": "<Actionable diagnostic suggestions for addressing the reported gaps>"
 }
 ```
 
