@@ -211,6 +211,11 @@ Wait for the human user's prompt instruction before proceeding.
     "last_updated": "<iso_timestamp>"
   }
   ```
+- **State Machine Helper (`scripts/state_machine.py`)** — The Orchestrator may execute the bundled helper script to perform atomic state transitions, fast budget checks, and crash-resilient updates without manually assembling JSON:
+  - Initialize: `python3 <skill-dir>/scripts/state_machine.py init --receipt-root "<receipt_root>" --root-issue <root_id>`
+  - Transition: `python3 <skill-dir>/scripts/state_machine.py transition --receipt-root "<receipt_root>" --stage <stage> --status <status> [--outcome <outcome>] [--receipt "<receipt_path>"] [--incr-budget delivery_attempts_used] [--set <key=val>]`
+  - Inspect / Resume: `python3 <skill-dir>/scripts/state_machine.py show --receipt-root "<receipt_root>" [--json]`
+  - Check Budget: `python3 <skill-dir>/scripts/state_machine.py check-budget --receipt-root "<receipt_root>" --type <delivery|replan> --limit <max>`
 - **Durable File Receipts** — Specialist agents write their evidence, logs, and verification outputs to their assigned `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md` file using [the receipt template](templates/subagent-receipt.template.md). Receipts remain outside source checkouts.
 - **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator reads `<receipt_root>/state.json` directly:
   1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using the recorded receipt references and consumed budgets.
