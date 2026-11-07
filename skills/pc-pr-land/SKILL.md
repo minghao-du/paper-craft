@@ -20,30 +20,40 @@ This skill can be invoked directly by a human or agent with an ordinary task pro
 
 ## Task Inputs
 
-1. **Branch & Base branch:** Feature branch name (`branch`) and base branch to merge into (`baseBranch`, defaults to `main`).
+1. **Branch & Base branch:** Feature branch name (`branch`) and base branch to merge into (`baseBranch`, defaults to the repository default branch).
 2. **Issue context:** Issue number and references to close on merge (e.g. `Closes #<issue>`).
-3. **Repository & working directory:** Target repository (`owner/repo`) and local git checkout.
+3. **Repository & working directory:** Target repository (`repository`, `owner/repo`), absolute `worktree`, feature/base branches, and delivered `commit` SHA. Read these from a supplied predecessor file. Direct invocation may supply them in the task prompt.
 4. **Approved evaluated commit SHA (optional):** Prior evaluated commit SHA if previously reviewed.
 
 ## Verification & Landing Method
 
+### Step 0: Validate the delivered environment
+
+Read the predecessor file when supplied, enter its absolute `worktree`, and use that directory for all Git, GH, and review operations. Validate the local `origin` repository identity against `repository`, the current branch against `branch`, a clean working tree, and `git rev-parse HEAD` against the delivered `commit`. Resolve a missing direct-invocation commit from HEAD and record it before proceeding. Missing paths or conflicting environment fields require a blocked result with the expected and observed values.
+
+Use the supplied `baseBranch`, or query the repository default branch for direct invocation. Preserve the worktree for review and any repair. Write assigned result files at their explicit absolute paths.
+
 ### Step 1: Create or update pull request
 
-1. Check if a PR already exists for the branch:
+1. Find existing PRs for the designated repository and branch, including completed PRs.
    ```bash
-   gh pr list --head "<branch>" --json number,url,state,headRefOid
+   gh pr list --repo "<repository>" --head "<branch>" --state all --json number,url,state,headRefOid,baseRefName
    ```
-2. If no PR exists, create it:
+   Confirm the selected PR targets `baseBranch`. If it is already merged and its head matches the delivered commit, verify the merge result and report success idempotently. A closed PR or conflicting identity requires a blocked result.
+2. Publish the verified local branch before creating or updating an open PR. New issue branches are created locally by `pc-issue-work`.
    ```bash
-   gh pr create --base "<baseBranch>" --head "<branch>" --title "<concise title>" --body "Closes #<issue>\n\n## Summary\n<summary>\n\n## Test plan\n<test plan>"
+   git push --set-upstream origin "<branch>"
    ```
-3. If the PR exists and is open, push any updated commits with `--force-with-lease` if needed.
-4. If the PR is already merged, extract the merge commit and report success idempotently.
-5. If the PR is closed or has merge conflicts, report `blocked` with conflict details.
+   If publishing fails, preserve the environment and report the conflict. Any history rewrite requires explicit task authorization and `--force-with-lease`.
+3. If no PR exists, prepare a body file outside the source worktree with real newlines, summary, test plan, and `Closes #<issue>`, then create it.
+   ```bash
+   gh pr create --repo "<repository>" --base "<baseBranch>" --head "<branch>" --title "<concise title>" --body-file "<prepared-pr-body-file>"
+   ```
+4. For an open PR, continue with the published branch. Report merge conflicts as blocked.
 
 ### Step 2: Invoke pre-merge review
 
-Invoke `pc-pr-review` to audit the live PR and local checkout HEAD:
+Invoke `pc-pr-review` in the same absolute `worktree`, supplying `repository`, the PR reference, and the delivered `commit` as the expected evaluated SHA:
 - Inspect PR title, squashed body format, clean working tree, test quality, and static analysis results.
 - Reviewer outputs verdict: `pass`, `rework`, or `blocked`.
 
@@ -65,14 +75,14 @@ When review verdict is **`pass`**:
 1. Inspect local HEAD and remote PR head:
    ```bash
    LOCAL_HEAD=$(git rev-parse HEAD)
-   REMOTE_HEAD=$(gh pr view <PR> --json headRefOid -q .headRefOid)
+   REMOTE_HEAD=$(gh pr view <PR> --repo "<repository>" --json headRefOid -q .headRefOid)
    ```
 2. Ensure `LOCAL_HEAD` equals `REMOTE_HEAD` and matches the reviewed commit SHA.
    **Halt protocol for PR HEAD drift:**
    If the remote PR head moved or checkout HEAD changed after review, **halt immediately**. Prior review approval is invalidated; report `rework_needed` with note on head drift.
 3. Verify required CI checks pass:
    ```bash
-   gh pr checks <PR> --required
+   gh pr checks <PR> --repo "<repository>" --required
    ```
    If required checks fail or are pending, report `blocked`.
 
@@ -81,7 +91,7 @@ When review verdict is **`pass`**:
 Merge using explicit `--match-head-commit` to prevent race conditions:
 
 ```bash
-gh pr merge <PR> --squash --match-head-commit "$LOCAL_HEAD" --body "Closes #<issue>"
+gh pr merge <PR> --repo "<repository>" --squash --match-head-commit "$LOCAL_HEAD" --body "Closes #<issue>"
 ```
 
 - Always use `--match-head-commit`. GitHub atomically rejects the merge if HEAD changed.
@@ -91,7 +101,7 @@ gh pr merge <PR> --squash --match-head-commit "$LOCAL_HEAD" --body "Closes #<iss
 
 Verify the merge result on GitHub:
 ```bash
-gh pr view <PR> --json state,mergedAt,mergeCommit
+gh pr view <PR> --repo "<repository>" --json state,mergedAt,mergeCommit
 ```
 Extract the landed squash commit SHA (`mergeCommit.oid`).
 
@@ -108,6 +118,10 @@ Extract the landed squash commit SHA (`mergeCommit.oid`).
    - Complete findings, evaluated commit SHA, and PR context returned with `merged: false`.
 
 ## Task Outputs
+
+When review or delivery detects HEAD drift, preserve the delivered `commit` and record the observed local/remote SHAs with the findings. Rework must reconcile the mismatch explicitly.
+
+Every result includes the available environment fields (`repository`, absolute `worktree`, `branch`, `baseBranch`, `commit`). Persist them with review findings in any assigned result file so the next worker can resume directly. Keep the implementation commit separate from `mergedCommit`.
 
 1. **Landed outcome (`landed`):**
    - `prNumber`: PR number
