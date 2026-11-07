@@ -24,7 +24,7 @@ Before executing, verify the following inputs:
 
 Resolve the target project from the user's request or the current project when unambiguous; ask when the target is unclear.
 Resolve its fixed entry from agent/startup guidance and read the entry, relevant linked records, and materials supplied by the user.
-If absent, report available sources and information gaps, then use [/pc-research-state](../pc-research-state/SKILL.md) to establish one designated home and pointer under [the research-state convention](../../docs/guides/research-state.md); label reconstructed or unverified content explicitly.
+If absent, report available sources and information gaps, then use [/pc-research-state](../pc-research-state/SKILL.md) to establish one designated home and pointer under [the research-state convention](../pc-research-state/references/convention.md); label reconstructed or unverified content explicitly.
 Use existing discussions and documents rather than restarting settled decisions. Papers, a manuscript, and implementation code are not prerequisites.
 
 Establish the research question, motivation, intended contribution, scope, and constraints that affect the research route.

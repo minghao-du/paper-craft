@@ -22,7 +22,7 @@ Before starting the dialogue, ensure the following inputs are available:
 
 ### Step 1: Establish the paper corpus
 
-Read [the research-state convention](../../docs/guides/research-state.md), resolve the project’s designated entry from agent/startup guidance, and read it plus relevant detailed records.
+Read [the research-state convention](../pc-research-state/references/convention.md), resolve the project’s designated entry from agent/startup guidance, and read it plus relevant detailed records.
 If missing, report sources and information gaps; use [/pc-research-state](../pc-research-state/SKILL.md) to establish the unique entry under that convention, without claiming complete project knowledge.
 
 Use the user's selected files or paper sections as the evidence boundary. Otherwise, discover papers in the specified project directory, or the current project when unambiguous, and state which files this discussion will use. Ask for a choice when the project or selection is ambiguous. Resolve facts available in the files yourself.

@@ -24,7 +24,7 @@ Before executing, verify the following inputs:
 
 ### Step 1: Resolve the writing brief
 
-Read [the research-state convention](../../docs/guides/research-state.md).
+Read [the research-state convention](references/convention.md).
 Resolve the fixed entry from project agent/startup guidance and read it with the records relevant to the update. Obtain the caller's findings or agreed plan, evidence locations, limitations, and intended changes. Use accessible materials to fill factual gaps; return missing scientific decisions to the caller.
 If another session coordinates this project, route proposed scientific changes through it before writing; invoking this skill does not transfer coordination.
 
@@ -46,24 +46,25 @@ When evidence conflicts with proposed wording or existing findings, inspect cond
 
 Re-read affected records before editing. Apply the convention's directory reports and navigation rules: establish the recursive folder mapping during initialization or migration; for routine updates trace only the affected steps and consumers.
 Update their reports in place and check parent summaries as changes propagate.
-Use the [optional report examples](../../docs/guides/research-state-template.md) when a starting structure helps. Keep raw evidence at its source.
+Read and apply the [report requirements and default template](references/report-template.md) for every report written or updated. Content coverage is mandatory; headings may adapt to the analysis. Keep raw evidence at its source.
 
 Verify the caller's mapping to repositories, scripts, workflow rules, inputs, outputs, and specific runs in the affected reports. Preserve useful existing records and repair inbound links when reorganizing them.
 
-Preserve distinctions among plans, hypotheses, observations, interpretations, and conclusions. Incorporate the caller's judgments, useful negative findings, limits, and unfinished questions. For an agreed route, preserve each stage's question, method, expected output, dependencies, and progression conditions. Update related summaries and references; flag affected interpretations pending reassessment when the caller has not resolved them. Keep live task status in its task system.
+Maintain a coherent account of current understanding by integrating new findings into the relevant sections. When a conclusion changes, retain its consequential evidence and the reason for revision; leave unresolved conflicts explicit. Update related summaries and references; flag affected interpretations pending reassessment when the caller has not resolved them. Keep live task status in its task system.
 
 During migration, retire parallel scientific entries only after their useful content has been integrated. Preserve unrelated operating instructions and local files when removing tracked copies from Git.
 
-**Done:** Each requested update is recorded or explicitly deferred with its reason; affected steps have report locations, folder mappings and links are current, and parent summaries and dependent reports agree or explicitly await verification.
+**Done:** Each requested update is recorded or explicitly deferred with its reason; affected steps have report locations, folder mappings and links are current, and parent summaries and dependent reports agree or explicitly await verification. Reports explain the findings and their meaning at the depth required by the template.
 
 ### Step 4: Verify and return
 
 Read the changed records, verify affected folder/code/evidence mappings, follow local links, and check the discovery pointer. Check dependent reports and parent summaries within the impact scope for stale results.
+Apply the template's coverage check against the analysis questions and major evidence artifacts, including results absent from the caller's summary. Return newly discovered scientific interpretation questions to the caller. Confirm that an uninvolved reader can understand the results through research-state reports alone; mark any remaining evidence or coverage gaps.
 Confirm that the entire workspace is ignored and no research-state files remain tracked in Git. Check that unsupported conclusions were not promoted and that unresolved questions remain visible. Report inaccessible remote references as unchecked.
 
 Return the entry and changed record paths, what was integrated, evidence checked, and pending contradictions or decisions to the caller. Leave research direction and any experiment execution with the caller.
 
-**Done:** The written state matches the brief, navigation resolves or has reported gaps, and every deferred update is accounted for.
+**Done:** The written state matches the brief, result coverage and independent readability checks pass within the declared scope, navigation resolves or has reported gaps, and every deferred update is accounted for. Unavailable evidence leaves an explicit coverage gap rather than a claim of complete verification.
 
 ## Quality Requirements & Completion Criteria
 
@@ -71,9 +72,9 @@ Return the entry and changed record paths, what was integrated, evidence checked
 2. **Evidence traceability:** Consequential claims cite specific run identities, data paths, host environments, or benchmark metrics.
 3. **Workspace hygiene:** Research-state workspace is entirely gitignored; zero research-state files are tracked in Git.
 4. **Navigation integrity:** Directory reports, relative links, and discovery pointer in agent startup guidance resolve without broken references.
+5. **Result completeness:** All consequential findings within the declared scope are explained or explicitly unresolved under the report requirements; raw artifacts serve verification and reproduction rather than supplying missing result explanations.
 
 ## Task Outputs
 
 1. **Updated research records:** Added or modified files under `research-state/` (or designated project home).
-2. **Status report:** Changed record paths, integrated content, evidence status, and any pending contradictions or unresolved decisions.
-3. **Summary:** Report the updated record paths, integrated content, and pending questions to the caller.
+2. **Summary:** Changed record paths, integrated content, evidence and coverage status, and pending contradictions or unresolved decisions.

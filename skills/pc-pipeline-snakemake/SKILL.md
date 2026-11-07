@@ -70,7 +70,7 @@ records needed by the research; Snakemake rules produce the evidence they refere
 - Group both roots by analytical stage: `processed/<stage>/` and `results/<stage>/`.
   Use the same stage name in both roots wherever that stage produces artifacts.
 - **Research-to-Code Mapping**: Follow the directory-report rules in the
-  [research-state convention](../../docs/guides/research-state.md). Give
+  [research-state convention](../pc-research-state/references/convention.md). Give
   `/pc-research-state` the named repository/code root, affected directory tree and
   scripts, actual rule/caller relationships, inputs, outputs and specific run
   evidence. Identify shared helpers and affected consumers across stages or
