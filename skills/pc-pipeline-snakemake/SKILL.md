@@ -30,6 +30,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 │   ├── schema.yaml              # JSONSchema parameter validation specification
 │   └── test.yaml                # Smoke inputs, reduced workload, and isolated output roots
 ├── workflow/
+│   ├── AGENTS.md                # Workflow agent guidance (SLURM native scheduler restriction)
 │   ├── Snakefile                # Workflow entry point and target rule (rule all)
 │   ├── rules/                   # Modular rule definitions (*.smk)
 │   │   ├── align.smk
@@ -147,33 +148,34 @@ When generating a new Snakemake workflow or expanding an existing one:
 4. **Author Modular Rules & Scripts**:
    - Read [rule.smk](templates/rule.smk) as a syntax reference for both `conda:` binary rules and `uv run` Python rules.
    - Read [script.py](templates/script.py) as a syntax reference for isolated Python scripts with PEP 723 inline dependency metadata.
+   - Read [workflow-agents.md](templates/workflow-agents.md) to establish `workflow/AGENTS.md` restricting SLURM execution to the native scheduler.
    - Construct `workflow/Snakefile` with `snakemake.utils.validate` and `rule all`.
    - Author domain logic in `workflow/rules/*.smk` using the **Stage Output Organization** and **Research State** conventions above.
    - For cluster execution, apply **Independent Cluster Jobs**: declare per-rule `threads:` and `resources:`, configure native Slurm execution via `config/profiles/slurm/config.yaml`, and never author step-level `.sbatch` scripts or monolithic wrappers.
 5. **Verification**: Complete the **Smoke Execution Contract** and run `uv run snakemake --lint` through the project's configured execution route. Hand validated findings to `/pc-research-state` under **Research State**.
 
-**Completion Criterion**: Directory tree conforms to the standard layout; smoke execution and its artifact checks pass; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate also passes with zero standalone step sbatch scripts. Report any unexecuted checks as pending.
+**Completion Criterion**: Directory tree conforms to the standard layout (including `workflow/AGENTS.md`); smoke execution and its artifact checks pass; `uv run snakemake --lint` produces 0 warnings or errors. For cluster execution, the **Independent Cluster Jobs** configuration gate also passes with zero standalone step sbatch scripts. Report any unexecuted checks as pending.
 
 ### Branch 2: Workflow Audit & Refactoring (Auditing)
 
 When reviewing or optimizing an existing Snakemake pipeline:
 1. **Check Tiered Paths**: Audit every rule for outputs targeting root or `workflow/`. Ensure intermediates use `processed/` (with `temp()` where applicable), terminal files use `results/` (with `protected()` where appropriate), logs use `logs/{rule}/{wildcard}.log`, and research state follows **Research State** outside the DAG. Check Stage Output Organization conventions. For existing `summary/` records, have `/pc-research-state` integrate useful scientific content before retiring duplicate receipts, their rules, and targets; preserve evidence with independent value.
 2. **Check Parameter Validation & Smoke Testing**: Verify startup schema validation and evaluate the **Smoke Execution Contract**, including actual execution and artifact evidence for the affected chain.
-3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, audit for orchestration debt: flag any standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local execution, and evaluate the **Independent Cluster Jobs** configuration gate.
+3. **Check DAG & Resources**: Detect ambiguous wildcards without constraints, missing log redirections (`> {log} 2>&1`), inline complex scripts, and missing `threads` or `resources`. For cluster execution, audit for orchestration debt: verify `workflow/AGENTS.md` exists and enforces native scheduler usage over standalone sbatch scripts, flag any standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local execution, and evaluate the **Independent Cluster Jobs** configuration gate.
    - When fixing a failed stage run, follow **Incremental recovery**. For a read-only audit, explain the failure and any triggered upstream rebuild, and propose the corresponding repair without claiming execution succeeded.
 4. **Check Environment Pinning (Conda & uv)**:
    - For Conda: verify per-rule `conda:` specifications target `workflow/envs/*.yaml` with pinned package versions. Flag any unpinned packages or floating tags. Ensure no loose `requirements.txt` pollute `workflow/envs/`.
    - For uv: verify root `pyproject.toml` (and `uv.lock`) manages Snakemake execution. For standalone Python scripts in `workflow/scripts/`, verify that rules needing isolated dependencies declare pinned versions via PEP 723 inline script metadata rather than unpinned ad-hoc `pip install` in shell directives.
    *(Guardrail: Do NOT read any template files in `templates/` during Steps 1–4).*
 5. **Output Structured Audit**:
-   - Read [rule.smk](templates/rule.smk) and [script.py](templates/script.py) only when generating code replacement blocks to align syntax, directive formatting, and PEP 723 metadata.
+   - Read [rule.smk](templates/rule.smk), [script.py](templates/script.py), and [workflow-agents.md](templates/workflow-agents.md) only when generating code replacement blocks to align syntax, directive formatting, and PEP 723 metadata.
    - Categorize findings into: Critical Violations, Architectural Improvements, and Drop-in Refactorings (concrete before/after code blocks).
 
 **Completion Criterion**: All 4 audit categories evaluated against the codebase; all identified defects accompanied by drop-in replacement code blocks. For cluster execution, include configuration-gate findings, unretired sbatch scripts, and unresolved configuration in the audit.
 
 ## Quality Requirements & Completion Criteria
 
-1. **Standard layout conformance:** Directory structure strictly separates configuration, rules, environments, scripts, tests, data, intermediates, and deliverables.
+1. **Standard layout conformance:** Directory structure strictly separates configuration, rules, environments, scripts, tests, data, intermediates, deliverables, and includes `workflow/AGENTS.md`.
 2. **Reproducible environments:** Conda definitions pin exact package versions; Python dependencies are locked via `uv.lock` or PEP 723 script metadata.
 3. **Cluster independence:** Computational steps submit as independent cluster jobs via native Snakemake executor plugins; zero monolithic allocations or wrapper loops.
 4. **Verified execution:** Small-data smoke runs execute successfully through production entry point; `snakemake --lint` emits zero errors.
