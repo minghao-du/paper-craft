@@ -1,109 +1,167 @@
 ---
 name: pc-orchestrator
-description: Schedule Issue delivery through configured role contracts and workflow steps, reconcile interrupted work, and report verified completion.
+description: Pure dispatch orchestrator — coordinate Issue delivery workflows strictly through subagent delegation without CLI or direct execution.
 ---
 
 # /pc-orchestrator
 
-The Orchestrator defines the task sequence in text, decides task assignments, executors,
-predecessor result linkages, and repair dispatches. Execution support (`Run`) prepares
-inputs according to task contracts, starts independent agent conversations in dedicated
-worktrees, validates submissions, and ensures verified resource cleanup and recovery.
-Specialist skills own their implementation and professional judgments without knowledge of
-the scheduling protocol.
+The Orchestrator coordinates end-to-end Issue delivery strictly through subagent delegation.
+It decides execution sequence, role assignments, predecessor context passing, repair routing,
+and completion gates.
 
-## Run Interface & Task Contracts
+## Strict Zero-Execution Discipline
 
-The Orchestrator interacts exclusively with the `Run` interface:
+The Orchestrator **never performs concrete work itself**. It is strictly prohibited from:
+- Editing, creating, or modifying repository code or configuration files directly.
+- Running tests, builds, linting, or shell commands via Bash.
+- Performing Git operations (branching, commits, merges, worktrees) or GitHub CLI operations (`gh`).
+- Reviewing code diffs or judging implementation correctness directly.
 
-```bash
-# Open or allocate a Run
-pc workflow open <issue> --provider agy
+All domain work, file modifications, git/PR operations, and specialist judgments are performed
+exclusively by dedicated Specialist Subagents. The Orchestrator's sole responsibility is:
+1. Receiving the root Issue and goal from the user.
+2. Assembling task prompts and dispatching the appropriate Specialist Subagents.
+3. Parsing subagent receipt outcomes (`completed`, `rework_needed`, `blocked`, `failed`).
+4. Routing to the next stage or dispatching repair subagents.
+5. Halting and presenting a Blocker Decision Board when blocked or when retry budgets expire.
 
-# Dispatch an isolated task
-pc workflow dispatch <run-id> --task-type <task-type> --instructions-file <instructions-file>
+---
 
-# Observe execution observation and validated result
-pc workflow observe <run-id>
+## Platform Dispatch Adapter
 
-# Submit structured result for an assigned task
-pc workflow submit-result --run <run-id> --task <task-id> --outcome <outcome> --summary <summary> --artifacts <json>
+Subagents are invoked through platform-specific dispatch primitives. The target platform can be
+provided by the user (defaults to `antigravity`).
 
-# Stop active executions and pause Run
-pc workflow stop <run-id> --reason <reason>
-
-# Reconnect and reconcile interrupted Run
-pc workflow resume <run-id>
-
-# Finish Run and safely retire worktree
-pc workflow finish <run-id> --conclusion <conclusion>
+### 1. Antigravity Adapter (Default)
+In Antigravity, dispatch subagents using `invoke_subagent`:
+```json
+{
+  "TypeName": "self",
+  "Role": "<Specialist Role Name>",
+  "Prompt": "<Assembled Subagent Prompt>"
+}
 ```
 
-The Orchestrator supplies only the task type, instructions, predecessor result references,
-and supplementary constraints. Professional inputs, delivery requirements, and output schemas
-are prepared by pinned task contracts (version `1.0`) across 5 directly dispatched skills
-supporting 6 task types:
+### 2. Extensible Dispatch Signature
+Any supporting platform must implement the abstract contract:
+`dispatch(role, skillPath, promptInputs, receiptTemplatePath)` -> `SubagentReceipt`
 
-1. `pc-issue-plan` (planning & decomposition mode)
-2. `pc-issue-work` (implementation & testing mode)
-3. `pc-pr-land` (PR creation, review invocation, commit assertion & landing)
-4. `pc-issue-verify` (`pc-issue-plan` integrated acceptance verification mode)
-5. `pc-pipeline-refactor` (pipeline file reorganization maintaining scientific invariance)
-6. `pc-research-state` (final research records, artifacts, and reproduction entries)
+---
 
-Every dispatched task spawns a completely fresh agent conversation—including repair/rework
-tasks and consecutive assignments. No session state is shared across task dispatches.
+## Subagent Dispatch & Receipt Protocol
+
+### Issue Tracking Model
+Every workflow maintains two issue identifiers:
+- `root_issue_id`: The originating parent Issue assigned to this Orchestrator workflow.
+- `current_issue_id`: The specific Issue currently in flight (equals `root_issue_id` for atomic issues; represents child sub-issue during decomposed execution).
+
+### Prompt Assembly Standard
+When dispatching any Specialist Subagent, the Orchestrator supplies:
+1. **Target Role & Objective**: Problem statement, target issue (`current_issue_id`), and explicit goal.
+2. **Specialist Skill Directive**: Instruction to load and strictly follow `skills/pc-<name>/SKILL.md`.
+3. **Predecessor Context**: Relevant upstream artifacts (e.g. branch name, commit SHA, PR URL, review feedback if repair).
+4. **Receipt Contract**: Directive to inspect the template at `skills/pc-orchestrator/templates/subagent-receipt.template.md`, save the filled receipt to `.paper-craft/receipts/issue-<root_issue_id>/<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md`, and return the receipt content in the subagent's final response.
+
+### Subagent Receipt Schema
+Subagents record results following [templates/subagent-receipt.template.md](templates/subagent-receipt.template.md):
+- **Metadata**: `root_issue_id`, `current_issue_id`, `task_type`, `attempt`, `outcome`
+- **Artifacts**: `branch`, `commit`, `pr`
+- **Feedback**: Defect list (if `rework_needed`) or blocker details (if `blocked`)
+
+---
 
 ## Default Delivery Procedure
 
-The workflow sequence is an editable reference in text below, not hardcoded in scripts or
-automatic state machine transitions. The Orchestrator may adjust task orders, repeat tasks,
-or skip unneeded steps without modifying execution code.
+The Orchestrator dispatches subagents across the 6 standard stages:
 
-### 1. Planning & Decomposition (`pc-issue-plan`)
-Invoke `pc-issue-plan` with the target issue and goal. If decomposed into sub-issues,
-record the task dependency plan in Run:
-- When outcome is `direct`: proceed directly to single-issue delivery.
-- When outcome is `decomposed`: schedule sub-issues in topological dependency order.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. pc-issue-plan (Planning & Decomposition)                     │
+└───────────────────────────────┬─────────────────────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. Issue Delivery Loop (for each sub-issue in dependency order)  │
+│    ┌──────────────────┐          ┌─────────────────────────┐    │
+│    │  pc-issue-work   │ ───────► │       pc-pr-land        │    │
+│    └────────▲─────────┘          └────────────┬────────────┘    │
+│             │   rework_needed (max 3 tries)   │                 │
+│             └─────────────────────────────────┘                 │
+└───────────────────────────────┬─────────────────────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. pc-issue-plan (Integrated Verification mode)                 │
+└───────────────────────────────┬─────────────────────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. pc-pipeline-refactor (Scientific Invariance Reorganization)  │
+└───────────────────────────────┬─────────────────────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 5. pc-pr-land (Refactor Landing, only if files changed)         │
+└───────────────────────────────┬─────────────────────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 6. pc-research-state (Nexus Records & Reproduction Entries)     │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### 2. Issue Delivery Loop (for each issue in dependency order)
-For each target issue:
-1. **Implementation (`pc-issue-work`)**: Dispatch task to implement changes and verify with tests.
-   Specialist delivers code changes and test results in worktree; does not create a PR.
-2. **Landing & Merge (`pc-pr-land`)**: Dispatch task to create/update PR, invoke `pc-pr-review`,
-   verify head commit, and land onto base branch.
-3. **Rework Handling**: If `pc-pr-land` reports `rework_needed`, the Orchestrator explicitly
-   dispatches a repair task to `pc-issue-work`, referencing the predecessor task ID and review
-   findings (`--predecessor <taskId>`). The repaired code is then re-evaluated by a fresh `pc-pr-land`.
+### Stage 1: Planning & Decomposition (`pc-issue-plan`)
+Dispatch subagent to evaluate `root_issue_id` using `skills/pc-issue-plan/SKILL.md`:
+- If outcome is `direct`: Execute single delivery loop with `current_issue_id = root_issue_id`.
+- If outcome is `decomposed`: Extract child sub-issues and dependency graph; schedule execution in topological order.
 
-### 3. Integrated Acceptance Verification (`pc-issue-verify`)
-Invoke `pc-issue-plan` in verification mode with `originalObjective`, `acceptanceCriteria`,
-and aggregated `deliveryEvidence`. If gaps remain, the Orchestrator explicitly dispatches
-repair tasks back to step 2.
+### Stage 2: Issue Delivery Loop (Per Issue)
+For each target issue in dependency order:
+1. **Implementation (`pc-issue-work`)**: Dispatch subagent to implement changes and verify with TDD tests in an isolated branch. Specialist delivers code and verification evidence; does not create a PR.
+2. **Landing & Merge (`pc-pr-land`)**: Dispatch subagent to create/update PR, trigger review, verify HEAD commit, and merge onto the base branch.
+3. **Rework Handling**: If `pc-pr-land` reports `rework_needed`, dispatch a fresh repair subagent to `pc-issue-work` supplying the review feedback and predecessor commit SHA. Re-evaluate with a fresh `pc-pr-land`. Repeat up to 3 attempts.
 
-### 4. Pipeline File Reorganization (`pc-pipeline-refactor`)
-Invoke `pc-pipeline-refactor` scoped strictly to the files involved in the delivered changes.
-**Scientific Invariance**: Reorganization must strictly preserve scientific methods, computation
-logic, numerical results, and conclusions. If computational logic changes are required, it must
-report `out_of_scope`.
+### Stage 3: Integrated Acceptance Verification (`pc-issue-plan`)
+Dispatch subagent in verification mode (`pc-issue-verify`) with the parent objective, acceptance criteria, and aggregated delivery receipts. If acceptance gaps remain, dispatch targeted repair tasks back to Stage 2.
 
-### 5. Re-delivery on Pipeline Changes (`pc-pr-land`)
-If `pc-pipeline-refactor` produced file changes (`changedFiles` is non-empty), dispatch a fresh
-`pc-pr-land` task to deliver and merge the refactored files.
+### Stage 4: Pipeline File Reorganization (`pc-pipeline-refactor`)
+Dispatch subagent to organize workflow files touched during delivery, strictly preserving scientific invariance. If computational logic changes are required, subagent reports `out_of_scope` and aborts refactoring.
 
-### 6. Final Research Records (`pc-research-state`)
-Invoke `pc-research-state` to record updated research records, artifact locations, and
-reproduction entry points in the nexus repository.
+### Stage 5: Re-delivery on Pipeline Changes (`pc-pr-land`)
+If `pc-pipeline-refactor` produced file modifications, dispatch a fresh `pc-pr-land` subagent to deliver and merge the refactored files.
 
-### 7. Run Completion & Teardown (`pc workflow finish`)
-Verify all tasks have exited, confirm worktree is clean, and invoke `pc workflow finish` to safely
-retire the worktree and record overall completion evidence.
+### Stage 6: Final Research Records (`pc-research-state`)
+Dispatch subagent to record updated research state, artifact locations, and reproduction entry points in the nexus repository.
 
-## Recovery & Lifecycle Discipline
+---
 
-- **Deduplication**: Repeated dispatch requests for the same task ID return the existing task
-  idempotently; no duplicate agent conversations are launched.
-- **Uncertain States**: If process state or launch confirmation is unconfirmed, report `uncertain`
-  conservatively; never blindly relaunch or create duplicate worktrees.
-- **Safe Teardown**: Worktrees with uncommitted changes or active processes cannot be deleted.
-  All evidence and snapshots remain durably preserved in append-only event logs.
+## Halt & Escalation Protocol
+
+The Orchestrator immediately halts dispatch and yields control to the human user when:
+1. Any subagent returns `outcome: blocked` (e.g. missing external weights, datasets, credentials).
+2. Rework attempts for a task reach the maximum retry limit (default: 3 attempts).
+3. Any unexpected fatal failure occurs.
+
+### Blocker Decision Board Format
+When halting, the Orchestrator outputs a structured status board:
+
+```markdown
+### ⚠️ Orchestrator Halted: Human Steering Required
+
+- **Root Issue**: #<root_issue_id>
+- **Current Issue**: #<current_issue_id>
+- **Stage**: <stage_name> (Attempt <attempt>)
+- **Blocker Reason**: <Clear description of the obstacle or defect summary>
+- **Completed Receipts**: `.paper-craft/receipts/issue-<root_issue_id>/`
+
+#### Options:
+1. **Retry with manual fix**: [Description of manual intervention]
+2. **Adjust requirements**: [Description of scope adjustment]
+3. **Abort workflow**: Terminate current issue run
+```
+
+Wait for the human user's prompt instruction before proceeding.
+
+---
+
+## State Persistence & Session Recovery
+
+- **In-Memory Tracking**: Under normal operation, the Orchestrator maintains stage progression and task linkages directly in conversation context.
+- **Durable File Receipts**: Subagents write receipts to `.paper-craft/receipts/issue-<root_issue_id>/`. This folder serves as the durable audit trail and recovery source.
+- **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.
+- **Resumption**: To resume an interrupted workflow, the Orchestrator inspects `.paper-craft/receipts/issue-<root_issue_id>/`, identifies the highest completed stage, and resumes from the next pending step.
