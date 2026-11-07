@@ -136,95 +136,28 @@ specialist reconciles side effects. Report repair never consumes or resets task 
 
 ---
 
-## Default Delivery Procedure
+## Workflow Execution Engine
 
-Use the six stages below as the default delivery reference.
+The Orchestrator coordinates execution by reading a workflow definition and advancing through
+its stages as a state machine. It contains no hardcoded stage logic; domain delivery sequences
+are fully decoupled into modular workflow files.
 
-### Stage 1 — Planning and Decomposition (`pc-issue-plan`)
+### 1. Workflow Loading
+- **Default workflow**: Load `skills/pc-orchestrator/workflows/default.md` (the standard 6-stage delivery workflow).
+- **Custom workflow override**: If the user specifies an alternative workflow path in their prompt or configuration, load and follow that workflow definition instead.
 
-Request native `result.outcome` of `direct` or `decomposed`. For decomposition, include child
-issue IDs in dependency order in the compact result and preserve the full graph in the receipt.
-For `direct`, set `current_issue_id = root_issue_id`. For `decomposed`, retain the ordered
-child IDs and run delivery for each. A successful plan completes planning only.
-
-### Stage 2 — Issue Delivery Loop
-
-1. **Implementation (`pc-issue-work`)** — Request the verified implementation `commit` and
-   verification conclusion in `result`. Accept only with the required checks and recorded
-   environment. Pass its receipt to a fresh landing specialist.
-2. **Landing (`pc-pr-land`)** — Request native `result.outcome`, `merged`, and, for `landed`,
-   `mergedCommit`. The specialist validates and uses the predecessor worktree and SHA.
-3. **Rework** — A valid `rework_needed` conclusion routes to a fresh implementation specialist
-   with the landing receipt. It reads findings and reconciles the recorded environment and SHA,
-   then writes a new receipt. Pass that receipt to a fresh landing specialist. Keep the existing
-   maximum of three delivery attempts per issue, including the initial attempt.
-
-Accept delivery only for `landed` with verified merge evidence. A `blocked` domain conclusion
-from landing also has execution status `blocked` when prerequisites prevent landing.
-
-### Stage 3 — Integrated Acceptance (`pc-issue-verify`)
-
-Supply the parent objective, acceptance criteria, and delivery receipt paths. Request native
-`result.outcome` and `evaluatedHead`. `verified` satisfies acceptance for that integrated HEAD.
-A valid `rework_needed` report routes targeted repairs to Stage 2, followed by another integrated
-verification. Instruct the verifier to resolve the integrated base-branch checkout and pin its
-HEAD before checks, recording the repository, checkout, and evaluated SHA in its receipt.
-Use feature-branch receipts as delivery evidence when verifying the integrated tree.
-
-For gaps discovered after merge, assign a fresh repair branch and worktree based on the current
-base branch, retaining the original issue and delivery-attempt count. Supply explicit environment
-assignments to the worker. Use the merged predecessor for findings and historical evidence.
-Create the repair environment from the current base branch. Keep the issue's delivery-attempt budget across these repairs.
-
-### Stage 4 — Pipeline Reorganization (`pc-pipeline-refactor`)
-
-Supply only the touched pipeline scope and scientific-invariance constraints. Require the
-refactor specialist to prepare and record a fresh branch/worktree from the integrated base
-before changes, preserving the already merged delivery environment as history. Request native
-`result.outcome` and whether files changed. The receipt records changed files, verification,
-current worktree state, and any remaining consistency work.
-
-- `completed` with changes routes to Stage 5 after required checks.
-- `no_change` with verification evidence proceeds to Stage 6.
-- `out_of_scope` routes to the replanning procedure below. Require the rationale, affected
-  objectives, and partial-change state in its receipt.
-
-### Stage 5 — Re-delivery of Pipeline Changes (`pc-pr-land`)
-
-Pass the refactor receipt with verified repository, worktree, branch, base branch, and commit
-to a fresh landing specialist. Apply the Stage 2 landing gates and rework limit to this delivery.
-Use a fresh refactor specialist for structural repairs. Logic changes require replanning.
-
-### Stage 6 — Research Records (`pc-research-state`)
-
-Request updated record paths and pending decisions in `result`. Record research state,
-artifact locations, and reproduction entry points. Unresolved decisions affecting required
-acceptance return to planning or human steering. Declare root completion only after all
-required acceptance, delivery, consistency, and recording gates are satisfied.
-
-### Replanning for Scope Boundaries
-
-On `out_of_scope`, dispatch a fresh `pc-issue-plan` agent with a scope-reassessment brief,
-the original acceptance criteria, current authorization, predecessor receipts, and current
-artifact state. Ask for assessment only, preserving existing issue-tracker state.
-The planner reports one of its professional reassessment conclusions.
-
-| Planning conclusion | Orchestrator action |
-| --- | --- |
-| `revised_plan` | Execute the evidenced alternative within existing scope and acceptance criteria. |
-| `optional_improvement` | Record the deferred improvement and continue only when required acceptance remains satisfied. |
-| `decision_required` | Present the necessary scope, acceptance, or prerequisite decision to the user. |
-
-A specialist must establish a consistent, verified handoff state before continuing or deferring
-work after partial modifications. Arrange bounded recovery first when needed. Keep already
-verified delivery evidence and identify any gates invalidated by the revised plan.
-
-Allow at most two automatic replanning dispatches per originating stage and current issue.
-Track that identity across revised task names, repairs, and resumptions. Increment the count
-before dispatch and persist it in the receipt. A plan requiring expanded authorization or changed
-acceptance criteria goes directly to human steering. If two replans fail to enable progress,
-present attempted alternatives and the remaining decision. Replanning and delivery-attempt
-budgets are independent and never reset one another.
+### 2. Execution Loop
+For each stage defined in the loaded workflow:
+1. **Identify Stage Contract**: Read the stage's target specialist role, required inputs, predecessor receipts, expected `result` schema, and routing rules.
+2. **Dispatch Specialist**: Assemble the task prompt according to [Prompt Assembly Standard](#prompt-assembly-standard) and dispatch a fresh specialist subagent using the platform adapter.
+3. **Verify Report & Receipt**: Check the compact report and receipt integrity according to [Report Checks and Repair](#report-checks-and-repair). If malformed or missing, invoke the report-repair agent.
+4. **Evaluate Routing**:
+   - Match the returned native `result` against the stage's routing table.
+   - For linear progression, advance to the indicated successor stage.
+   - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
+   - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
+   - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
+5. **Completion Gate**: Conclude the orchestration session only when the workflow's terminal gates are satisfied and recorded.
 
 ---
 
@@ -234,7 +167,7 @@ Halt and present a Blocker Decision Board for execution status `blocked` or `fai
 a planning conclusion requiring human steering, a required additional attempt beyond its
 delivery/replanning allowance, or an unexpected fatal dispatch failure. A successful final
 allowed attempt proceeds through its normal acceptance gates. Valid professional conclusions
-route through the stage procedures above. `out_of_scope` first enters bounded replanning.
+route according to the loaded workflow definition. `out_of_scope` enters the workflow's replanning procedure.
 
 ### Blocker Decision Board Format
 When halting, the Orchestrator outputs a structured status board:

@@ -22,13 +22,6 @@ Every dispatch starts a new agent conversation, including repeated roles and rep
 
 The skills implement report checks through agent instructions. Programmatic enforcement belongs to a future execution adapter. Operational limits, report repair, scope reassessment, and recovery procedures belong in the orchestrator skill.
 
-## Default orchestration reference
+## Workflow decoupling
 
-The default sequence belongs in the orchestrator skill as an editable reference, not in executable transition rules. Users can change the sequence through instructions. This design records the intended default; the skill owns its operational procedure.
-
-1. Invoke `pc-issue-plan` to determine whether subissues are needed and establish the plan.
-2. For each issue in dependency order, invoke `pc-issue-work` to implement and verify it, then `pc-pr-land` to create or update its PR, invoke `pc-pr-review`, and merge only after verification passes. Findings return to the orchestrator for a fresh repair dispatch.
-3. Invoke `pc-issue-verify` to verify the original objective against the combined delivery evidence. It reports gaps without scheduling repairs itself.
-4. Invoke `pc-pipeline-refactor` to organize only the pipeline files involved in this work. Preserve scientific methods, results and conclusions; update affected path references and perform necessary structural and operability checks without rerunning unrelated computation. Report changes requiring computational logic changes as out of scope.
-5. If file organization produced changes, invoke a fresh `pc-pr-land` agent to deliver them. No additional scientific acceptance pass is required solely for file organization.
-6. Invoke `pc-research-state` to record final research state, artifact locations and reproduction entry points.
+Workflows are decoupled from both technical architecture and the core orchestrator engine. Specific execution sequences (such as issue delivery, hotfixes, or refactoring) live in dedicated workflow files under `skills/pc-orchestrator/workflows/`. The orchestrator core provides pure dispatch, receipt validation, and error recovery primitives without hardcoding any specific domain delivery stages.
