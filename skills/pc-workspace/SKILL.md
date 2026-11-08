@@ -126,7 +126,7 @@ If script execution is blocked by environment constraints (e.g., Python unavaila
    git -C "<target-path>" rev-parse HEAD
    ```
 5. **Write Markdown Receipt**:
-   Write the receipt to `contract.receipt_path` conforming to `templates/subagent-receipt.template.md`.
+   Write the receipt to `contract.receipt_path` using the template at `contract.receipt_template`.
 6. **Return Compact JSON Report**:
    Output the standard compact report `{ execution_status, result, receipt_path, summary }` to the caller.
 

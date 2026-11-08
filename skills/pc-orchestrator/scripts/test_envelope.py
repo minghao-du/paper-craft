@@ -97,6 +97,10 @@ class TestEnvelopeSchemaValidation(unittest.TestCase):
         self.assertEqual(env["provider"]["type"], "skill")
         self.assertEqual(env["provider"]["target"], "pc-issue-plan")
         self.assertEqual(env["contract"]["receipt_path"], str(self.root / "01-plan.md"))
+        template = Path(env["contract"]["receipt_template"])
+        self.assertTrue(template.is_absolute())
+        self.assertEqual(template, SCRIPT_PATH.parent.parent / "templates" / "subagent-receipt.template.md")
+        self.assertTrue(template.read_text(encoding="utf-8"))
 
         errors = envelope.validate_envelope(env)
         self.assertEqual(errors, [])

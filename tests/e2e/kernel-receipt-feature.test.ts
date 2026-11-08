@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type CompactReceiptReport,
   createTestDir,
+  REPO_ROOT,
   runLifecycleKernelCli,
   runPython,
   type TaskInputEnvelope,
@@ -197,7 +198,7 @@ if __name__ == "__main__":
       '--provider-target', 'pc-issue-verify',
       '--workdir', testEnv.dir,
       '--objective', 'Cognitive wrapper test',
-    ]);
+    ], { cwd: testEnv.dir });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const envelopePath = prepData.envelope_path;
@@ -205,7 +206,11 @@ if __name__ == "__main__":
 
     const envelope: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
     expect(envelope.contract.receipt_path).toBe(path.resolve(receiptPath));
-    expect(envelope.contract.receipt_template).toBe('templates/subagent-receipt.template.md');
+    expect(path.isAbsolute(envelope.contract.receipt_template)).toBe(true);
+    expect(envelope.contract.receipt_template).toBe(path.join(
+      REPO_ROOT, 'skills/pc-orchestrator/templates/subagent-receipt.template.md',
+    ));
+    expect(fs.readFileSync(envelope.contract.receipt_template, 'utf-8').length).toBeGreaterThan(0);
     expect(envelope.inputs.objective).toBe('Cognitive wrapper test');
   });
 });

@@ -53,20 +53,21 @@ The configuration file is stored at `.paper-craft/workspace-config.json` (relati
 
 ## 2. CLI Commands & Options
 
-The bundled helper script `scripts/config.py` supports deterministic configuration operations:
+Resolve `<skill-dir>` to the absolute installed directory containing this `SKILL.md`.
+The bundled helper script `<skill-dir>/scripts/config.py` supports deterministic configuration operations.
 
 ### Initialize Configuration (`init`)
 Probe Git repository remotes, default branch, and GitHub repository URL, interactively confirming or setting values:
 
 ```bash
 # Interactive wizard
-python3 skills/pc-workspace-config/scripts/config.py init
+python3 "<skill-dir>/scripts/config.py" init
 
 # Non-interactive initialization with probed defaults
-python3 skills/pc-workspace-config/scripts/config.py init --defaults
+python3 "<skill-dir>/scripts/config.py" init --defaults
 
 # Explicit parameter overrides
-python3 skills/pc-workspace-config/scripts/config.py init \
+python3 "<skill-dir>/scripts/config.py" init \
   --delivery-target "owner/repo" \
   --base-remote "origin" \
   --push-remote "origin" \
@@ -79,14 +80,14 @@ python3 skills/pc-workspace-config/scripts/config.py init \
 Inspect the active workspace configuration:
 
 ```bash
-python3 skills/pc-workspace-config/scripts/config.py show
+python3 "<skill-dir>/scripts/config.py" show
 ```
 
 ### Validate Configuration (`validate`)
 Verify that the configuration exists, complies with schema `1.0`, and references existing Git remotes:
 
 ```bash
-python3 skills/pc-workspace-config/scripts/config.py validate
+python3 "<skill-dir>/scripts/config.py" validate
 ```
 
 Exit code is `0` when valid, or `1` when missing or invalid, printing actionable guidance.

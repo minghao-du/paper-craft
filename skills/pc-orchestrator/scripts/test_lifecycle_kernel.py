@@ -109,6 +109,10 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(env_data["provider"]["target"], "pc-issue-plan")
         self.assertEqual(env_data["inputs"]["acceptance_criteria"], ["Plan created", "Tests budgeted"])
         self.assertEqual(env_data["contract"]["receipt_path"], str(expected_receipt))
+        template = Path(env_data["contract"]["receipt_template"])
+        self.assertTrue(template.is_absolute())
+        self.assertEqual(template, SCRIPT_PATH.parent.parent / "templates" / "subagent-receipt.template.md")
+        self.assertTrue(template.read_text(encoding="utf-8"))
 
         with open(self.receipt_root / "state.json", "r", encoding="utf-8") as f:
             state = json.load(f)

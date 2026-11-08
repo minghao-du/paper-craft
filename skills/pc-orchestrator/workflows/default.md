@@ -5,6 +5,9 @@
 - **Initial Stage**: stage_1_plan
 - **Target**: Coordinate end-to-end issue delivery from planning through implementation, landing, verification, refactoring, and state recording.
 
+Resolve `<workspace-skill-dir>` to the absolute installed `pc-workspace` directory before
+using the script-provider alternatives.
+
 ```yaml
 workflow:
   name: default
@@ -22,7 +25,7 @@ workflow:
       # Script substitution alternative:
       # provider:
       #   type: script
-      #   target: skills/pc-workspace/scripts/prepare-worktree.py
+      #   target: <workspace-skill-dir>/scripts/prepare-worktree.py
 
     - id: stage_1_plan
       logical_task: issue_plan
@@ -139,7 +142,7 @@ Carry explicit artifact locations into verification and research recording. Afte
     target: pc-workspace
     args: []
   ```
-  *(Alternative script provider: `type: script`, `target: skills/pc-workspace/scripts/prepare-worktree.py`)*
+  *(Alternative script provider: `type: script`, `target: <workspace-skill-dir>/scripts/prepare-worktree.py`)*
 - **Objective**: Prepare and validate the Git execution directory (persistent checkout, isolated feature worktree, or pinned detached worktree) required for the target logical stage.
 - **Inputs**: Target repository, base branch, requested feature branch or commit SHA, and workspace configuration.
 - **Contract**: Writes Markdown receipt to `contract.receipt_path` and emits `{ execution_status, result: { repository, working_directory, worktree, branch, baseBranch, commit, created }, receipt_path, summary }`.
@@ -336,7 +339,7 @@ Organize touched pipeline files under scientific invariance with a human steerin
     target: pc-workspace
     args: ["--cleanup"]
   ```
-  *(Alternative script provider: `type: script`, `target: skills/pc-workspace/scripts/prepare-worktree.py`, `args: ["--cleanup"]`)*
+  *(Alternative script provider: `type: script`, `target: <workspace-skill-dir>/scripts/prepare-worktree.py`, `args: ["--cleanup"]`)*
 - **Objective**: Perform deterministic cleanup of temporary worktrees and branches created during the workflow run while preserving retained directories.
 - **Inputs**: Created workspace candidates, final SHAs, delivery/verification receipts, artifact retention evidence.
 - **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { removed_paths: [...], retained_paths: [...] }, receipt_path, summary }`.

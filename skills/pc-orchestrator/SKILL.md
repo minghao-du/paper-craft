@@ -109,7 +109,7 @@ Task Input Envelope: `<receipt_root>/<step_index>-input.json`
 
 Instructions:
 1. Read the Task Input Envelope at the path above to obtain your full task context, inputs, predecessor receipts, environment, and contract requirements.
-2. Bind your execution to `environment.working_directory` and follow the specialized instructions in `skills/<skill_name>/SKILL.md`.
+2. Bind your execution to `environment.working_directory` and follow the specialized instructions in the installed `<skill_name>` skill’s `SKILL.md`.
 3. Complete the assigned objective adhering to `inputs.acceptance_criteria`.
 4. Write your full durable Markdown receipt to `contract.receipt_path` matching `contract.receipt_template`.
 5. Return ONLY the standard compact JSON execution report:
@@ -173,13 +173,17 @@ The Orchestrator coordinates execution by reading a workflow definition and adva
 its stages as a state machine. It contains no hardcoded stage logic; domain delivery sequences
 are fully decoupled into modular workflow files.
 
+Resolve `<skill-dir>` to the absolute installed directory containing this `SKILL.md`, and
+`<config-skill-dir>` to the installed `pc-workspace-config` directory. Resolve bundled script
+provider targets to absolute paths in their owning skill directories before preparing an envelope.
+
 ### 1. Workflow Loading
-- **Default workflow**: Load `skills/pc-orchestrator/workflows/default.md` (the standard 6-stage delivery workflow).
+- **Default workflow**: Load `<skill-dir>/workflows/default.md` (the standard 6-stage delivery workflow).
 - **Custom workflow override**: If the user specifies an alternative workflow path in their prompt or configuration, load and follow that workflow definition instead.
 
 ### 2. Workflow Entry & Configuration Gate
 Before creating task worktrees or initializing workflow runtime state:
-1. **Workspace Configuration Check**: Verify that `.paper-craft/workspace-config.json` exists and is valid (run `python3 skills/pc-workspace-config/scripts/config.py validate --repo-dir <repo_dir>` or `python3 skills/pc-orchestrator/scripts/state_machine.py check-config --repo-dir <repo_dir>`).
+1. **Workspace Configuration Check**: Verify that `.paper-craft/workspace-config.json` exists and is valid (run `python3 "<config-skill-dir>/scripts/config.py" validate --repo-dir <repo_dir>` or `python3 "<skill-dir>/scripts/state_machine.py" check-config --repo-dir <repo_dir>`).
 2. **Missing / Invalid Configuration Handling**: If the configuration is missing or invalid, halt immediately to the Decision Board. Clearly explain the missing configuration and guide the user to run `pc-workspace-config`. Do NOT dispatch task worktrees on the error path.
 
 ### 3. Execution Loop
@@ -187,18 +191,18 @@ For each stage defined in the loaded workflow:
 1. **Identify Stage Contract & Resolve Provider**: Read the stage's `logical_stage`, `provider` (`type`, `target`, `args`), inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules.
 2. **Prepare Environment**: Apply [Workspace lifecycle and dispatch](references/workspaces.md), verifying or creating the assigned workspace before professional execution.
 3. **Prepare Task Dispatch**:
-   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py prepare --receipt-root "<receipt_root>" --stage <stage> --objective "<objective>" --provider-type <skill|script> --provider-target <target> ...`.
+   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" prepare --receipt-root "<receipt_root>" --stage <stage> --objective "<objective>" --provider-type <skill|script> --provider-target <target> ...`.
    - The kernel atomically allocates monotonically increasing `step_index`, generates `<step_index>-input.json`, assigns `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
 4. **Handoff Execution**:
-   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py handoff --receipt-root "<receipt_root>"` to authorize execution launch.
+   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" handoff --receipt-root "<receipt_root>"` to authorize execution launch.
    - **If `provider.type == "skill"`**: Dispatch fresh specialist subagent using platform adapter with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
    - **If `provider.type == "script"`**: Execute `<provider.target> --input-envelope "<receipt_root>/<step_index>-input.json" <provider.args>` and capture the compact report from stdout.
 5. **Complete Dispatch & Verify Receipt**:
-   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py complete --receipt-root "<receipt_root>" --report '<compact_json_report>'`.
+   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" complete --receipt-root "<receipt_root>" --report '<compact_json_report>'`.
    - The kernel validates report integrity (the 4 required fields) and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
 6. **Evaluate Routing & Resolve Decision**:
    - Match the returned native `result` against the stage's routing table.
-   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>"`.
+   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>"`.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.

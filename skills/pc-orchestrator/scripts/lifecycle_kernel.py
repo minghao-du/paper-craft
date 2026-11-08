@@ -36,7 +36,7 @@ _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from envelope import validate_envelope, atomic_write_json
+from envelope import DEFAULT_RECEIPT_TEMPLATE, validate_envelope, atomic_write_json
 
 
 def get_state_file_path(receipt_root: Path | str) -> Path:
@@ -235,7 +235,7 @@ def prepare_task(
     attempt_intent: str = "same",
     branch: Optional[str] = None,
     commit: Optional[str] = None,
-    receipt_template: str = "templates/subagent-receipt.template.md",
+    receipt_template: str = DEFAULT_RECEIPT_TEMPLATE,
 ) -> Dict[str, Any]:
     """Prepare a fixed task dispatch, generate envelope, and assign receipt path."""
     receipt_root_path = Path(receipt_root).resolve()
@@ -876,7 +876,7 @@ def main() -> None:
     p_prep.add_argument("--attempt-intent", default="same", choices=["same", "new", "same_attempt", "new_attempt"], help="Attempt intent.")
     p_prep.add_argument("--branch", help="Feature branch override.")
     p_prep.add_argument("--commit", help="Commit SHA override.")
-    p_prep.add_argument("--receipt-template", default="templates/subagent-receipt.template.md", help="Receipt template path.")
+    p_prep.add_argument("--receipt-template", default=DEFAULT_RECEIPT_TEMPLATE, help="Receipt template path.")
 
     # handoff
     p_hand = subparsers.add_parser("handoff", help="Record execution handoff boundary.")

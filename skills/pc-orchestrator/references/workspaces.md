@@ -8,6 +8,9 @@ Every stage's execution context is explicitly materialized as a Task Input Envel
 (`<receipt_root>/<step_index>-input.json`) before dispatch, and every provider adheres to the unified
 Receipt Contract (`{ execution_status, result, receipt_path, summary }` + Markdown receipt).
 
+Resolve `<workspace-skill-dir>` and `<orchestrator-skill-dir>` to the absolute installed directories
+of `pc-workspace` and `pc-orchestrator`. Substitute these paths before preparing script providers.
+
 ---
 
 ## Workspace layout and artifact hygiene
@@ -18,7 +21,6 @@ and durable execution receipts:
 ```text
 <project_root>/                         # Main repository checkout (persistent)
 ├── .agents/                            # Teamwork and agent configurations
-├── skills/                             # Skill definitions and kernel scripts
 ├── research-state/                     # Durable research records (NEVER inside disposable worktrees)
 └── ...
 
@@ -71,11 +73,11 @@ The `workspace_prepare` stage is agnostic to execution provider:
   ```yaml
   provider:
     type: "script"
-    target: "skills/pc-workspace/scripts/prepare-worktree.py"
+    target: "<workspace-skill-dir>/scripts/prepare-worktree.py"
     args: []
   ```
   The Orchestrator (or platform execution runner) executes the kernel script directly:
-  `python3 skills/pc-workspace/scripts/prepare-worktree.py --input-envelope <receipt_root>/<step_index>-input.json`
+  `python3 "<workspace-skill-dir>/scripts/prepare-worktree.py" --input-envelope <receipt_root>/<step_index>-input.json`
   The kernel deterministically prepares the worktree, writes the receipt, and prints the compact JSON report.
 
 ### State Persistence & Acceptance Gate
@@ -112,7 +114,7 @@ allowing cleanup. Professional tasks proceed only after accepted preparation.
 
 Context passing is fully structured and file-based. The Orchestrator NEVER concatenates large natural language prompts.
 Instead, the Orchestrator generates a Task Input Envelope file (`<receipt_root>/<step_index>-input.json`) using
-`skills/pc-orchestrator/scripts/envelope.py` before every dispatch.
+`<orchestrator-skill-dir>/scripts/envelope.py` before every dispatch.
 
 ### Task Input Envelope Schema (v1.0)
 The envelope encapsulates 7 mandatory sections:
@@ -133,7 +135,7 @@ The envelope encapsulates 7 mandatory sections:
 
   Instructions:
   1. Read the Task Input Envelope at the path above to obtain your full task context, inputs, predecessor receipts, environment, and contract requirements.
-  2. Bind your execution to `environment.working_directory` and follow the specialized instructions in `skills/<skill_name>/SKILL.md`.
+  2. Bind your execution to `environment.working_directory` and follow the specialized instructions in the installed `<skill_name>` skill’s `SKILL.md`.
   3. Complete the assigned objective adhering to `inputs.acceptance_criteria`.
   4. Write your full durable Markdown receipt to `contract.receipt_path` matching `contract.receipt_template`.
   5. Return ONLY the standard compact JSON execution report:
@@ -187,7 +189,7 @@ Return only this compact JSON object on standard output:
 - `failed`: An execution error or unrecoverable defect prevents a reliable result.
 
 ### Physical Markdown Receipt
-The provider must write a complete Markdown receipt conforming to `subagent-receipt.template.md` at `contract.receipt_path`.
+The provider must write a complete Markdown receipt to `contract.receipt_path` using `contract.receipt_template`.
 The receipt captures full execution logs, git status, environment verification, artifacts created, and verification evidence.
 
 ### Protocol Verification Gate
@@ -203,7 +205,7 @@ After required delivery, acceptance, and research recording succeed, execute the
 
 ### Decoupled Cleanup Resolution
 - **Skill Provider**: `provider: { type: "skill", target: "pc-workspace" }`
-- **Script Provider**: `provider: { type: "script", target: "skills/pc-workspace/scripts/prepare-worktree.py", args: ["--cleanup"] }`
+- **Script Provider**: `provider: { type: "script", target: "<workspace-skill-dir>/scripts/prepare-worktree.py", args: ["--cleanup"] }`
 
 The Task Input Envelope for cleanup supplies this run's created candidates, final SHAs, delivery/verification receipts,
 artifact retention evidence, and completed-user status. Reused or manual environments require an explicit cleanup request.

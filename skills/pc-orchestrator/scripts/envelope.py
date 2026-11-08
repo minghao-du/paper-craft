@@ -15,6 +15,12 @@ import sys
 from typing import Any, Dict, List, Optional, Union
 
 
+# Absolute path to the receipt template bundled with this skill.
+DEFAULT_RECEIPT_TEMPLATE = str(
+    Path(__file__).resolve().parent.parent / "templates" / "subagent-receipt.template.md"
+)
+
+
 class EnvelopeError(Exception):
     """Base exception for envelope operations."""
 
@@ -275,7 +281,7 @@ def create_envelope(
     parameters: Optional[Dict[str, Any]] = None,
     worktree_container: Optional[str] = None,
     receipt_path: Union[str, Path],
-    receipt_template: str = "templates/subagent-receipt.template.md",
+    receipt_template: str = DEFAULT_RECEIPT_TEMPLATE,
     delivery_attempts_used: int = 0,
     delivery_attempts_max: int = 3,
     delivery_attempts_limit: Optional[int] = None,
@@ -363,7 +369,7 @@ def create_envelope(
         },
         "contract": {
             "receipt_path": receipt_str,
-            "receipt_template": str(receipt_template or "templates/subagent-receipt.template.md"),
+            "receipt_template": str(receipt_template or DEFAULT_RECEIPT_TEMPLATE),
         },
         "budgets": {
             "delivery_attempts_used": int(delivery_attempts_used),
