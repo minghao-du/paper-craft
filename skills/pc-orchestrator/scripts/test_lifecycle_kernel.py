@@ -475,6 +475,486 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(final_info["budgets"]["delivery_attempts_used"], 1)
         self.assertEqual(final_info["blocking_reasons"], [])
 
+    def test_duplicate_and_conflicting_complete(self):
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
+        prep_res = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+        )
+        prep = json.loads(prep_res.stdout)
+        receipt_path = Path(prep["receipt_path"])
+        dispatch_id = prep["dispatch_id"]
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+
+        with open(receipt_path, "w", encoding="utf-8") as f:
+            f.write("# Stage 1 Plan\nOutcome: planned\n")
+
+        report = {
+            "execution_status": "succeeded",
+            "result": {"outcome": "planned"},
+            "receipt_path": str(receipt_path),
+            "summary": "Plan created",
+        }
+        res1 = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps(report),
+            "--dispatch-id", dispatch_id,
+        )
+        self.assertEqual(res1.returncode, 0, res1.stderr)
+        first_comp = json.loads(res1.stdout)
+
+        # 1. Duplicate complete call with identical report and dispatch_id
+        res2 = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps(report),
+            "--dispatch-id", dispatch_id,
+        )
+        self.assertEqual(res2.returncode, 0, res2.stderr)
+        dup_comp = json.loads(res2.stdout)
+        self.assertEqual(first_comp["dispatch_id"], dup_comp["dispatch_id"])
+
+        # Check completed_stages count is still 1
+        with open(self.receipt_root / "state.json", "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertEqual(len(state["completed_stages"]), 1)
+        self.assertEqual(state["budgets"]["delivery_attempts_used"], 1)
+
+        # 2. Conflicting complete call for already settled dispatch is rejected
+        conflicting_report = dict(report)
+        conflicting_report["execution_status"] = "failed"
+        res3 = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps(conflicting_report),
+            "--dispatch-id", dispatch_id,
+        )
+        self.assertNotEqual(res3.returncode, 0)
+        self.assertIn("conflict", res3.stderr.lower())
+
+        # State not overwritten
+        with open(self.receipt_root / "state.json", "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertEqual(state["completed_stages"][0]["execution_status"], "succeeded")
+
+    def test_budget_exhaustion_strictly_rejects_new_attempts_and_zero_max(self):
+        # Zero max attempts should immediately reject
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "42",
+            "--delivery-attempts-max", "0",
+            "--force",
+        )
+        res0 = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+        )
+        self.assertNotEqual(res0.returncode, 0)
+        self.assertIn("budget exceeded", res0.stderr.lower())
+
+        # Max 2 attempts: attempt 1 used, attempt 2 used, attempt 3 rejected
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "42",
+            "--delivery-attempts-max", "2",
+            "--force",
+        )
+        # Attempt 1
+        p1 = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+        )
+        self.assertEqual(p1.returncode, 0, p1.stderr)
+        d1 = json.loads(p1.stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        with open(d1["receipt_path"], "w", encoding="utf-8") as f:
+            f.write("# Receipt\nOutcome: rework_needed\n")
+        self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps({
+                "execution_status": "succeeded",
+                "result": {"outcome": "rework_needed"},
+                "receipt_path": d1["receipt_path"],
+                "summary": "Plan needs rework",
+            }),
+        )
+
+        # Attempt 2 with attempt-intent new
+        p2 = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Re-plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+            "--attempt-intent", "new",
+        )
+        self.assertEqual(p2.returncode, 0, p2.stderr)
+        d2 = json.loads(p2.stdout)
+        self.assertEqual(d2["attempt"], 2)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        with open(d2["receipt_path"], "w", encoding="utf-8") as f:
+            f.write("# Receipt 2\nOutcome: rework_needed\n")
+        self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps({
+                "execution_status": "succeeded",
+                "result": {"outcome": "rework_needed"},
+                "receipt_path": d2["receipt_path"],
+                "summary": "Re-plan still needs rework",
+            }),
+        )
+
+        # Attempt 3 with attempt-intent new must be rejected
+        p3 = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Re-plan issue 42 third time",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+            "--attempt-intent", "new",
+        )
+        self.assertNotEqual(p3.returncode, 0)
+        self.assertIn("budget exceeded", p3.stderr.lower())
+
+    def test_report_protocol_errors_record_inspect_visible_blockers(self):
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
+        prep_res = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+        )
+        prep = json.loads(prep_res.stdout)
+        assigned_receipt = Path(prep["receipt_path"])
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+
+        # 1. Malformed report (missing 'summary')
+        bad_rep1 = {
+            "execution_status": "succeeded",
+            "result": {"outcome": "planned"},
+            "receipt_path": str(assigned_receipt),
+        }
+        res1 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(bad_rep1))
+        self.assertNotEqual(res1.returncode, 0)
+
+        # Inspect must show protocol error blocking reason
+        insp1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertTrue(any("summary" in r.lower() or "protocol error" in r.lower() for r in insp1["blocking_reasons"]))
+        self.assertIsNotNone(insp1["active_dispatch"])
+
+        # 2. Receipt path mismatch
+        bad_rep2 = {
+            "execution_status": "succeeded",
+            "result": {"outcome": "planned"},
+            "receipt_path": str(self.receipt_root / "wrong-receipt.md"),
+            "summary": "Mismatched receipt path",
+        }
+        res2 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(bad_rep2))
+        self.assertNotEqual(res2.returncode, 0)
+        insp2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertTrue(any("mismatch" in r.lower() or "protocol error" in r.lower() for r in insp2["blocking_reasons"]))
+
+        # 3. Receipt missing on disk
+        valid_rep = {
+            "execution_status": "succeeded",
+            "result": {"outcome": "planned"},
+            "receipt_path": str(assigned_receipt),
+            "summary": "Plan ready",
+        }
+        res3 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(valid_rep))
+        self.assertNotEqual(res3.returncode, 0)
+        insp3 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertTrue(any("missing" in r.lower() or "protocol error" in r.lower() for r in insp3["blocking_reasons"]))
+
+        # 4. Receipt file is empty (0 bytes)
+        assigned_receipt.touch()
+        self.assertEqual(assigned_receipt.stat().st_size, 0)
+        res4 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(valid_rep))
+        self.assertNotEqual(res4.returncode, 0)
+        insp4 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertTrue(any("empty" in r.lower() or "protocol error" in r.lower() for r in insp4["blocking_reasons"]))
+
+        # 5. Provide valid non-empty receipt and complete: clears error
+        with open(assigned_receipt, "w", encoding="utf-8") as f:
+            f.write("# Plan Receipt\nOutcome: planned\n")
+        res5 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(valid_rep))
+        self.assertEqual(res5.returncode, 0, res5.stderr)
+        insp5 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertIsNone(insp5["active_dispatch"])
+        self.assertEqual(insp5["blocking_reasons"], [])
+
+    def test_rework_needed_outcome_recorded_as_specialist_result_not_business_acceptance(self):
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
+        prep_res = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_2_work",
+            "--objective", "Implement feature",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-work",
+        )
+        prep = json.loads(prep_res.stdout)
+        receipt_path = Path(prep["receipt_path"])
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+
+        with open(receipt_path, "w", encoding="utf-8") as f:
+            f.write("# Receipt\nOutcome: rework_needed\nFindings: tests failed in edge case\n")
+
+        rep = {
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed", "findings": "tests failed in edge case"},
+            "receipt_path": str(receipt_path),
+            "summary": "Specialist completed evaluation with rework_needed",
+        }
+        comp_res = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep))
+        self.assertEqual(comp_res.returncode, 0, comp_res.stderr)
+        comp_data = json.loads(comp_res.stdout)
+        self.assertEqual(comp_data["execution_status"], "succeeded")
+        self.assertEqual(comp_data["result"]["outcome"], "rework_needed")
+
+        # In state: stage_status is not 'succeeded'
+        with open(self.receipt_root / "state.json", "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertNotEqual(state["stage_status"], "succeeded")
+        self.assertEqual(state["stage_status"], "needs_rework")
+
+        # Calling resolve finish MUST be rejected because rework_needed is not business acceptance
+        res_finish = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "finish",
+            "--reason", "Attempting premature finish with rework_needed",
+        )
+        self.assertNotEqual(res_finish.returncode, 0)
+        self.assertIn("rework_needed", res_finish.stderr.lower())
+
+    def test_prepare_interrupted_commit_point_recovery(self):
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
+
+        # Simulate interrupted prepare: envelope 01-input.json was generated and written,
+        # but state.json was not yet committed.
+        env_path = self.receipt_root / "01-input.json"
+        receipt_path = self.receipt_root / "01-stage_1_plan-issue-42-try-1.md"
+        envelope_data = {
+            "schema_version": "1.0",
+            "task": {
+                "logical_stage": "stage_1_plan",
+                "step_index": 1,
+                "attempt": 1,
+                "root_issue_id": "42",
+                "current_issue_id": "42",
+            },
+            "provider": {
+                "type": "skill",
+                "target": "pc-issue-plan",
+                "args": [],
+            },
+            "environment": {
+                "working_directory": str(Path.cwd()),
+                "repository": "local/repo",
+                "base_branch": "main",
+                "branch": None,
+                "commit": None,
+            },
+            "inputs": {
+                "objective": "Plan issue 42 after crash",
+                "scope": "",
+                "acceptance_criteria": ["Plan approved"],
+                "predecessor_receipts": [],
+                "parameters": {},
+            },
+            "contract": {
+                "receipt_path": str(receipt_path),
+                "receipt_template": "templates/subagent-receipt.template.md",
+            },
+            "budgets": {
+                "delivery_attempts_used": 1,
+                "delivery_attempts_max": 3,
+                "replans_used": 0,
+                "replans_max": 2,
+            },
+        }
+        with open(env_path, "w", encoding="utf-8") as f:
+            json.dump(envelope_data, f, indent=2)
+
+        # Calling prepare with a conflicting task while an uncommitted envelope exists MUST fail
+        # and MUST NOT overwrite the uncommitted envelope
+        conf_res = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_2_work",
+            "--objective", "Conflicting work",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-work",
+        )
+        self.assertNotEqual(conf_res.returncode, 0)
+        with open(env_path, "r", encoding="utf-8") as f:
+            persisted_env = json.load(f)
+        self.assertEqual(persisted_env["task"]["logical_stage"], "stage_1_plan")
+
+        # Call prepare with identical task: should recover from uncommitted envelope
+        prep_res = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42 after crash",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+            "--criteria", "Plan approved",
+        )
+        self.assertEqual(prep_res.returncode, 0, prep_res.stderr)
+        prep = json.loads(prep_res.stdout)
+        self.assertEqual(prep["step_index"], 1)
+        self.assertEqual(prep["attempt"], 1)
+        self.assertEqual(prep["envelope_path"], str(env_path))
+
+        # Check state: committed properly without double-incrementing step_index or budgets
+        with open(self.receipt_root / "state.json", "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertEqual(state["next_step_index"], 2)
+        self.assertEqual(state["budgets"]["delivery_attempts_used"], 1)
+        self.assertIsNotNone(state.get("active_dispatch"))
+        self.assertEqual(state["active_dispatch"]["step_index"], 1)
+
+    def test_unconfirmed_handed_off_dispatch_across_reload_refuses_auto_retry(self):
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
+        prep_res = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+        )
+        prep = json.loads(prep_res.stdout)
+        receipt_path = Path(prep["receipt_path"])
+
+        # Handoff
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+
+        # Inspect shows in-flight unconfirmed execution
+        insp = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp["active_dispatch"]["status"], "handed_off")
+        self.assertTrue(any("unconfirmed" in r.lower() or "in flight" in r.lower() for r in insp["blocking_reasons"]))
+
+        # Prepare refuses auto-retry
+        p_again = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+        )
+        self.assertNotEqual(p_again.returncode, 0)
+        self.assertIn("already been handed off", p_again.stderr.lower())
+
+        # Duplicate handoff refuses new authorization
+        h_again = json.loads(self.run_cli("handoff", "--receipt-root", str(self.receipt_root)).stdout)
+        self.assertFalse(h_again["authorized"])
+
+        # Existence of receipt on disk alone does NOT settle the dispatch
+        with open(receipt_path, "w", encoding="utf-8") as f:
+            f.write("# Receipt\nOutcome: planned\n")
+        insp2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertIsNotNone(insp2["active_dispatch"])
+        self.assertEqual(insp2["completed_stages_count"], 0)
+
+    def test_decisions_persist_across_reload_and_continue_cannot_bypass_unconfirmed_execution(self):
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
+        self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 42",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+        )
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+
+        # 1. Resolve wait_user
+        res1 = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "wait_user",
+            "--reason", "Awaiting human review of architectural trade-offs",
+        )
+        self.assertEqual(res1.returncode, 0, res1.stderr)
+
+        # Inspect confirms blocked and wait_user decision persisted
+        insp1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp1["stage_status"], "blocked")
+        self.assertEqual(insp1["last_decision"]["decision"], "wait_user")
+        self.assertTrue(any("blocked" in r.lower() for r in insp1["blocking_reasons"]))
+
+        # 2. Resolve continue cannot bypass in-flight execution
+        res2 = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--reason", "Human approved continuation",
+        )
+        self.assertEqual(res2.returncode, 0, res2.stderr)
+        insp2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        # Active dispatch is still in-flight handed_off, stage_status reverts to in_progress
+        self.assertIsNotNone(insp2["active_dispatch"])
+        self.assertEqual(insp2["stage_status"], "in_progress")
+        self.assertTrue(any("in flight" in r.lower() or "unconfirmed" in r.lower() for r in insp2["blocking_reasons"]))
+
+        # Premature finish while dispatch is in flight must fail
+        res_finish = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "finish",
+            "--reason", "Try to finish with in-flight task",
+        )
+        self.assertNotEqual(res_finish.returncode, 0)
+        self.assertIn("in flight", res_finish.stderr.lower())
+
+        # 3. Halt persists and blocks new actions
+        res3 = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "halt",
+            "--reason", "Emergency stop due to external blocker",
+        )
+        self.assertEqual(res3.returncode, 0, res3.stderr)
+        insp3 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp3["stage_status"], "halted")
+
+        # Halted workflow rejects new prepare or handoff
+        res_prep = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_2_work",
+            "--objective", "Work",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-work",
+        )
+        self.assertNotEqual(res_prep.returncode, 0)
+        self.assertIn("halted", res_prep.stderr.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

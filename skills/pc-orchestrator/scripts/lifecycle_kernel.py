@@ -65,13 +65,91 @@ def get_state_file_path(receipt_root: Path | str) -> Path:
     return Path(receipt_root).resolve() / "state.json"
 
 
+def _recover_uncommitted_dispatch(receipt_root_path: Path, state: Dict[str, Any]) -> Dict[str, Any]:
+    """Recover uncommitted prepare dispatch if envelope exists but state.json was interrupted."""
+    if state.get("active_dispatch") is not None:
+        return state
+
+    next_idx = state.get("next_step_index", 1)
+    env_file = receipt_root_path / f"{next_idx:02d}-input.json"
+    if not env_file.exists():
+        return state
+
+    try:
+        with open(env_file, "r", encoding="utf-8") as f:
+            env_data = json.load(f)
+        task = env_data.get("task", {})
+        if task.get("step_index") == next_idx:
+            stage = task.get("logical_stage", "")
+            step_index = task.get("step_index", next_idx)
+            attempt = task.get("attempt", 1)
+            root_issue = str(task.get("root_issue_id", state.get("root_issue_id", "0")))
+            curr_issue = str(task.get("current_issue_id", state.get("current_issue_id", root_issue)))
+            dispatch_id = f"{step_index:02d}-{stage}-issue-{curr_issue}-try-{attempt}"
+            contract = env_data.get("contract", {})
+            receipt_path = contract.get("receipt_path", str(receipt_root_path / f"{dispatch_id}.md"))
+            inputs = env_data.get("inputs", {})
+            provider = env_data.get("provider", {})
+            env_env = env_data.get("environment", {})
+
+            state["active_dispatch"] = {
+                "dispatch_id": dispatch_id,
+                "step_index": step_index,
+                "task_name": stage,
+                "attempt": attempt,
+                "status": "prepared",
+                "authorized": False,
+                "envelope_path": str(env_file),
+                "receipt_path": receipt_path,
+                "request": {
+                    "objective": inputs.get("objective", ""),
+                    "provider": {
+                        "type": provider.get("type"),
+                        "target": provider.get("target"),
+                        "args": provider.get("args", []),
+                    },
+                    "logical_stage": stage,
+                    "acceptance_criteria": inputs.get("acceptance_criteria", []),
+                    "predecessors": inputs.get("predecessor_receipts", []),
+                    "working_directory": env_env.get("working_directory", ""),
+                },
+            }
+            state["next_step_index"] = step_index + 1
+            budgets = state.get("budgets", {})
+            if budgets.get("delivery_attempts_used", 0) < attempt:
+                budgets["delivery_attempts_used"] = attempt
+            state["budgets"] = budgets
+            state["current_stage"] = stage
+            state["stage_status"] = "pending"
+            state["last_updated"] = datetime.now(timezone.utc).isoformat()
+            atomic_write_json(get_state_file_path(receipt_root_path), state)
+    except Exception:
+        pass
+
+    return state
+
+
+def _record_protocol_error(receipt_root_path: Path, state: Dict[str, Any], error_type: str, message: str) -> None:
+    """Record inspect-visible protocol error without overwriting last confirmed state."""
+    now = datetime.now(timezone.utc).isoformat()
+    state["protocol_error"] = {
+        "error_type": error_type,
+        "message": message,
+        "timestamp": now,
+    }
+    state["last_updated"] = now
+    atomic_write_json(get_state_file_path(receipt_root_path), state)
+
+
 def load_state(receipt_root: Path | str) -> Dict[str, Any]:
     """Load state.json from receipt root, exiting or raising if not found."""
-    state_file = get_state_file_path(receipt_root)
+    root_path = Path(receipt_root).resolve()
+    state_file = get_state_file_path(root_path)
     if not state_file.exists():
         raise FileNotFoundError(f"State file not found at {state_file}. Run 'init' first.")
     with open(state_file, "r", encoding="utf-8") as f:
-        return json.load(f)
+        state = json.load(f)
+    return _recover_uncommitted_dispatch(root_path, state)
 
 
 def check_workspace_config(repo_dir: Path) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
@@ -182,6 +260,10 @@ def prepare_task(
     receipt_root_path = Path(receipt_root).resolve()
     state = load_state(receipt_root_path)
 
+    # Check workflow halt status
+    if state.get("stage_status") == "halted" or state.get("orchestrator_decision") == "halt":
+        raise RuntimeError("Cannot prepare task: Workflow is halted. Run 'resolve --decision continue' to resume first.")
+
     # Validate active dispatch
     active = state.get("active_dispatch")
     if active:
@@ -197,6 +279,9 @@ def prepare_task(
             and req.get("objective") == objective
             and req.get("provider", {}).get("type") == provider_type
             and req.get("provider", {}).get("target") == provider_target
+            and req.get("provider", {}).get("args", []) == (provider_args or [])
+            and req.get("acceptance_criteria", []) == (acceptance_criteria or [])
+            and req.get("predecessors", []) == (predecessor_receipts or [])
         ):
             return {
                 "dispatch_id": active["dispatch_id"],
@@ -216,7 +301,16 @@ def prepare_task(
     used_attempts = budgets.get("delivery_attempts_used", 0)
     max_attempts = budgets.get("delivery_attempts_max", 3)
 
+    if max_attempts <= 0:
+        raise RuntimeError(
+            f"Budget exceeded: delivery attempts max ({max_attempts}) is exhausted."
+        )
+
     if used_attempts == 0:
+        if used_attempts >= max_attempts:
+            raise RuntimeError(
+                f"Budget exceeded: delivery attempts used ({used_attempts}) reached maximum ({max_attempts})."
+            )
         new_attempt = 1
         budgets["delivery_attempts_used"] = 1
     elif attempt_intent in ("new", "new_attempt"):
@@ -343,6 +437,10 @@ def handoff_dispatch(
     receipt_root_path = Path(receipt_root).resolve()
     state = load_state(receipt_root_path)
 
+    # Check workflow halt status
+    if state.get("stage_status") == "halted" or state.get("orchestrator_decision") == "halt":
+        raise RuntimeError("Cannot handoff dispatch: Workflow is halted. Run 'resolve --decision continue' to resume first.")
+
     active = state.get("active_dispatch")
     if not active:
         raise RuntimeError("No active dispatch found to hand off. Run 'prepare' first.")
@@ -400,78 +498,123 @@ def complete_dispatch(
             try:
                 report_data = json.loads(report_str)
             except Exception as e:
-                raise ValueError(f"Invalid compact report JSON: {e}")
+                err_msg = f"Invalid compact report JSON: {e}"
+                _record_protocol_error(receipt_root_path, state, "invalid_json", err_msg)
+                raise ValueError(err_msg)
         else:
             report_file = Path(report_str).resolve()
             if not report_file.exists():
-                raise FileNotFoundError(f"Report file not found: {report_file}")
-            with open(report_file, "r", encoding="utf-8") as f:
-                report_data = json.load(f)
+                err_msg = f"Report file not found: {report_file}"
+                _record_protocol_error(receipt_root_path, state, "report_file_missing", err_msg)
+                raise FileNotFoundError(err_msg)
+            try:
+                with open(report_file, "r", encoding="utf-8") as f:
+                    report_data = json.load(f)
+            except Exception as e:
+                err_msg = f"Invalid report file JSON: {e}"
+                _record_protocol_error(receipt_root_path, state, "invalid_json", err_msg)
+                raise ValueError(err_msg)
     elif isinstance(report, dict):
         report_data = report
     else:
-        raise TypeError("Report must be a JSON object dictionary or JSON string.")
+        err_msg = "Report must be a JSON object dictionary or JSON string."
+        _record_protocol_error(receipt_root_path, state, "invalid_report_type", err_msg)
+        raise TypeError(err_msg)
 
     # Validate 4 required fields
     required_keys = ["execution_status", "result", "receipt_path", "summary"]
     for k in required_keys:
         if k not in report_data:
-            raise ValueError(f"Compact execution report missing required field: '{k}'")
+            err_msg = f"Compact execution report missing required field: '{k}'"
+            _record_protocol_error(receipt_root_path, state, "missing_field", err_msg)
+            raise ValueError(err_msg)
 
     status = report_data["execution_status"]
     if status not in ("succeeded", "failed", "blocked"):
-        raise ValueError(
-            f"Invalid execution_status '{status}'. Expected 'succeeded' | 'failed' | 'blocked'."
-        )
+        err_msg = f"Invalid execution_status '{status}'. Expected 'succeeded' | 'failed' | 'blocked'."
+        _record_protocol_error(receipt_root_path, state, "invalid_status", err_msg)
+        raise ValueError(err_msg)
 
     if not isinstance(report_data["result"], dict):
-        raise ValueError(f"Field 'result' must be a JSON object (dict), got {type(report_data['result']).__name__}.")
+        err_msg = f"Field 'result' must be a JSON object (dict), got {type(report_data['result']).__name__}."
+        _record_protocol_error(receipt_root_path, state, "invalid_result", err_msg)
+        raise ValueError(err_msg)
 
     if not isinstance(report_data["receipt_path"], str) or not report_data["receipt_path"].strip():
-        raise ValueError("Field 'receipt_path' must be a non-empty string.")
+        err_msg = "Field 'receipt_path' must be a non-empty string."
+        _record_protocol_error(receipt_root_path, state, "invalid_receipt_path", err_msg)
+        raise ValueError(err_msg)
 
     if not isinstance(report_data["summary"], str) or not report_data["summary"].strip():
-        raise ValueError("Field 'summary' must be a non-empty string.")
+        err_msg = "Field 'summary' must be a non-empty string."
+        _record_protocol_error(receipt_root_path, state, "invalid_summary", err_msg)
+        raise ValueError(err_msg)
 
     active = state.get("active_dispatch")
     completed_stages = state.get("completed_stages", [])
 
-    # Idempotency check if already completed
+    # Idempotency and conflict check if already completed
     if not active:
-        if completed_stages:
-            last = completed_stages[-1]
+        matching_settled = None
+        report_resolved_receipt = str(Path(report_data["receipt_path"]).resolve())
+        for c in reversed(completed_stages):
+            if dispatch_id and c.get("dispatch_id") == dispatch_id:
+                matching_settled = c
+                break
+            elif not dispatch_id and c.get("receipt_path") == report_resolved_receipt:
+                matching_settled = c
+                break
+
+        if matching_settled:
             if (
-                last.get("receipt_path") == str(Path(report_data["receipt_path"]).resolve())
-                and last.get("execution_status") == status
-                and last.get("result") == report_data["result"]
+                matching_settled.get("execution_status") == status
+                and matching_settled.get("result") == report_data["result"]
             ):
-                return last
-        raise RuntimeError("No active dispatch in flight to complete.")
+                return matching_settled
+            else:
+                err_msg = (
+                    f"Conflicting report for already settled dispatch '{matching_settled.get('dispatch_id')}': "
+                    "execution_status or result differs."
+                )
+                _record_protocol_error(receipt_root_path, state, "report_conflict", err_msg)
+                raise RuntimeError(err_msg)
+
+        err_msg = "No active dispatch in flight to complete."
+        _record_protocol_error(receipt_root_path, state, "no_active_dispatch", err_msg)
+        raise RuntimeError(err_msg)
 
     if dispatch_id and active.get("dispatch_id") != dispatch_id:
-        raise ValueError(
-            f"Active dispatch ID '{active.get('dispatch_id')}' does not match requested '{dispatch_id}'."
-        )
+        err_msg = f"Active dispatch ID '{active.get('dispatch_id')}' does not match requested '{dispatch_id}'."
+        _record_protocol_error(receipt_root_path, state, "dispatch_mismatch", err_msg)
+        raise ValueError(err_msg)
 
     if active.get("status") != "handed_off":
-        raise RuntimeError(
+        err_msg = (
             f"Cannot complete dispatch '{active.get('dispatch_id')}': task has not been handed off to execution. "
             "Run 'handoff' first."
         )
+        _record_protocol_error(receipt_root_path, state, "not_handed_off", err_msg)
+        raise RuntimeError(err_msg)
 
     # Verify physical receipt on disk
     assigned_receipt = Path(active["receipt_path"]).resolve()
     report_receipt = Path(report_data["receipt_path"]).resolve()
     if assigned_receipt != report_receipt:
-        raise ValueError(
+        err_msg = (
             f"Report receipt_path '{report_data['receipt_path']}' does not match assigned receipt_path '{active['receipt_path']}'."
         )
+        _record_protocol_error(receipt_root_path, state, "receipt_mismatch", err_msg)
+        raise ValueError(err_msg)
 
     if not assigned_receipt.exists():
-        raise FileNotFoundError(f"Receipt file missing on disk at: {assigned_receipt}")
+        err_msg = f"Receipt file missing on disk at: {assigned_receipt}"
+        _record_protocol_error(receipt_root_path, state, "receipt_missing", err_msg)
+        raise FileNotFoundError(err_msg)
 
     if assigned_receipt.stat().st_size == 0:
-        raise ValueError(f"Receipt file at {assigned_receipt} is empty (0 bytes).")
+        err_msg = f"Receipt file at {assigned_receipt} is empty (0 bytes)."
+        _record_protocol_error(receipt_root_path, state, "receipt_empty", err_msg)
+        raise ValueError(err_msg)
 
     # Record completion
     now = datetime.now(timezone.utc).isoformat()
@@ -489,7 +632,12 @@ def complete_dispatch(
 
     state.setdefault("completed_stages", []).append(completed_entry)
     state["active_dispatch"] = None
-    state["stage_status"] = status
+    state["protocol_error"] = None
+    outcome = report_data.get("result", {}).get("outcome")
+    if outcome == "rework_needed":
+        state["stage_status"] = "needs_rework"
+    else:
+        state["stage_status"] = status
     state["last_updated"] = now
     atomic_write_json(get_state_file_path(receipt_root_path), state)
 
@@ -510,6 +658,24 @@ def resolve_decision(
     receipt_root_path = Path(receipt_root).resolve()
     state = load_state(receipt_root_path)
 
+    # Guard rules for finish
+    if decision == "finish":
+        active = state.get("active_dispatch")
+        if active:
+            raise RuntimeError(
+                f"Cannot finish workflow: active dispatch '{active.get('dispatch_id')}' is still in flight."
+            )
+        if state.get("protocol_error"):
+            raise RuntimeError(
+                f"Cannot finish workflow: active protocol error exists: {state['protocol_error']['message']}"
+            )
+        completed_stages = state.get("completed_stages", [])
+        if completed_stages and completed_stages[-1].get("result", {}).get("outcome") == "rework_needed":
+            raise RuntimeError(
+                f"Cannot finish workflow: last completed stage '{completed_stages[-1].get('stage')}' resulted in "
+                "'rework_needed', which is not accepted as business pass. Rework must be routed."
+            )
+
     now = datetime.now(timezone.utc).isoformat()
     record = {
         "decision": decision,
@@ -528,7 +694,12 @@ def resolve_decision(
     elif decision == "finish":
         state["stage_status"] = "succeeded"
     elif decision == "continue":
-        state["stage_status"] = "pending"
+        # Resuming from wait cannot bypass unconfirmed external execution
+        active = state.get("active_dispatch")
+        if active and active.get("status") in ("handed_off", "running"):
+            state["stage_status"] = "in_progress"
+        else:
+            state["stage_status"] = "pending"
 
     state["last_updated"] = now
     atomic_write_json(get_state_file_path(receipt_root_path), state)
@@ -556,6 +727,12 @@ def inspect_state(
 
     blocking_reasons: List[str] = []
 
+    proto_err = state.get("protocol_error")
+    if proto_err:
+        blocking_reasons.append(
+            f"Protocol error [{proto_err.get('error_type')}]: {proto_err.get('message')}"
+        )
+
     if active:
         status = active.get("status")
         disp_id = active.get("dispatch_id")
@@ -565,7 +742,7 @@ def inspect_state(
             )
         elif status in ("handed_off", "running"):
             blocking_reasons.append(
-                f"Active dispatch '{disp_id}' is in flight; awaiting completion report and durable receipt."
+                f"Active dispatch '{disp_id}' was handed off and execution outcome is unconfirmed/in flight; awaiting completion report and durable receipt. Kernel will not auto-re-execute."
             )
         else:
             blocking_reasons.append(
@@ -589,6 +766,11 @@ def inspect_state(
     elif stage_status == "blocked":
         last_reason = decisions[-1].get("reason", "") if decisions else "Awaiting user input or prerequisite"
         blocking_reasons.append(f"Workflow is blocked: {last_reason}")
+    elif stage_status == "needs_rework":
+        last_outcome = completed_stages[-1].get("result", {}).get("outcome") if completed_stages else "rework_needed"
+        blocking_reasons.append(
+            f"Stage produced outcome '{last_outcome}'; awaiting orchestrator rework routing, not accepted as business pass."
+        )
 
     info = {
         "workflow": state.get("workflow", "default"),
@@ -598,6 +780,7 @@ def inspect_state(
         "stage_status": stage_status,
         "active_dispatch": active,
         "last_decision": decisions[-1] if decisions else None,
+        "protocol_error": proto_err,
         "budgets": budgets,
         "completed_stages_count": len(completed_stages),
         "blocking_reasons": blocking_reasons,
