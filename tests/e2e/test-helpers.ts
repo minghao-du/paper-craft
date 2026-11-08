@@ -20,6 +20,14 @@ export const STATE_MACHINE_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-orchestrator/scripts/state_machine.py',
 );
+export const WORKSPACE_CONFIG_SCRIPT = path.join(
+  REPO_ROOT,
+  'skills/pc-workspace-config/scripts/config.py',
+);
+export const PREPARE_WORKTREE_SCRIPT = path.join(
+  REPO_ROOT,
+  'skills/pc-workspace/scripts/prepare-worktree.py',
+);
 
 /**
  * TaskInputEnvelope contract definition matching envelope.py schema.
@@ -123,6 +131,26 @@ export function runStateMachineCli(
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): ProcessResult {
   return runPython(STATE_MACHINE_SCRIPT, args, options);
+}
+
+/**
+ * Execute pc-workspace-config/scripts/config.py CLI subcommand.
+ */
+export function runWorkspaceConfigCli(
+  args: string[],
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+): ProcessResult {
+  return runPython(WORKSPACE_CONFIG_SCRIPT, args, options);
+}
+
+/**
+ * Execute pc-workspace/scripts/prepare-worktree.py CLI subcommand.
+ */
+export function runPrepareWorktreeCli(
+  args: string[],
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+): ProcessResult {
+  return runPython(PREPARE_WORKTREE_SCRIPT, args, options);
 }
 
 /**

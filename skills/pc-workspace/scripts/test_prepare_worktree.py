@@ -347,6 +347,68 @@ class WorkspaceTests(unittest.TestCase):
         res = self.run_kernel("--input-envelope", str(missing_file), success=False)
         self.assertIn("Input envelope not found", res.stderr)
 
+    def test_workspace_config_normal_project_defaults(self):
+        """Prepare worktree consumes workspace-config.json and creates in default container."""
+        (self.source / ".gitignore").write_text(".paper-craft/\n")
+        self.git(self.source, "add", ".gitignore")
+        self.git(self.source, "commit", "-m", "Add gitignore")
+
+        cfg_dir = self.source / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "test/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+
+        res = self.run_kernel("--repo-dir", str(self.source), "--issue", "70")
+        data = json.loads(res.stdout)
+        expected_target = self.root / "project-worktrees" / "issue-70"
+        self.assertEqual(data["worktree"], str(expected_target))
+        self.assertEqual(data["repository"], "test/repo")
+        self.assertEqual(data["baseBranch"], "main")
+        self.assertTrue(data["created"])
+        self.assertTrue(expected_target.is_dir())
+
+    def test_workspace_config_custom_worktree_container(self):
+        """Custom worktree_container in workspace-config.json is respected."""
+        (self.source / ".gitignore").write_text(".paper-craft/\n")
+        self.git(self.source, "add", ".gitignore")
+        self.git(self.source, "commit", "-m", "Add gitignore")
+
+        cfg_dir = self.source / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "test/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../custom-worktrees",
+        }), encoding="utf-8")
+
+        res = self.run_kernel("--repo-dir", str(self.source), "--issue", "71")
+        data = json.loads(res.stdout)
+        expected_target = self.root / "custom-worktrees" / "issue-71"
+        self.assertEqual(data["worktree"], str(expected_target))
+        self.assertTrue(expected_target.is_dir())
+
+    def test_workspace_config_invalid_json_blocks_preparation(self):
+        """Corrupted workspace-config blocks preparation and does not create worktree."""
+        cfg_dir = self.source / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text("{corrupt-json", encoding="utf-8")
+
+        res = self.run_kernel("--repo-dir", str(self.source), "--issue", "72", success=False)
+        self.assertIn("Workspace configuration", res.stderr)
+        self.assertIn("invalid", res.stderr.lower())
+
+        target_container = self.root / "project-worktrees" / "issue-72"
+        self.assertFalse(target_container.exists(), "Worktree must not be created on invalid config")
+
 
 if __name__ == "__main__":
     unittest.main()

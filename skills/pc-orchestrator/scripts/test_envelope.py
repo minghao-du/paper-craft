@@ -413,6 +413,39 @@ class TestEnvelopeCLI(unittest.TestCase):
         self.assertNotEqual(res_bad_field.returncode, 0)
         self.assertIn("not found", res_bad_field.stderr.lower())
 
+    def test_auto_populate_from_workspace_config(self) -> None:
+        """create subcommand populates repository and base_branch from workspace config when unset."""
+        cfg_dir = self.root / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "acme/paper-craft",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "trunk",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+
+        output_file = self.root / "auto_env.json"
+        res = self.run_cli(
+            "create",
+            "--output", str(output_file),
+            "--stage", "workspace_prepare",
+            "--step", "1",
+            "--root-issue", "38",
+            "--provider-type", "script",
+            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
+            "--workdir", str(self.root),
+            "--objective", "Prepare workspace with auto config",
+            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertEqual(data["environment"]["repository"], "acme/paper-craft")
+        self.assertEqual(data["environment"]["base_branch"], "trunk")
+
 
 if __name__ == "__main__":
     unittest.main()

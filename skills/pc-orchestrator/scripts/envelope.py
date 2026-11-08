@@ -259,6 +259,26 @@ def create_envelope(
     workdir_str = str(Path(working_directory).resolve()) if working_directory else ""
     receipt_str = str(Path(receipt_path).resolve()) if receipt_path else ""
 
+    repo_val = str(repository or "local/repo")
+    base_b_val = str(base_branch or "main")
+    if (repo_val == "local/repo" or base_b_val == "main") and workdir_str:
+        try:
+            w_path = Path(workdir_str)
+            for cand in (
+                w_path / ".paper-craft" / "workspace-config.json",
+                w_path / ".paper-craft" / "workspace.json",
+            ):
+                if cand.exists():
+                    with open(cand, "r", encoding="utf-8") as cf:
+                        cfg = json.load(cf)
+                        if repo_val == "local/repo" and cfg.get("delivery_target"):
+                            repo_val = cfg["delivery_target"]
+                        if base_b_val == "main" and cfg.get("base_branch"):
+                            base_b_val = cfg["base_branch"]
+                    break
+        except Exception:
+            pass
+
     envelope: Dict[str, Any] = {
         "schema_version": schema_version,
         "task": {
@@ -275,8 +295,8 @@ def create_envelope(
         },
         "environment": {
             "working_directory": workdir_str,
-            "repository": str(repository or "local/repo"),
-            "base_branch": str(base_branch or "main"),
+            "repository": repo_val,
+            "base_branch": base_b_val,
             "branch": branch,
             "commit": commit,
         },
@@ -384,12 +404,35 @@ def cmd_create(args: argparse.Namespace) -> None:
         sys.stderr.write("Error: --workdir / --working-directory is required\n")
         sys.exit(1)
 
-    base_branch = (
-        args.base_branch
-        or state_data.get("context", {}).get("base_branch")
-        or state_data.get("context", {}).get("baseBranch")
-        or "main"
-    )
+    cfg_repo = None
+    cfg_base = None
+    try:
+        w_path = Path(working_directory).resolve()
+        for cand in (
+            w_path / ".paper-craft" / "workspace-config.json",
+            w_path / ".paper-craft" / "workspace.json",
+        ):
+            if cand.exists():
+                with open(cand, "r", encoding="utf-8") as cf:
+                    cfg = json.load(cf)
+                    cfg_repo = cfg.get("delivery_target")
+                    cfg_base = cfg.get("base_branch")
+                break
+    except Exception:
+        pass
+
+    repo_arg = args.repository
+    if repo_arg == "local/repo" and cfg_repo:
+        repo_arg = cfg_repo
+
+    if args.base_branch and args.base_branch != "main":
+        base_branch = args.base_branch
+    elif state_data.get("context", {}).get("base_branch"):
+        base_branch = state_data["context"]["base_branch"]
+    elif cfg_base:
+        base_branch = cfg_base
+    else:
+        base_branch = args.base_branch or "main"
 
     branch = args.branch or state_data.get("context", {}).get("branch")
     commit = args.commit or state_data.get("context", {}).get("commit")
@@ -415,7 +458,7 @@ def cmd_create(args: argparse.Namespace) -> None:
             provider_target=args.provider_target,
             provider_args=args.provider_args,
             working_directory=working_directory,
-            repository=args.repository,
+            repository=repo_arg,
             base_branch=base_branch,
             branch=branch,
             commit=commit,
