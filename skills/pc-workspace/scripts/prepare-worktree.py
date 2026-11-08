@@ -185,21 +185,50 @@ def prepare(args):
         if "worktree" in fields:
             worktrees.append(fields)
     primary = Path(worktrees[0]["worktree"]).resolve()
-    remote_url = git(source, "remote", "get-url", "origin")
-    metadata = json.loads(run(
-        "gh", "repo", "view", remote_url, "--json",
-        "nameWithOwner,defaultBranchRef", cwd=source
-    ))
-    if not metadata.get("defaultBranchRef"):
-        raise RuntimeError("The GitHub repository needs a default branch with an initial commit.")
+
+    # Load workspace config if available
+    config = None
+    config_file = None
+    if getattr(args, "workspace_config", None):
+        config_file = Path(args.workspace_config).resolve()
+    else:
+        for candidate in (
+            source / ".paper-craft" / "workspace-config.json",
+            source / ".paper-craft" / "workspace.json",
+        ):
+            if candidate.exists():
+                config_file = candidate
+                break
+
+    if config_file and config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as cf:
+                config = json.load(cf)
+        except Exception as e:
+            raise RuntimeError(f"Workspace configuration at {config_file} is invalid: {e}. Please re-run 'pc-workspace-config' to fix it.")
+
+    if config:
+        base_remote = config.get("base_remote", "origin")
+        observed_repo = config.get("delivery_target") or "local/repo"
+        default_base = config.get("base_branch") or "main"
+    else:
+        base_remote = "origin"
+        remote_url = git(source, "remote", "get-url", "origin")
+        metadata = json.loads(run(
+            "gh", "repo", "view", remote_url, "--json",
+            "nameWithOwner,defaultBranchRef", cwd=source
+        ))
+        if not metadata.get("defaultBranchRef"):
+            raise RuntimeError("The GitHub repository needs a default branch with an initial commit.")
+        observed_repo = metadata.get("nameWithOwner")
+        default_base = metadata["defaultBranchRef"]["name"]
 
     expected_repo = getattr(args, "expected_repository", None)
-    if expected_repo and expected_repo != "local/repo" and expected_repo != metadata.get("nameWithOwner"):
+    if expected_repo and expected_repo != "local/repo" and expected_repo != observed_repo:
         raise RuntimeError(
-            f"Expected repository {expected_repo}, observed {metadata.get('nameWithOwner')}."
+            f"Expected repository {expected_repo}, observed {observed_repo}."
         )
 
-    default_base = metadata["defaultBranchRef"]["name"]
     base = args.base or default_base
     branch = None if args.commit else args.branch or f"issue-{args.issue}"
     if branch:
@@ -220,7 +249,13 @@ def prepare(args):
     elif matches:
         target = Path(matches[0]["worktree"]).resolve()
     else:
-        target = primary.parent / f"{primary.name}-worktrees" / f"issue-{args.issue}"
+        if config and config.get("worktree_container"):
+            container = Path(config["worktree_container"])
+            if not container.is_absolute():
+                container = (primary / container).resolve()
+            target = container / f"issue-{args.issue}"
+        else:
+            target = primary.parent / f"{primary.name}-worktrees" / f"issue-{args.issue}"
     if target == primary or primary in target.parents:
         raise RuntimeError(f"Expected a separate worktree outside the primary checkout {primary}.")
     if source in target.parents or (target == source and not matches):
@@ -228,7 +263,7 @@ def prepare(args):
 
     require_clean(source)
     if matches:
-        git(source, "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{base}")
+        git(source, "ls-remote", "--exit-code", "--heads", base_remote, f"refs/heads/{base}")
         existing = Path(matches[0]["worktree"]).resolve()
         if existing != target:
             raise RuntimeError(f"Branch {branch} is already checked out at {existing}.")
@@ -247,11 +282,11 @@ def prepare(args):
                 raise RuntimeError(f"Branch {branch} exists without a worktree. Supply explicit recovery instructions.")
             if local_branch.returncode != 1:
                 raise RuntimeError(f"Could not inspect local branch {branch}.")
-        git(source, "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}")
-        start = f"refs/remotes/origin/{base}"
+        git(source, "fetch", base_remote, f"+refs/heads/{base}:refs/remotes/{base_remote}/{base}")
+        start = f"refs/remotes/{base_remote}/{base}"
         if args.commit:
             start = git(source, "rev-parse", "--verify", f"{args.commit}^{{commit}}")
-            git(source, "merge-base", "--is-ancestor", start, f"refs/remotes/origin/{base}")
+            git(source, "merge-base", "--is-ancestor", start, f"refs/remotes/{base_remote}/{base}")
         target.parent.mkdir(parents=True, exist_ok=True)
         if branch:
             git(source, "worktree", "add", "--no-track", "-b", branch, str(target), start)
@@ -269,7 +304,7 @@ def prepare(args):
         raise RuntimeError(f"Expected integrated HEAD {args.commit}, found {commit}.")
     if args.expected_head and git(target, "rev-parse", f"{args.expected_head}^{{commit}}") != commit:
         raise RuntimeError(f"Expected predecessor HEAD {args.expected_head}, found {commit}.")
-    return dict(repository=metadata["nameWithOwner"], working_directory=str(target),
+    return dict(repository=observed_repo, working_directory=str(target),
                 worktree=str(target), branch=branch, baseBranch=base, commit=commit,
                 created=not bool(matches))
 
@@ -284,6 +319,7 @@ def parse_args(argv=None):
     parser.add_argument("--base", help="Remote base branch. Defaults to the GitHub repository default branch.")
     parser.add_argument("--worktree", help="Explicit worktree path. Existing registered worktrees are validated and reused.")
     parser.add_argument("--expected-head", help="Required predecessor commit for rework. Requires an existing worktree.")
+    parser.add_argument("--workspace-config", help="Path to workspace-config.json")
     parser.add_argument("--input-envelope", "--input", dest="input_envelope", help="Path to Task Input Envelope JSON file (<step>-input.json)")
     parser.add_argument("--receipt-path", help="Path to write Markdown receipt.")
     parser.add_argument("--output-format", choices=["raw", "compact"], default=None, help="Output format for stdout: raw environment dict or compact report JSON")
@@ -334,6 +370,8 @@ def main():
             args.worktree = params_section["worktree"]
         if args.expected_head is None and params_section.get("expected_head"):
             args.expected_head = params_section["expected_head"]
+        if getattr(args, "workspace_config", None) is None and params_section.get("workspace_config"):
+            args.workspace_config = params_section["workspace_config"]
 
         # 4. Branch & Commit
         env_branch = env_section.get("branch")

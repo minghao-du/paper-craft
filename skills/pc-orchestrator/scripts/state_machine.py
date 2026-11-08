@@ -7,7 +7,42 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
+
+
+def check_workspace_config(repo_dir: Path) -> Tuple[bool, str]:
+    """Check workspace configuration existence and validity."""
+    config_file = repo_dir / ".paper-craft" / "workspace-config.json"
+    legacy_file = repo_dir / ".paper-craft" / "workspace.json"
+    target_file = config_file if config_file.exists() else legacy_file
+
+    if not target_file.exists():
+        return False, (
+            f"Error: Workspace configuration is missing at {config_file}.\n"
+            f"Please run 'pc-workspace-config' to initialize the workspace before starting pc-orchestrator."
+        )
+
+    try:
+        with open(target_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        return False, (
+            f"Error: Workspace configuration at {target_file} is corrupted: {e}.\n"
+            f"Please run 'pc-workspace-config' to reconfigure."
+        )
+
+    if not isinstance(data, dict):
+        return False, "Error: Workspace configuration must be a JSON object."
+
+    if data.get("schema_version") != "1.0":
+        return False, f"Error: Unsupported schema_version '{data.get('schema_version')}'. Expected '1.0'."
+
+    for field in ("delivery_target", "base_remote", "push_remote", "base_branch", "worktree_container"):
+        val = data.get(field)
+        if not val or not isinstance(val, str) or not val.strip():
+            return False, f"Error: Configuration field '{field}' is missing or empty. Please run 'pc-workspace-config' to reconfigure."
+
+    return True, f"Workspace configuration is valid: {target_file}"
 
 
 def get_state_file_path(receipt_root: str) -> Path:
@@ -52,6 +87,13 @@ def load_state(receipt_root: str) -> Dict[str, Any]:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
+    if getattr(args, "require_config", False):
+        repo_dir = Path(getattr(args, "repo_dir", ".")).resolve()
+        ok, msg = check_workspace_config(repo_dir)
+        if not ok:
+            sys.stderr.write(msg + "\n")
+            sys.exit(1)
+
     state_file = get_state_file_path(args.receipt_root)
     if state_file.exists() and not args.force:
         existing = load_state(args.receipt_root)
@@ -196,6 +238,22 @@ def cmd_check_budget(args: argparse.Namespace) -> None:
     print(f"Budget OK: {key} is {used}/{limit}.")
 
 
+def cmd_check_config(args: argparse.Namespace) -> None:
+    repo_dir = Path(getattr(args, "repo_dir", ".")).resolve()
+    ok, msg = check_workspace_config(repo_dir)
+    if not ok:
+        sys.stderr.write(msg + "\n")
+        sys.exit(1)
+    if getattr(args, "json", False):
+        config_file = repo_dir / ".paper-craft" / "workspace-config.json"
+        legacy_file = repo_dir / ".paper-craft" / "workspace.json"
+        target_file = config_file if config_file.exists() else legacy_file
+        with open(target_file, "r", encoding="utf-8") as f:
+            print(f.read().strip())
+    else:
+        print(msg)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Deterministic state machine controller for pc-orchestrator workflows."
@@ -210,7 +268,15 @@ def main() -> None:
     init_parser.add_argument("--workflow", default="default", help="Workflow name (defaults to 'default').")
     init_parser.add_argument("--initial-stage", default="stage_1_plan", help="Initial stage name.")
     init_parser.add_argument("--force", action="store_true", help="Force overwrite existing state file.")
+    init_parser.add_argument("--require-config", action="store_true", help="Require valid workspace configuration.")
+    init_parser.add_argument("--repo-dir", default=".", help="Repository root containing .paper-craft/")
     init_parser.set_defaults(func=cmd_init)
+
+    # check-config
+    cfg_parser = subparsers.add_parser("check-config", help="Check workspace configuration existence and validity.")
+    cfg_parser.add_argument("--repo-dir", default=".", help="Path to repository root.")
+    cfg_parser.add_argument("--json", action="store_true", help="Output config JSON if valid.")
+    cfg_parser.set_defaults(func=cmd_check_config)
 
     # transition
     trans_parser = subparsers.add_parser("transition", help="Transition workflow to next stage or status.")
