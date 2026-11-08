@@ -13,7 +13,7 @@ Setup is limited to local configuration and read-only inspection; resource alloc
 
 Read the target project's agent guidance, existing `.paper-craft/` configuration, workflow entry points, environment definitions, and remote profiles.
 Resolve the user's CPU/GPU choices to installed platform skills and read their instructions and relevant references.
-Identify a skill by name, adding a portable source or installation reference when known rather than relying solely on a machine-specific absolute path.
+Resolve each selected platform skill to its absolute global filesystem path to `SKILL.md` on the local machine (whether located in user-global directories or within the project); strictly forbid relative paths (such as `./skills/...` or `../`).
 Infer settings from the project and selected skills; ask only for missing decisions such as which backend to use or an unknown remote workspace.
 For each selected CPU/GPU HPC backend, directly ask the user whether to use Git for the project there and record their answer; Git availability does not establish this choice.
 Record unresolved settings or unavailable skills as pending; skill installation is a separate user choice.
@@ -45,7 +45,7 @@ If Git ignores either generated file, report that it will not travel with the pr
 
 ## 3. Verify and report
 
-Check that the pointer resolves, each route resolves to a backend definition or is explicitly unconfigured, selected platform skills are available, and referenced project files exist.
+Check that the pointer resolves, each route resolves to a backend definition or is explicitly unconfigured, each selected backend's `Platform skill` is an absolute global filesystem path whose `SKILL.md` exists on disk (not a relative path), and referenced project files exist.
 Check that required backend fields are filled, pending items block the affected routes, and no credentials or template placeholders remain.
 Check that every HPC backend's Git choice matches the user's answer and every backend's `Remote workspace` contains a nonempty project path; a missing or pending path leaves configuration incomplete.
 Verify that the policy routes tests and business code remotely even during check and review, permits local lint/typecheck/build only within that boundary, and requires an explicit exception for local execution of tests or business code.

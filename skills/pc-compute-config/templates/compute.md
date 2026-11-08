@@ -32,7 +32,7 @@ Repeat this section for each selected backend, using fields required by its plat
 
 ### <Backend name>
 
-- Platform skill: <installed skill name; portable source reference if known>
+- Platform skill: <absolute path to installed skill's SKILL.md>
 - Connection: <SSH alias or other platform-specific identifier, if needed>
 - Remote workspace: <required nonempty project root on the remote platform>
 - Use Git: <yes or no, as answered by the user for this HPC backend>
