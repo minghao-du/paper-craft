@@ -67,60 +67,27 @@ class TestStateMachine(unittest.TestCase):
             state = json.load(f)
         self.assertEqual(state["root_issue_id"], "99")
 
-    def test_transition_updates_stage_and_records_history(self):
+    def test_transition_removed(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
-
-        res_trans1 = self.run_cli(
-            "transition",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_2_delivery",
-            "--status", "succeeded",
-            "--outcome", "direct",
-            "--receipt", "/abs/path/01-plan.md",
-            "--set", "branch=issue-42",
-            "--set", "baseBranch=main",
-        )
-        self.assertEqual(res_trans1.returncode, 0, res_trans1.stderr)
-
-        with open(self.receipt_root / "state.json", "r", encoding="utf-8") as f:
-            state = json.load(f)
-
-        self.assertEqual(state["current_stage"], "stage_2_delivery")
-        self.assertEqual(state["stage_status"], "succeeded")
-        self.assertEqual(state["context"]["branch"], "issue-42")
-        self.assertEqual(state["context"]["baseBranch"], "main")
-        self.assertEqual(len(state["completed_stages"]), 1)
-        self.assertEqual(state["completed_stages"][0]["stage"], "stage_1_plan")
-        self.assertEqual(state["completed_stages"][0]["status"], "succeeded")
-        self.assertEqual(state["completed_stages"][0]["outcome"], "direct")
-        self.assertEqual(state["completed_stages"][0]["receipt_path"], "/abs/path/01-plan.md")
-
-        # Budget increment and context update
-        res_trans2 = self.run_cli(
+        res = self.run_cli(
             "transition",
             "--receipt-root", str(self.receipt_root),
             "--stage", "stage_2_delivery",
             "--status", "in_progress",
-            "--incr-budget", "delivery_attempts_used",
-            "--set", "commit=abc1234",
         )
-        self.assertEqual(res_trans2.returncode, 0, res_trans2.stderr)
-
-        with open(self.receipt_root / "state.json", "r", encoding="utf-8") as f:
-            state = json.load(f)
-
-        self.assertEqual(state["budgets"]["delivery_attempts_used"], 1)
-        self.assertEqual(state["context"]["commit"], "abc1234")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("invalid choice: 'transition'", res.stderr)
 
     def test_show_formats_and_field_query(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
-        self.run_cli(
-            "transition",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_2_delivery",
-            "--status", "in_progress",
-            "--set", "commit=deadbeef",
-        )
+        state_file = self.receipt_root / "state.json"
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        state["current_stage"] = "stage_2_delivery"
+        state["stage_status"] = "in_progress"
+        state["context"] = {"commit": "deadbeef"}
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f)
 
         # Readable summary
         res_summary = self.run_cli("show", "--receipt-root", str(self.receipt_root))
@@ -147,15 +114,13 @@ class TestStateMachine(unittest.TestCase):
         self.assertEqual(res_ok.returncode, 0)
         self.assertIn("Budget OK", res_ok.stdout)
 
-        # Consume 3 attempts
-        for _ in range(3):
-            self.run_cli(
-                "transition",
-                "--receipt-root", str(self.receipt_root),
-                "--stage", "stage_2_delivery",
-                "--status", "in_progress",
-                "--incr-budget", "delivery_attempts_used",
-            )
+        # Consume 3 attempts directly in state
+        state_file = self.receipt_root / "state.json"
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        state["budgets"]["delivery_attempts_used"] = 3
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f)
 
         # Exceeded -> exit code 1
         res_exceeded = self.run_cli("check-budget", "--receipt-root", str(self.receipt_root), "--type", "delivery", "--limit", "3")

@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createTestDir,
   PREPARE_WORKTREE_SCRIPT,
-  runEnvelopeCli,
+  runLifecycleKernelCli,
   runPrepareWorktreeCli,
   runStateMachineCli,
   runWorkspaceConfigCli,
@@ -144,26 +144,25 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(config.base_branch).toBe('main');
     expect(config.worktree_container).toBe('../project-worktrees');
 
-    // 2. Create Task Input Envelope for workspace preparation
-    // Notice: we do NOT specify --repository or --base-branch; envelope.py reads them from config
+    // 2. Create Task Input Envelope for workspace preparation via lifecycle kernel
     const receiptRoot = path.join(testEnv.dir, 'receipts', 'issue-38');
-    fs.mkdirSync(receiptRoot, { recursive: true });
-    const envelopePath = path.join(receiptRoot, '01-input.json');
-    const receiptPath = path.join(receiptRoot, '01-workspace-prepare.md');
-
-    const envRes = runEnvelopeCli([
-      'create',
-      '--output', envelopePath,
-      '--stage', 'workspace_prepare',
-      '--step', '1',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', receiptRoot,
       '--root-issue', '38',
+      '--repo-dir', repoDir,
+    ]);
+    const prepResEnvelope = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', receiptRoot,
+      '--stage', 'workspace_prepare',
       '--provider-type', 'script',
       '--provider-target', PREPARE_WORKTREE_SCRIPT,
       '--workdir', repoDir,
       '--objective', 'Prepare workspace for Issue #38',
-      '--receipt-path', receiptPath,
     ]);
-    expect(envRes.status).toBe(0);
+    expect(prepResEnvelope.status).toBe(0);
+    const envelopePath = path.join(receiptRoot, '01-input.json');
 
     const envelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
     expect(envelope.environment.repository).toBe('paper-craft/demo-repo');
@@ -174,6 +173,7 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(prepRes.status).toBe(0);
 
     const report: CompactReceiptReport = JSON.parse(prepRes.stdout);
+    const receiptPath = report.receipt_path;
     expect(report.execution_status).toBe('succeeded');
     expect(report.result.repository).toBe('paper-craft/demo-repo');
     expect(report.result.baseBranch).toBe('main');
@@ -258,22 +258,23 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(initRes.status).toBe(0);
 
     const receiptRoot = path.join(testEnv.dir, 'receipts', 'issue-50');
-    fs.mkdirSync(receiptRoot, { recursive: true });
-    const envelopePath = path.join(receiptRoot, '01-input.json');
-    const receiptPath = path.join(receiptRoot, '01-receipt.md');
-
-    runEnvelopeCli([
-      'create',
-      '--output', envelopePath,
-      '--stage', 'workspace_prepare',
-      '--step', '1',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', receiptRoot,
       '--root-issue', '50',
+      '--repo-dir', repoDir,
+    ]);
+    const prepResEnvelope = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', receiptRoot,
+      '--stage', 'workspace_prepare',
       '--provider-type', 'script',
       '--provider-target', PREPARE_WORKTREE_SCRIPT,
       '--workdir', repoDir,
       '--objective', 'Custom container test',
-      '--receipt-path', receiptPath,
     ]);
+    expect(prepResEnvelope.status).toBe(0);
+    const envelopePath = path.join(receiptRoot, '01-input.json');
 
     const prepRes = runPrepareWorktreeCli(['--input-envelope', envelopePath]);
     expect(prepRes.status).toBe(0);
@@ -313,23 +314,23 @@ describe('Issue #38: Workspace Config E2E', () => {
 
     // 2. Create Task Input Envelope for workspace preparation
     const receiptRoot = path.join(testEnv.dir, 'receipts', 'issue-39');
-    fs.mkdirSync(receiptRoot, { recursive: true });
-    const envelopePath = path.join(receiptRoot, '01-input.json');
-    const receiptPath = path.join(receiptRoot, '01-workspace-prepare.md');
-
-    const envRes = runEnvelopeCli([
-      'create',
-      '--output', envelopePath,
-      '--stage', 'workspace_prepare',
-      '--step', '1',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', receiptRoot,
       '--root-issue', '39',
+      '--repo-dir', repoDir,
+    ]);
+    const prepResEnvelope = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', receiptRoot,
+      '--stage', 'workspace_prepare',
       '--provider-type', 'script',
       '--provider-target', PREPARE_WORKTREE_SCRIPT,
       '--workdir', repoDir,
       '--objective', 'Prepare workspace for fork issue #39',
-      '--receipt-path', receiptPath,
     ]);
-    expect(envRes.status).toBe(0);
+    expect(prepResEnvelope.status).toBe(0);
+    const envelopePath = path.join(receiptRoot, '01-input.json');
 
     const envelope: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
     expect(envelope.environment.repository).toBe('paper-craft-upstream/demo-repo');
@@ -344,6 +345,7 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(prepRes.status).toBe(0);
 
     const report: CompactReceiptReport = JSON.parse(prepRes.stdout);
+    const receiptPath = report.receipt_path;
     expect(report.execution_status).toBe('succeeded');
     expect(report.result.repository).toBe('paper-craft-upstream/demo-repo');
     expect(report.result.delivery_target).toBe('paper-craft-upstream/demo-repo');

@@ -236,27 +236,34 @@ class TestEnvelopeCLI(unittest.TestCase):
             timeout=10,
         )
 
-    def test_cli_create_generates_valid_envelope(self) -> None:
+    def test_cli_rejects_deprecated_create_subcommand(self) -> None:
+        """Verify that envelope.py CLI rejects deprecated 'create' subcommand."""
+        res = self.run_cli(
+            "create",
+            "--output", str(self.root / "01.json"),
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("invalid choice", res.stderr.lower())
+
+    def test_create_envelope_api_generates_valid_envelope(self) -> None:
         output_file = self.root / "01-input.json"
         receipt_file = self.root / "01-receipt.md"
 
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--stage", "stage_1_plan",
-            "--step", "1",
-            "--attempt", "1",
-            "--root-issue", "42",
-            "--current-issue", "42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--workdir", str(self.root),
-            "--objective", "Decompose issue 42",
-            "--scope", "Milestone 1",
-            "--criteria", "Unit tests complete",
-            "--receipt-path", str(receipt_file),
+        env = envelope.create_envelope(
+            logical_stage="stage_1_plan",
+            step_index=1,
+            attempt=1,
+            root_issue_id="42",
+            current_issue_id="42",
+            provider_type="skill",
+            provider_target="pc-issue-plan",
+            working_directory=str(self.root),
+            objective="Decompose issue 42",
+            scope="Milestone 1",
+            acceptance_criteria=["Unit tests complete"],
+            receipt_path=str(receipt_file),
         )
-        self.assertEqual(res.returncode, 0, res.stderr)
+        envelope.save_envelope(env, output_file)
         self.assertTrue(output_file.exists())
 
         with open(output_file, "r", encoding="utf-8") as f:
@@ -268,88 +275,37 @@ class TestEnvelopeCLI(unittest.TestCase):
         self.assertEqual(data["contract"]["receipt_path"], str(receipt_file))
         self.assertEqual(data["inputs"]["acceptance_criteria"], ["Unit tests complete"])
 
-    def test_cli_create_fails_on_missing_required_arguments(self) -> None:
-        # Missing --output
-        res = self.run_cli(
-            "create",
-            "--stage", "stage_1_plan",
-            "--step", "1",
-            "--root-issue", "42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--workdir", str(self.root),
-            "--objective", "Test missing output",
-            "--receipt-path", str(self.root / "rec.md"),
-        )
-        self.assertNotEqual(res.returncode, 0)
+        # CLI validate confirms the generated envelope
+        val_res = self.run_cli("validate", str(output_file))
+        self.assertEqual(val_res.returncode, 0, val_res.stderr)
+        self.assertIn("Valid envelope", val_res.stdout)
 
-        # Missing --receipt-path
-        res_no_receipt = self.run_cli(
-            "create",
-            "--output", str(self.root / "test.json"),
-            "--stage", "stage_1_plan",
-            "--step", "1",
-            "--root-issue", "42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--workdir", str(self.root),
-            "--objective", "Test missing receipt",
-        )
-        self.assertNotEqual(res_no_receipt.returncode, 0)
+    def test_create_envelope_fails_on_missing_required_arguments(self) -> None:
+        with self.assertRaises(envelope.EnvelopeValidationError):
+            envelope.create_envelope(
+                logical_stage="",
+                step_index=1,
+                root_issue_id="42",
+                provider_type="skill",
+                provider_target="pc-issue-plan",
+                working_directory=str(self.root),
+                objective="Test missing stage",
+                receipt_path=str(self.root / "rec.md"),
+            )
 
-    def test_cli_create_fails_on_invalid_provider_type(self) -> None:
-        output_file = self.root / "invalid-provider.json"
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--stage", "stage_1_plan",
-            "--step", "1",
-            "--root-issue", "42",
-            "--provider-type", "docker",
-            "--provider-target", "container-runner",
-            "--workdir", str(self.root),
-            "--objective", "Run container",
-            "--receipt-path", str(self.root / "rec.md"),
-        )
-        self.assertNotEqual(res.returncode, 0)
-        self.assertIn("provider", res.stderr.lower())
-        self.assertFalse(output_file.exists())
-
-    def test_cli_create_from_state(self) -> None:
-        state_machine_path = SCRIPT_PATH.parent / "state_machine.py"
-        subprocess.run(
-            [
-                sys.executable,
-                str(state_machine_path),
-                "init",
-                "--receipt-root", str(self.root),
-                "--root-issue", "99",
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-        state_file = self.root / "state.json"
-        self.assertTrue(state_file.exists())
-
-        output_file = self.root / "from-state-input.json"
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--from-state", str(state_file),
-            "--stage", "stage_1_plan",
-            "--step", "1",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--workdir", str(self.root),
-            "--objective", "Test from state",
-            "--receipt-path", str(self.root / "01-rec.md"),
-        )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertTrue(output_file.exists())
-        with open(output_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertEqual(data["task"]["root_issue_id"], "99")
+    def test_create_envelope_fails_on_invalid_provider_type(self) -> None:
+        with self.assertRaises(envelope.EnvelopeValidationError) as ctx:
+            envelope.create_envelope(
+                logical_stage="stage_1_plan",
+                step_index=1,
+                root_issue_id="42",
+                provider_type="docker",
+                provider_target="container-runner",
+                working_directory=str(self.root),
+                objective="Run container",
+                receipt_path=str(self.root / "rec.md"),
+            )
+        self.assertIn("provider", str(ctx.exception).lower())
 
     def test_cli_validate_success_and_failures(self) -> None:
         target_file = self.root / "env.json"
@@ -414,7 +370,7 @@ class TestEnvelopeCLI(unittest.TestCase):
         self.assertIn("not found", res_bad_field.stderr.lower())
 
     def test_auto_populate_from_workspace_config(self) -> None:
-        """create subcommand populates repository and base_branch from workspace config when unset."""
+        """create_envelope populates repository and base_branch from workspace config when unset."""
         cfg_dir = self.root / ".paper-craft"
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / "workspace-config.json").write_text(json.dumps({
@@ -426,23 +382,16 @@ class TestEnvelopeCLI(unittest.TestCase):
             "worktree_container": "../project-worktrees",
         }), encoding="utf-8")
 
-        output_file = self.root / "auto_env.json"
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--stage", "workspace_prepare",
-            "--step", "1",
-            "--root-issue", "38",
-            "--provider-type", "script",
-            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
-            "--workdir", str(self.root),
-            "--objective", "Prepare workspace with auto config",
-            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        data = envelope.create_envelope(
+            logical_stage="workspace_prepare",
+            step_index=1,
+            root_issue_id="38",
+            provider_type="script",
+            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            working_directory=str(self.root),
+            objective="Prepare workspace with auto config",
+            receipt_path=str(self.root / "receipts" / "01.md"),
         )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        with open(output_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
         self.assertEqual(data["environment"]["repository"], "acme/paper-craft")
         self.assertEqual(data["environment"]["base_branch"], "trunk")
 
@@ -459,23 +408,16 @@ class TestEnvelopeCLI(unittest.TestCase):
             "worktree_container": "../custom-fork-worktrees",
         }), encoding="utf-8")
 
-        output_file = self.root / "fork_env.json"
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--stage", "workspace_prepare",
-            "--step", "1",
-            "--root-issue", "39",
-            "--provider-type", "script",
-            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
-            "--workdir", str(self.root),
-            "--objective", "Prepare workspace with fork roles",
-            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        data = envelope.create_envelope(
+            logical_stage="workspace_prepare",
+            step_index=1,
+            root_issue_id="39",
+            provider_type="script",
+            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            working_directory=str(self.root),
+            objective="Prepare workspace with fork roles",
+            receipt_path=str(self.root / "receipts" / "01.md"),
         )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        with open(output_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
         env = data["environment"]
         self.assertEqual(env["repository"], "upstream-org/upstream-repo")
         self.assertEqual(env.get("base_branch"), "main")
@@ -490,29 +432,22 @@ class TestEnvelopeCLI(unittest.TestCase):
         self.assertEqual(params.get("worktree_container"), "../custom-fork-worktrees")
 
     def test_fork_roles_cli_overrides(self) -> None:
-        """Envelope CLI accepts and preserves explicit fork role parameters."""
-        output_file = self.root / "override_env.json"
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--stage", "workspace_prepare",
-            "--step", "1",
-            "--root-issue", "39",
-            "--provider-type", "script",
-            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
-            "--workdir", str(self.root),
-            "--delivery-target", "explicit-upstream/repo",
-            "--base-remote", "upstream",
-            "--push-remote", "origin",
-            "--base-branch", "main",
-            "--worktree-container", "../explicit-worktrees",
-            "--objective", "Prepare workspace with explicit fork roles",
-            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        """create_envelope accepts and preserves explicit fork role parameters."""
+        data = envelope.create_envelope(
+            logical_stage="workspace_prepare",
+            step_index=1,
+            root_issue_id="39",
+            provider_type="script",
+            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            working_directory=str(self.root),
+            delivery_target="explicit-upstream/repo",
+            base_remote="upstream",
+            push_remote="origin",
+            base_branch="main",
+            worktree_container="../explicit-worktrees",
+            objective="Prepare workspace with explicit fork roles",
+            receipt_path=str(self.root / "receipts" / "01.md"),
         )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        with open(output_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
         env = data["environment"]
         self.assertEqual(env["repository"], "explicit-upstream/repo")
         self.assertEqual(env.get("base_branch"), "main")
@@ -532,25 +467,8 @@ class TestEnvelopeCLI(unittest.TestCase):
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / "workspace-config.json").write_text("{ broken json", encoding="utf-8")
 
-        output_file = self.root / "broken_env.json"
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--stage", "workspace_prepare",
-            "--step", "1",
-            "--root-issue", "38",
-            "--provider-type", "script",
-            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
-            "--workdir", str(self.root),
-            "--objective", "Prepare workspace with broken config",
-            "--receipt-path", str(self.root / "receipts" / "01.md"),
-        )
-        self.assertEqual(res.returncode, 1)
-        self.assertIn("Malformed JSON in workspace configuration", res.stderr)
-        self.assertIn("pc-workspace-config", res.stderr)
-
-        # In-memory API also raises EnvelopeCorruptedError
-        with self.assertRaises(envelope.EnvelopeCorruptedError):
+        # In-memory API raises EnvelopeCorruptedError
+        with self.assertRaises(envelope.EnvelopeCorruptedError) as ctx:
             envelope.create_envelope(
                 logical_stage="workspace_prepare",
                 step_index=1,
@@ -561,9 +479,11 @@ class TestEnvelopeCLI(unittest.TestCase):
                 objective="Prepare workspace with broken config",
                 receipt_path=str(self.root / "receipts" / "01.md"),
             )
+        self.assertIn("Malformed JSON in workspace configuration", str(ctx.exception))
+        self.assertIn("pc-workspace-config", str(ctx.exception))
 
     def test_explicit_base_branch_main_not_overridden_by_config(self) -> None:
-        """Explicitly passed --base-branch main must take precedence over config default branch."""
+        """Explicitly passed base_branch main must take precedence over config default branch."""
         cfg_dir = self.root / ".paper-craft"
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / "workspace-config.json").write_text(json.dumps({
@@ -575,28 +495,7 @@ class TestEnvelopeCLI(unittest.TestCase):
             "worktree_container": "../project-worktrees",
         }), encoding="utf-8")
 
-        output_file = self.root / "explicit_main_env.json"
-        res = self.run_cli(
-            "create",
-            "--output", str(output_file),
-            "--stage", "workspace_prepare",
-            "--step", "1",
-            "--root-issue", "38",
-            "--provider-type", "script",
-            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
-            "--workdir", str(self.root),
-            "--base-branch", "main",
-            "--objective", "Prepare workspace with explicit main base branch",
-            "--receipt-path", str(self.root / "receipts" / "01.md"),
-        )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        with open(output_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        self.assertEqual(data["environment"]["base_branch"], "main")
-
-        # In-memory API test: explicit base_branch="main" takes precedence
-        env_mem = envelope.create_envelope(
+        data = envelope.create_envelope(
             logical_stage="workspace_prepare",
             step_index=1,
             root_issue_id="38",
@@ -607,7 +506,7 @@ class TestEnvelopeCLI(unittest.TestCase):
             objective="Prepare workspace with explicit main",
             receipt_path=str(self.root / "receipts" / "01.md"),
         )
-        self.assertEqual(env_mem["environment"]["base_branch"], "main")
+        self.assertEqual(data["environment"]["base_branch"], "main")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type CompactReceiptReport,
   createTestDir,
-  runEnvelopeCli,
+  runLifecycleKernelCli,
   runPython,
   type TaskInputEnvelope,
 } from './test-helpers.js';
@@ -85,21 +85,24 @@ if __name__ == "__main__":
 
   it('F3.1: kernel script executes driven by --input-envelope', () => {
     const kernelScript = createSampleKernelScript();
-    const envelopePath = path.join(testEnv.dir, 'task-input.json');
-    const receiptPath = path.join(testEnv.dir, 'receipts/task-receipt.md');
-
-    runEnvelopeCli([
-      'create',
-      '--output', envelopePath,
-      '--stage', 'workspace_prepare',
-      '--step', '1',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', testEnv.dir,
       '--root-issue', '12',
+    ]);
+    const prepRes = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'workspace_prepare',
       '--provider-type', 'script',
       '--provider-target', kernelScript,
       '--workdir', testEnv.dir,
       '--objective', 'Prepare workspace tree',
-      '--receipt-path', receiptPath,
     ]);
+    expect(prepRes.status).toBe(0);
+    const prepData = JSON.parse(prepRes.stdout);
+    const envelopePath = prepData.envelope_path;
+    const receiptPath = prepData.receipt_path;
 
     const execResult = runPython(kernelScript, ['--input-envelope', envelopePath]);
     expect(execResult.status).toBe(0);
@@ -112,22 +115,25 @@ if __name__ == "__main__":
 
   it('F3.2: kernel consumes envelope parameters and environment', () => {
     const kernelScript = createSampleKernelScript();
-    const envelopePath = path.join(testEnv.dir, 'param-envelope.json');
-    const receiptPath = path.join(testEnv.dir, 'param-receipt.md');
-
-    runEnvelopeCli([
-      'create',
-      '--output', envelopePath,
-      '--stage', 'issue_work',
-      '--step', '2',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', testEnv.dir,
       '--root-issue', '15',
+    ]);
+    const prepRes = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'issue_work',
       '--provider-type', 'script',
       '--provider-target', kernelScript,
       '--workdir', testEnv.dir,
       '--objective', 'Run parameter-driven task',
       '--scope', 'Scope details here',
-      '--receipt-path', receiptPath,
     ]);
+    expect(prepRes.status).toBe(0);
+    const prepData = JSON.parse(prepRes.stdout);
+    const envelopePath = prepData.envelope_path;
+    const receiptPath = prepData.receipt_path;
 
     const execResult = runPython(kernelScript, ['--input-envelope', envelopePath]);
     expect(execResult.status).toBe(0);
@@ -139,27 +145,30 @@ if __name__ == "__main__":
 
   it('F3.3: kernel writes deterministic Markdown receipt to contract path', () => {
     const kernelScript = createSampleKernelScript();
-    const envelopePath = path.join(testEnv.dir, 'receipt-test-env.json');
-    const nestedReceipt = path.join(testEnv.dir, 'nested/dir/step-receipt.md');
-
-    runEnvelopeCli([
-      'create',
-      '--output', envelopePath,
-      '--stage', 'pipeline_audit',
-      '--step', '3',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', testEnv.dir,
       '--root-issue', '25',
+    ]);
+    const prepRes = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'pipeline_audit',
       '--provider-type', 'script',
       '--provider-target', kernelScript,
       '--workdir', testEnv.dir,
       '--objective', 'Audit pipeline rules',
-      '--receipt-path', nestedReceipt,
     ]);
+    expect(prepRes.status).toBe(0);
+    const prepData = JSON.parse(prepRes.stdout);
+    const envelopePath = prepData.envelope_path;
+    const receiptPath = prepData.receipt_path;
 
     const execResult = runPython(kernelScript, ['--input-envelope', envelopePath]);
     expect(execResult.status).toBe(0);
-    expect(fs.existsSync(nestedReceipt)).toBe(true);
+    expect(fs.existsSync(receiptPath)).toBe(true);
 
-    const content = fs.readFileSync(nestedReceipt, 'utf-8');
+    const content = fs.readFileSync(receiptPath, 'utf-8');
     expect(content.length).toBeGreaterThan(10);
     expect(content).toContain('**Status**: completed');
   });
@@ -175,21 +184,24 @@ if __name__ == "__main__":
 
   it('F3.5: cognitive wrapper equivalence between LLM subagent and script execution', () => {
     // Both skill-based subagent and script provider consume the identical input envelope schema
-    const envelopePath = path.join(testEnv.dir, 'shared-contract-envelope.json');
-    const receiptPath = path.join(testEnv.dir, 'shared-receipt.md');
-
-    runEnvelopeCli([
-      'create',
-      '--output', envelopePath,
-      '--stage', 'issue_verify',
-      '--step', '4',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', testEnv.dir,
       '--root-issue', '55',
+    ]);
+    const prepRes = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'issue_verify',
       '--provider-type', 'skill',
       '--provider-target', 'pc-issue-verify',
       '--workdir', testEnv.dir,
       '--objective', 'Cognitive wrapper test',
-      '--receipt-path', receiptPath,
     ]);
+    expect(prepRes.status).toBe(0);
+    const prepData = JSON.parse(prepRes.stdout);
+    const envelopePath = prepData.envelope_path;
+    const receiptPath = prepData.receipt_path;
 
     const envelope: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
     expect(envelope.contract.receipt_path).toBe(path.resolve(receiptPath));
@@ -253,20 +265,24 @@ describe('Tier 1: Unified Receipt Contract Core Features', () => {
     const step1Receipt = path.join(testEnv.dir, 'step-1-receipt.md');
     fs.writeFileSync(step1Receipt, '# Step 1 Plan Receipt\nOutcome: direct');
 
-    const step2EnvelopePath = path.join(testEnv.dir, 'step-2-input.json');
-    runEnvelopeCli([
-      'create',
-      '--output', step2EnvelopePath,
-      '--stage', 'issue_work',
-      '--step', '2',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', testEnv.dir,
       '--root-issue', '100',
+    ]);
+    const prepRes = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'issue_work',
       '--provider-type', 'skill',
       '--provider-target', 'pc-issue-work',
       '--workdir', testEnv.dir,
       '--objective', 'Implement from step 1 plan',
       '--predecessor-receipt', step1Receipt,
-      '--receipt-path', path.join(testEnv.dir, 'step-2-receipt.md'),
     ]);
+    expect(prepRes.status).toBe(0);
+    const prepData = JSON.parse(prepRes.stdout);
+    const step2EnvelopePath = prepData.envelope_path;
 
     const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(step2EnvelopePath, 'utf-8'));
     expect(env.inputs.predecessor_receipts).toContain(step1Receipt);

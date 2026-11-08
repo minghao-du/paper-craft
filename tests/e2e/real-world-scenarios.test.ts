@@ -15,8 +15,8 @@ import {
   type CompactReceiptReport,
   createTestDir,
   runEnvelopeCli,
+  runLifecycleKernelCli,
   runPython,
-  runStateMachineCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
 
@@ -90,17 +90,15 @@ if __name__ == "__main__":
     const issueId = '42';
     const rootDir = testEnv.dir;
     const worktreeDir = path.join(rootDir, 'worktree-issue-42');
-    const stateFile = path.join(rootDir, 'state.json');
 
     // ==========================================
     // Phase 0: Initialize Orchestrator Workflow
     // ==========================================
-    const initRes = runStateMachineCli([
+    const initRes = runLifecycleKernelCli([
       'init',
       '--receipt-root', rootDir,
       '--root-issue', issueId,
       '--workflow', 'default',
-      '--initial-stage', 'workspace_prepare',
     ]);
     expect(initRes.status).toBe(0);
 
@@ -108,27 +106,28 @@ if __name__ == "__main__":
     // Phase 1: Workspace Preparation (Script Provider)
     // ==========================================
     const kernelScript = createWorkspaceKernelScript();
-    const step1EnvelopePath = path.join(rootDir, 'step-1-input.json');
-    const step1ReceiptPath = path.join(rootDir, 'step-1-receipt.md');
-
-    const env1Res = runEnvelopeCli([
-      'create',
-      '--from-state', stateFile,
-      '--output', step1EnvelopePath,
-      '--step', '1',
+    const env1Res = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', rootDir,
+      '--stage', 'workspace_prepare',
       '--provider-type', 'script',
       '--provider-target', kernelScript,
       '--workdir', worktreeDir,
       '--branch', `issue-${issueId}`,
       '--commit', 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
       '--objective', 'Prepare isolated worktree environment',
-      '--receipt-path', step1ReceiptPath,
     ]);
     expect(env1Res.status).toBe(0);
+    const p1 = JSON.parse(env1Res.stdout);
+    const step1EnvelopePath = p1.envelope_path;
+    const step1ReceiptPath = p1.receipt_path;
 
     // Validate envelope file before execution
     const val1 = runEnvelopeCli(['validate', step1EnvelopePath]);
     expect(val1.status).toBe(0);
+
+    // Handoff step 1
+    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir]);
 
     // Execute script kernel
     const exec1 = runPython(kernelScript, ['--input-envelope', step1EnvelopePath]);
@@ -140,43 +139,40 @@ if __name__ == "__main__":
     expect(report1.result.outcome).toBe('prepared');
     expect(fs.existsSync(step1ReceiptPath)).toBe(true);
 
-    // Transition state machine with step 1 receipt
-    runStateMachineCli([
-      'transition',
+    // Complete step 1
+    const comp1 = runLifecycleKernelCli([
+      'complete',
       '--receipt-root', rootDir,
-      '--stage', 'issue_work',
-      '--status', 'succeeded',
-      '--receipt', step1ReceiptPath,
-      '--set', `worktree=${worktreeDir}`,
-      '--set', `branch=issue-${issueId}`,
-      '--set', `commit=${report1.result.commit}`,
+      '--report', JSON.stringify(report1),
     ]);
+    expect(comp1.status).toBe(0);
 
     // ==========================================
     // Phase 2: Implementation Stage (Skill Provider)
     // ==========================================
-    const step2EnvelopePath = path.join(rootDir, 'step-2-input.json');
-    const step2ReceiptPath = path.join(rootDir, 'step-2-receipt.md');
-
-    const env2Res = runEnvelopeCli([
-      'create',
-      '--from-state', stateFile,
-      '--output', step2EnvelopePath,
-      '--step', '2',
+    const env2Res = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', rootDir,
+      '--stage', 'issue_work',
       '--provider-type', 'skill',
       '--provider-target', 'pc-issue-work',
+      '--workdir', worktreeDir,
       '--objective', 'Implement features for issue 42',
       '--criteria', 'All unit tests pass',
       '--criteria', 'Linting passes',
-      '--receipt-path', step2ReceiptPath,
     ]);
     expect(env2Res.status).toBe(0);
+    const p2 = JSON.parse(env2Res.stdout);
+    const step2EnvelopePath = p2.envelope_path;
+    const step2ReceiptPath = p2.receipt_path;
 
     const env2: TaskInputEnvelope = JSON.parse(fs.readFileSync(step2EnvelopePath, 'utf-8'));
     expect(env2.inputs.predecessor_receipts).toContain(step1ReceiptPath);
     expect(env2.environment.working_directory).toBe(path.resolve(worktreeDir));
     expect(env2.provider.type).toBe('skill');
     expect(env2.provider.target).toBe('pc-issue-work');
+
+    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir]);
 
     // Simulate Subagent execution writing receipt and compact report
     fs.writeFileSync(
@@ -193,53 +189,65 @@ if __name__ == "__main__":
       summary: 'Implemented feature and verified test suite.',
     };
 
-    // Transition state machine
-    runStateMachineCli([
-      'transition',
+    const comp2 = runLifecycleKernelCli([
+      'complete',
       '--receipt-root', rootDir,
-      '--stage', 'issue_verify',
-      '--status', 'succeeded',
-      '--receipt', step2ReceiptPath,
-      '--set', `commit=${report2.result.commit}`,
+      '--report', JSON.stringify(report2),
     ]);
+    expect(comp2.status).toBe(0);
 
     // ==========================================
     // Phase 3: Verification Stage (Skill Provider)
     // ==========================================
-    const step3EnvelopePath = path.join(rootDir, 'step-3-input.json');
-    const step3ReceiptPath = path.join(rootDir, 'step-3-receipt.md');
-
-    const env3Res = runEnvelopeCli([
-      'create',
-      '--from-state', stateFile,
-      '--output', step3EnvelopePath,
-      '--step', '3',
+    const env3Res = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', rootDir,
+      '--stage', 'issue_verify',
       '--provider-type', 'skill',
       '--provider-target', 'pc-issue-verify',
+      '--workdir', worktreeDir,
       '--objective', 'Run integrated acceptance verification',
-      '--receipt-path', step3ReceiptPath,
     ]);
     expect(env3Res.status).toBe(0);
+    const p3 = JSON.parse(env3Res.stdout);
+    const step3EnvelopePath = p3.envelope_path;
+    const step3ReceiptPath = p3.receipt_path;
 
     const env3: TaskInputEnvelope = JSON.parse(fs.readFileSync(step3EnvelopePath, 'utf-8'));
     expect(env3.inputs.predecessor_receipts).toContain(step2ReceiptPath);
 
+    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir]);
+
     fs.writeFileSync(step3ReceiptPath, '# Integrated Acceptance Receipt\nOutcome: verified\n');
 
-    runStateMachineCli([
-      'transition',
+    const report3: CompactReceiptReport = {
+      execution_status: 'succeeded',
+      result: { outcome: 'verified' },
+      receipt_path: step3ReceiptPath,
+      summary: 'Verification succeeded.',
+    };
+
+    const comp3 = runLifecycleKernelCli([
+      'complete',
       '--receipt-root', rootDir,
-      '--stage', 'completed',
-      '--status', 'succeeded',
-      '--receipt', step3ReceiptPath,
+      '--report', JSON.stringify(report3),
     ]);
+    expect(comp3.status).toBe(0);
+
+    const resolveRes = runLifecycleKernelCli([
+      'resolve',
+      '--receipt-root', rootDir,
+      '--decision', 'finish',
+      '--reason', 'All stages completed successfully',
+    ]);
+    expect(resolveRes.status).toBe(0);
 
     // Inspect final state
-    const stateShow = runStateMachineCli(['show', '--receipt-root', rootDir, '--json']);
+    const stateShow = runLifecycleKernelCli(['inspect', '--receipt-root', rootDir, '--json']);
     const finalState = JSON.parse(stateShow.stdout);
     expect(finalState.current_stage).toBe('completed');
     expect(finalState.stage_status).toBe('succeeded');
-    expect(finalState.completed_stages.length).toBe(3);
+    expect(finalState.completed_stages_count).toBe(3);
   }, 20000);
 
   it('S4.2: handles script execution failure with report and budget increment', () => {
@@ -260,12 +268,23 @@ sys.exit(1)
 `;
     fs.writeFileSync(failingScriptPath, content, 'utf-8');
 
-    runStateMachineCli([
+    runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
       '--root-issue', '99',
-      '--initial-stage', 'stage_2_work',
     ]);
+
+    const prepRes = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'stage_2_work',
+      '--provider-type', 'script',
+      '--provider-target', failingScriptPath,
+      '--workdir', testEnv.dir,
+      '--objective', 'Run failing kernel script',
+    ]);
+    const prepData = JSON.parse(prepRes.stdout);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
 
     const execResult = runPython(failingScriptPath, []);
     expect(execResult.status).toBe(1);
@@ -274,49 +293,49 @@ sys.exit(1)
     expect(report.execution_status).toBe('failed');
     expect(report.summary).toContain('Build error');
 
-    // Orchestrator logs failure and increments delivery attempt
-    const trans = runStateMachineCli([
-      'transition',
+    // Complete with failed report and receipt
+    fs.writeFileSync(prepData.receipt_path, '# Failure Receipt\nError during build');
+    const compRes = runLifecycleKernelCli([
+      'complete',
       '--receipt-root', testEnv.dir,
-      '--stage', 'stage_2_work',
-      '--status', 'failed',
-      '--incr-budget', 'delivery_attempts_used',
+      '--report', JSON.stringify({
+        execution_status: 'failed',
+        result: report.result,
+        receipt_path: prepData.receipt_path,
+        summary: report.summary,
+      }),
     ]);
-    expect(trans.status).toBe(0);
+    expect(compRes.status).toBe(0);
 
-    const stateShow = runStateMachineCli(['show', '--receipt-root', testEnv.dir, '--json']);
+    const stateShow = runLifecycleKernelCli(['inspect', '--receipt-root', testEnv.dir, '--json']);
     const stateObj = JSON.parse(stateShow.stdout);
     expect(stateObj.budgets.delivery_attempts_used).toBe(1);
     expect(stateObj.stage_status).toBe('failed');
   });
 
   it('S4.3: guarantees state isolation when envelope generation fails', () => {
-    runStateMachineCli([
+    runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
       '--root-issue', '100',
-      '--initial-stage', 'stage_1_plan',
     ]);
 
     const stateFile = path.join(testEnv.dir, 'state.json');
     const stateBefore = fs.readFileSync(stateFile, 'utf-8');
 
-    // Attempt invalid envelope creation (missing required objective)
-    const invalidEnvPath = path.join(testEnv.dir, 'invalid-env.json');
-    const result = runEnvelopeCli([
-      'create',
-      '--from-state', stateFile,
-      '--output', invalidEnvPath,
-      '--step', '1',
+    // Attempt invalid prepare (missing required objective)
+    const result = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'stage_1_plan',
       '--provider-type', 'skill',
       '--provider-target', 'pc-issue-plan',
-      '--receipt-path', path.join(testEnv.dir, 'receipt.md'),
       // Omit --objective
     ]);
 
     expect(result.status).not.toBe(0);
-    // Envelope file should not have been created
-    expect(fs.existsSync(invalidEnvPath)).toBe(false);
+    // Envelope 01-input.json should not exist
+    expect(fs.existsSync(path.join(testEnv.dir, '01-input.json'))).toBe(false);
 
     // State file must remain completely unaltered
     const stateAfter = fs.readFileSync(stateFile, 'utf-8');

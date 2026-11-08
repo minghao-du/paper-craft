@@ -74,8 +74,9 @@ Every workflow maintains two issue identifiers:
 ### Task Input Envelope Standard
 
 The Orchestrator **never concatenates massive free-text prompts**. Before dispatching any provider,
-the Orchestrator writes a structured JSON envelope to `<receipt_root>/<step_index>-input.json`
-using the bundled helper (`scripts/envelope.py create`).
+the Orchestrator uses the minimal dispatch lifecycle kernel (`scripts/lifecycle_kernel.py prepare`)
+to atomically allocate the next `step_index`, write the structured Task Input Envelope to
+`<receipt_root>/<step_index>-input.json`, and assign the deterministic receipt path.
 
 The Task Input Envelope schema contains 7 top-level sections:
 1. `schema_version`: Always `"1.0"`.
@@ -185,21 +186,25 @@ Before creating task worktrees or initializing workflow runtime state:
 For each stage defined in the loaded workflow:
 1. **Identify Stage Contract & Resolve Provider**: Read the stage's `logical_stage`, `provider` (`type`, `target`, `args`), inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules.
 2. **Prepare Environment**: Apply [Workspace lifecycle and dispatch](references/workspaces.md), verifying or creating the assigned workspace before professional execution.
-3. **Generate Task Input Envelope & Update State**:
-   - Update `<receipt_root>/state.json` with current stage, attempt, and target receipt path.
-   - Generate and validate `<receipt_root>/<step_index>-input.json` using `scripts/envelope.py create` (or `--from-state <receipt_root>/state.json`).
-4. **Dispatch via Resolved Provider**:
+3. **Prepare Task Dispatch**:
+   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py prepare --receipt-root "<receipt_root>" --stage <stage> --objective "<objective>" --provider-type <skill|script> --provider-target <target> ...`.
+   - The kernel atomically allocates monotonically increasing `step_index`, generates `<step_index>-input.json`, assigns `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
+4. **Handoff Execution**:
+   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py handoff --receipt-root "<receipt_root>"` to authorize execution launch.
    - **If `provider.type == "skill"`**: Dispatch fresh specialist subagent using platform adapter with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
    - **If `provider.type == "script"`**: Execute `<provider.target> --input-envelope "<receipt_root>/<step_index>-input.json" <provider.args>` and capture the compact report from stdout.
-5. **Verify Report & Receipt**: Check compact report and receipt integrity according to [Report Checks and Protocol Integrity](#report-checks-and-protocol-integrity). If malformed, missing, or contradictory, halt to the Decision Board.
-6. **Evaluate Routing**:
+5. **Complete Dispatch & Verify Receipt**:
+   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py complete --receipt-root "<receipt_root>" --report '<compact_json_report>'`.
+   - The kernel validates report integrity (the 4 required fields) and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
+6. **Evaluate Routing & Resolve Decision**:
    - Match the returned native `result` against the stage's routing table.
+   - Execute `python3 skills/pc-orchestrator/scripts/lifecycle_kernel.py resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>"`.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
    - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
    - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
-7. **Completion Gate**: After the workflow's required professional gates succeed, dispatch workspace cleanup and record removed or retained paths with reasons. Conclude only when terminal gates and cleanup results are recorded.
+7. **Completion Gate**: After the workflow's required professional gates succeed, dispatch workspace cleanup and record removed or retained paths with reasons. Conclude with `resolve --decision finish`.
 
 ---
 
@@ -236,41 +241,66 @@ Wait for the human user's prompt instruction before proceeding.
 
 ## State Persistence & Session Recovery
 
-- **Structured State Snapshot (`state.json`)** — The Orchestrator maintains `<receipt_root>/state.json` directly as the authoritative runtime state. It updates this file before dispatching a stage and after accepting a receipt.
+- **Structured State Snapshot (`state.json`)** — The Orchestrator maintains `<receipt_root>/state.json` via the lifecycle kernel as the authoritative runtime state:
   ```json
   {
+    "schema_version": "1.0",
     "root_issue_id": "<root_issue_id>",
     "current_issue_id": "<current_issue_id>",
+    "workflow": "default",
     "current_stage": "<current_stage_name>",
+    "stage_status": "pending",
+    "next_step_index": 2,
+    "active_dispatch": null,
     "completed_stages": [
       {
+        "dispatch_id": "<step_index>-<stage>-issue-<id>-try-<attempt>",
+        "step_index": 1,
         "stage": "<stage_name>",
-        "outcome": "<domain_outcome>",
+        "attempt": 1,
+        "execution_status": "succeeded",
+        "result": { "outcome": "<domain_outcome>" },
         "receipt_path": "<assigned_absolute_receipt_path>",
-        "commit": "<implementation_or_merged_commit>"
+        "summary": "<summary>",
+        "completed_at": "<iso_timestamp>"
       }
     ],
-    "context": {
-      "workspaces": {}
-    },
+    "decisions": [
+      {
+        "decision": "continue",
+        "reason": "<reason>",
+        "options": [],
+        "timestamp": "<iso_timestamp>"
+      }
+    ],
     "budgets": {
-      "delivery_attempts_used": 0,
-      "replans_used": 0
+      "delivery_attempts_used": 1,
+      "delivery_attempts_max": 3,
+      "replans_used": 0,
+      "replans_max": 2
     },
+    "context": {},
     "last_updated": "<iso_timestamp>"
   }
   ```
-- **State Machine Helper (`scripts/state_machine.py`)** — The Orchestrator may execute the bundled helper script to perform atomic state transitions, fast budget checks, and crash-resilient updates without manually assembling JSON:
-  - Initialize: `python3 <skill-dir>/scripts/state_machine.py init --receipt-root "<receipt_root>" --root-issue <root_id>`
-  - Transition: `python3 <skill-dir>/scripts/state_machine.py transition --receipt-root "<receipt_root>" --stage <stage> --status <status> [--outcome <outcome>] [--receipt "<receipt_path>"] [--incr-budget delivery_attempts_used] [--set <key=val>]`
-  - Inspect / Resume: `python3 <skill-dir>/scripts/state_machine.py show --receipt-root "<receipt_root>" [--json]`
-  - Check Budget: `python3 <skill-dir>/scripts/state_machine.py check-budget --receipt-root "<receipt_root>" --type <delivery|replan> --limit <max>`
-- **Task Input Envelope Engine (`scripts/envelope.py`)** — The Orchestrator generates and validates structured task envelopes:
-  - Generate from State: `python3 <skill-dir>/scripts/envelope.py create --from-state "<receipt_root>/state.json" --output "<receipt_root>/<step>-input.json" --step <step> --provider-type <skill|script> --provider-target <target> --objective "<objective>" --receipt-path "<receipt_path>"`
+- **Lifecycle Kernel (`scripts/lifecycle_kernel.py`)** — The authoritative controller for runtime state snapshots, task dispatches, and orchestrator decisions. The kernel provides 6 distinct operations:
+  - **`init`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py init --receipt-root "<receipt_root>" --root-issue <root_id> [--repo-dir <repo_dir>] [--require-config]`
+    Creates workflow run state in `<receipt_root>/state.json`. Validates workspace configuration and populates root context.
+  - **`prepare`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py prepare --receipt-root "<receipt_root>" --stage <stage> --objective "<objective>" --provider-type <skill|script> --provider-target <target> [--provider-arg <arg>] [--criteria <criterion>] [--predecessor-receipt <path>] [--workdir <dir>] [--attempt-intent same|new]`
+    Prepares a fixed task, allocates monotonically increasing `step_index`, generates Task Input Envelope `<step_index>-input.json`, assigns deterministic receipt path `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
+  - **`handoff`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py handoff --receipt-root "<receipt_root>" [--dispatch-id <id>] [--platform-handle <handle>]`
+    Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Subsequent calls or queries do NOT grant new launch permission.
+  - **`complete`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py complete --receipt-root "<receipt_root>" --report '<compact_json>'`
+    Registers compact execution report (validating `execution_status`, `result`, `receipt_path`, `summary`) and verifies physical non-empty receipt existence on disk.
+  - **`resolve`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish> --reason "<reason>" [--option "<option>"]`
+    Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately.
+  - **`inspect`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py inspect --receipt-root "<receipt_root>" [--json] [--field <path>]`
+    Queries current state, active dispatch, orchestrator decisions, budgets, and reasons blocking progression.
+- **Task Input Envelope Engine (`scripts/envelope.py`)** — Low-level validation and inspection:
   - Validate: `python3 <skill-dir>/scripts/envelope.py validate "<receipt_root>/<step>-input.json"`
   - Inspect: `python3 <skill-dir>/scripts/envelope.py show "<receipt_root>/<step>-input.json" [--json]`
 - **Durable File Receipts** — Specialist agents write their evidence, logs, and verification outputs to their assigned `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md` file using [the receipt template](templates/subagent-receipt.template.md). Receipts remain outside source checkouts.
-- **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator reads `<receipt_root>/state.json` directly:
-  1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using the recorded receipt references, workspace assignments, and consumed budgets. If an older snapshot lacks workspace assignments, have `pc-workspace` validate the environment in the last accepted receipt before professional work. Preserve uncertain ownership as reused for automatic cleanup.
+- **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator inspects `<receipt_root>/state.json` directly via `lifecycle_kernel.py inspect`:
+  1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using recorded receipt references, active dispatch status, and consumed budgets.
   2. If `state.json` is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.
