@@ -446,6 +446,85 @@ class TestEnvelopeCLI(unittest.TestCase):
         self.assertEqual(data["environment"]["repository"], "acme/paper-craft")
         self.assertEqual(data["environment"]["base_branch"], "trunk")
 
+    def test_fork_roles_preserved_from_workspace_config(self) -> None:
+        """Envelope preserves delivery_target, base_remote, push_remote from workspace config."""
+        cfg_dir = self.root / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "upstream-org/upstream-repo",
+            "base_remote": "upstream",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../custom-fork-worktrees",
+        }), encoding="utf-8")
+
+        output_file = self.root / "fork_env.json"
+        res = self.run_cli(
+            "create",
+            "--output", str(output_file),
+            "--stage", "workspace_prepare",
+            "--step", "1",
+            "--root-issue", "39",
+            "--provider-type", "script",
+            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
+            "--workdir", str(self.root),
+            "--objective", "Prepare workspace with fork roles",
+            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        env = data["environment"]
+        self.assertEqual(env["repository"], "upstream-org/upstream-repo")
+        self.assertEqual(env.get("delivery_target"), "upstream-org/upstream-repo")
+        self.assertEqual(env.get("base_remote"), "upstream")
+        self.assertEqual(env.get("push_remote"), "origin")
+        self.assertEqual(env.get("base_branch"), "main")
+
+        params = data["inputs"]["parameters"]
+        self.assertEqual(params.get("delivery_target"), "upstream-org/upstream-repo")
+        self.assertEqual(params.get("base_remote"), "upstream")
+        self.assertEqual(params.get("push_remote"), "origin")
+        self.assertEqual(params.get("worktree_container"), "../custom-fork-worktrees")
+
+    def test_fork_roles_cli_overrides(self) -> None:
+        """Envelope CLI accepts and preserves explicit fork role parameters."""
+        output_file = self.root / "override_env.json"
+        res = self.run_cli(
+            "create",
+            "--output", str(output_file),
+            "--stage", "workspace_prepare",
+            "--step", "1",
+            "--root-issue", "39",
+            "--provider-type", "script",
+            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
+            "--workdir", str(self.root),
+            "--delivery-target", "explicit-upstream/repo",
+            "--base-remote", "upstream",
+            "--push-remote", "origin",
+            "--base-branch", "main",
+            "--worktree-container", "../explicit-worktrees",
+            "--objective", "Prepare workspace with explicit fork roles",
+            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        env = data["environment"]
+        self.assertEqual(env["repository"], "explicit-upstream/repo")
+        self.assertEqual(env.get("delivery_target"), "explicit-upstream/repo")
+        self.assertEqual(env.get("base_remote"), "upstream")
+        self.assertEqual(env.get("push_remote"), "origin")
+
+        params = data["inputs"]["parameters"]
+        self.assertEqual(params.get("delivery_target"), "explicit-upstream/repo")
+        self.assertEqual(params.get("base_remote"), "upstream")
+        self.assertEqual(params.get("push_remote"), "origin")
+        self.assertEqual(params.get("worktree_container"), "../explicit-worktrees")
+
 
 if __name__ == "__main__":
     unittest.main()

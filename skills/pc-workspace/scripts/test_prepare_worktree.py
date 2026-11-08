@@ -409,6 +409,115 @@ class WorkspaceTests(unittest.TestCase):
         target_container = self.root / "project-worktrees" / "issue-72"
         self.assertFalse(target_container.exists(), "Worktree must not be created on invalid config")
 
+    def test_fork_project_fetches_upstream_baseline_and_custom_container(self):
+        """Fork repository fetches mainline baseline from base_remote (upstream) into custom container."""
+        (self.source / ".gitignore").write_text(".paper-craft/\n")
+        self.git(self.source, "add", ".gitignore")
+        self.git(self.source, "commit", "-m", "Add gitignore")
+
+        # Setup bare upstream and push a unique commit
+        upstream_bare = self.root / "upstream.git"
+        self.git(self.root, "init", "--bare", "--initial-branch=main", "upstream.git")
+
+        temp_upstream_checkout = self.root / "temp-upstream"
+        self.git(self.root, "clone", str(upstream_bare), "temp-upstream")
+        self.git(temp_upstream_checkout, "config", "user.name", "Upstream Dev")
+        self.git(temp_upstream_checkout, "config", "user.email", "upstream@example.com")
+        self.git(temp_upstream_checkout, "config", "commit.gpgsign", "false")
+        (temp_upstream_checkout / "UPSTREAM_FEATURE.md").write_text("# Mainline Feature\n")
+        self.git(temp_upstream_checkout, "add", "UPSTREAM_FEATURE.md")
+        self.git(temp_upstream_checkout, "commit", "-m", "Upstream mainline commit")
+        self.git(temp_upstream_checkout, "push", "origin", "main")
+        upstream_head_sha = self.git(temp_upstream_checkout, "rev-parse", "HEAD")
+
+        # In source repo (the fork checkout), add upstream remote
+        self.git(self.source, "remote", "add", "upstream", str(upstream_bare))
+
+        # Setup workspace configuration for fork
+        cfg_dir = self.source / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "upstream-owner/repo",
+            "base_remote": "upstream",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../custom-fork-worktrees",
+        }), encoding="utf-8")
+
+        # Create input envelope
+        receipt_path = self.root / "receipts" / "01-fork-receipt.md"
+        env_file = self.root / "envelopes" / "fork-input.json"
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        env_data = {
+            "schema_version": "1.0",
+            "task": {
+                "logical_stage": "workspace_prepare",
+                "step_index": 1,
+                "attempt": 1,
+                "root_issue_id": "39",
+                "current_issue_id": "39",
+            },
+            "provider": {
+                "type": "script",
+                "target": str(HELPER),
+                "args": [],
+            },
+            "environment": {
+                "working_directory": str(self.source),
+                "repository": "upstream-owner/repo",
+                "delivery_target": "upstream-owner/repo",
+                "base_remote": "upstream",
+                "push_remote": "origin",
+                "base_branch": "main",
+            },
+            "inputs": {
+                "objective": "Prepare workspace for fork issue #39",
+                "scope": "",
+                "acceptance_criteria": [],
+                "predecessor_receipts": [],
+                "parameters": {
+                    "delivery_target": "upstream-owner/repo",
+                    "base_remote": "upstream",
+                    "push_remote": "origin",
+                    "worktree_container": "../custom-fork-worktrees",
+                },
+            },
+            "contract": {
+                "receipt_path": str(receipt_path),
+                "receipt_template": "templates/subagent-receipt.template.md",
+            },
+            "budgets": {
+                "delivery_attempts_used": 0,
+                "delivery_attempts_max": 3,
+                "replans_used": 0,
+                "replans_max": 2,
+            },
+        }
+        env_file.write_text(json.dumps(env_data, indent=2), encoding="utf-8")
+
+        # Run prepare-worktree
+        res = self.run_kernel("--input-envelope", str(env_file))
+        report = json.loads(res.stdout)
+        self.assertEqual(report["execution_status"], "succeeded")
+
+        result = report["result"]
+        self.assertEqual(result.get("delivery_target"), "upstream-owner/repo")
+        self.assertEqual(result.get("base_remote"), "upstream")
+        self.assertEqual(result.get("push_remote"), "origin")
+        self.assertEqual(result.get("commit"), upstream_head_sha)
+
+        expected_worktree = self.root / "custom-fork-worktrees" / "issue-39"
+        self.assertEqual(result.get("worktree"), str(expected_worktree))
+        self.assertTrue(expected_worktree.is_dir())
+        self.assertTrue((expected_worktree / "UPSTREAM_FEATURE.md").exists())
+
+        # Check receipt
+        self.assertTrue(receipt_path.exists())
+        receipt_text = receipt_path.read_text(encoding="utf-8")
+        self.assertIn("upstream-owner/repo", receipt_text)
+        self.assertIn("upstream", receipt_text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -219,12 +219,26 @@ def cmd_init(args: argparse.Namespace) -> int:
             return 1
 
     remotes = probe_git_remotes(repo_root)
-    default_remote = "origin" if "origin" in remotes else (remotes[0] if remotes else "origin")
+    is_fork = "upstream" in remotes
 
-    # Probe delivery target
+    if is_fork:
+        default_base_remote = "upstream"
+        default_push_remote = "origin" if "origin" in remotes else "upstream"
+        target_probe_remote = "upstream"
+    else:
+        default_base_remote = "origin" if "origin" in remotes else (remotes[0] if remotes else "origin")
+        default_push_remote = default_base_remote
+        target_probe_remote = default_base_remote
+
+    # Probe delivery target from primary target remote
     probed_target = None
-    if default_remote in remotes:
-        code, remote_url, _ = run_git(repo_root, "remote", "get-url", default_remote)
+    if target_probe_remote in remotes:
+        code, remote_url, _ = run_git(repo_root, "remote", "get-url", target_probe_remote)
+        if code == 0 and remote_url:
+            probed_target = parse_repo_from_url(remote_url)
+
+    if not probed_target and "origin" in remotes:
+        code, remote_url, _ = run_git(repo_root, "remote", "get-url", "origin")
         if code == 0 and remote_url:
             probed_target = parse_repo_from_url(remote_url)
 
@@ -232,12 +246,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not probed_target:
         probed_target = f"local/{repo_root.name}"
 
-    probed_branch = probe_default_branch(repo_root, default_remote)
+    probed_branch = probe_default_branch(repo_root, default_base_remote)
 
     # Resolve values with priority: explicit CLI arg > probed > default
     delivery_target = args.delivery_target or probed_target
-    base_remote = args.base_remote or default_remote
-    push_remote = args.push_remote or default_remote
+    base_remote = args.base_remote or default_base_remote
+    push_remote = args.push_remote or default_push_remote
     base_branch = args.base_branch or probed_branch
     worktree_container = args.worktree_container or DEFAULT_WORKTREE_CONTAINER
 
@@ -246,6 +260,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         try:
             print("=== Paper-craft Workspace Configuration Wizard ===")
             print(f"Repository Root:    {repo_root}")
+            if is_fork:
+                print("Fork repository setup detected (distinct upstream and origin remotes).")
             ans = input(f"Delivery Target [{delivery_target}]: ").strip()
             if ans:
                 delivery_target = ans
