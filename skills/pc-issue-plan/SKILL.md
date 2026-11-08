@@ -1,12 +1,12 @@
 ---
 name: pc-issue-plan
-description: Issue planning and triage specialist — assess whether a scientific or engineering issue requires decomposition, draft and file sub-issues, establish falsifiable scientific gates, and judge dependencies
+description: Plan scientific or engineering issues by verifiable execution stages, draft and file up to five sub-issues, and define acceptance gates and dependencies
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 ---
 
 # /pc-issue-plan
 
-Authoritative instructions for evaluating GitHub issues: assessing whether an issue requires decomposition into sub-issues, judging execution depth boundaries, and drafting child issues with concrete, falsifiable scientific and engineering acceptance gates.
+Plan GitHub issues around verifiable execution stages, preserving the scientific objective and defining bounded child issues with concrete acceptance gates and dependencies.
 
 This skill is invoked directly by a human or agent with a task prompt or issue reference.
 
@@ -20,9 +20,10 @@ one with [pc-workspace](../pc-workspace/SKILL.md) before starting.
 
 In paper-craft, the root issue is typically a concrete scientific question or computational research problem (e.g., hypothesis validation, algorithmic implementation, baseline reproduction, scientific pipeline construction, or benchmark evaluation).
 
-Planning and decomposition must treat the scientific objective as an absolute first-class citizen:
-- **Scientific Deliverables & Artifacts:** Every decomposed sub-issue must specify observable scientific artifacts (e.g., metric tables, figures, statistical summaries, workflow rules, model checkpoints) rather than empty scaffolding.
-- **Falsifiable Scientific Gates:** Child tasks must carry automated, verifiable acceptance gates (e.g., target performance thresholds, statistical significance, invariance tests, small-data smoke checks, or execution scripts) that prove the scientific capability was achieved.
+Preserve the scientific objective throughout decomposition.
+
+- Every child must specify stage-appropriate artifacts or observable state evidence. Cleanup can establish removal of obsolete outputs and consistent configuration references, data preparation can produce validated splits, and experiments can produce checkpoints, metrics, and figures.
+- Acceptance gates must be automated and falsifiable for that stage. Distinguish execution feasibility from scientific findings, and derive scientific thresholds from the parent requirements.
 
 ## Task Inputs
 
@@ -69,31 +70,37 @@ Check if the issue has a parent or was created as a sub-issue (via GitHub native
   ```
   Halt planning and yield execution to direct delivery. Never nest sub-issues within sub-issues.
 
-### Step 2: Evaluate split decision (Triage Criteria)
-When the issue is a root issue, evaluate whether it can be solved directly in a single iteration or must be decomposed:
+### Step 2: Identify verifiable execution stages
+For a root issue, map the work needed to satisfy its acceptance criteria into stages with distinct artifacts or state evidence and completion gates. A clear objective, one module, or a single feasible PR can still contain multiple stages.
 
-#### Split criteria
-An issue **must be decomposed** (`outcome: "decomposed"`) if ANY of the following hold:
-1. **Delivery budget:** Code modifications span multiple independent modules/packages, or the expected implementation exceeds a single cohesive PR / test run budget.
-2. **Verification independence:** The work contains separable stages with distinct, falsifiable acceptance gates (e.g., data ingestion/preprocessing and contract scaffolding can be verified independently before core modeling or analysis).
-3. **Exploratory / blocking dependencies:** The solution requires preliminary benchmarks, spikes, or experimental confirmation before subsequent implementation choices can be settled.
+Consider cleanup and contract repair, data preparation, feasibility validation, remaining execution, and analysis or synthesis where the work requires them. Each candidate must have a meaningful completion checkpoint that enables downstream work or can be accepted separately. Keep routine commands and small implementation steps inside their owning stage.
 
-If NONE of the above hold, the issue is atomic:
+For multiple configurations or batch runs, inspect existing evidence for the shared execution path under the current data and workflow. If feasibility remains unverified, separate a representative configuration and make the remaining runs depend on its passing feasibility gate. Group the remaining configurations that share the same procedure and acceptance contract. Existing applicable evidence can justify a combined execution stage.
+
+An issue **must be decomposed** (`outcome: "decomposed"`) when at least two such stages exist. Module boundaries, delivery budgets, and experimental uncertainty can help locate checkpoints.
+
+Return `direct` only when the root issue has one cohesive delivery stage. Justify the absence of further meaningful acceptance checkpoints.
+
 ```json
 {
   "outcome": "direct",
   "summary": "Atomic issue delivery",
-  "reason": "<Specific justification why single-turn/single-PR delivery is feasible>"
+  "reason": "<Why the work has one cohesive delivery stage and no further meaningful acceptance checkpoints>"
 }
 ```
 
 ### Step 3: Plan children (Decomposition)
 When decomposition is required, propose bounded child issues and actionable worker briefs:
 
+#### Child count and coverage
+A decomposed plan must contain **2–5 direct sub-issues**, including existing children retained in the plan. Five is a hard maximum. When more stages are identified, combine repeated runs and smaller adjacent preparation stages while preserving critical feasibility gates. Use fewer children when that covers the work coherently.
+
+Map every parent requirement to a child, including configuration, scripts, interfaces, and tests. Assign implementation work to the stage that needs it. Reuse existing children where they cover planned work, and resolve an over-limit plan before filing additional children. Apply these constraints to reassessment proposals as well.
+
 #### Planning standards & rigor
 Incorporate strategic review discipline before finalizing children:
-- **Scientific deliverables:** Explicitly list expected research artifacts (e.g., `results/<stage>/...`, metric JSON, figures).
-- **Scope discipline:** Define explicit "What this is NOT" boundaries to prevent scope creep.
+- **Stage deliverables:** Explicitly list expected artifacts or state evidence and their paths where applicable.
+- **Scope discipline:** Define each child's bounded responsibility.
 - **Falsifiable gates:** Every child task must have an observable, automated acceptance gate (tests, CLI assertions, pipeline dry-run, or benchmark scripts).
 - **Cost & complexity check:** Verify any algorithmic complexity or resource claims with back-of-the-envelope calculations. Flag scaling cliffs or unrealistic performance assumptions.
 - **Dependency & collision graph:** Distinguish strict prerequisites (`blockedBy`) from resource/file collision constraints.
@@ -101,8 +108,8 @@ Incorporate strategic review discipline before finalizing children:
 #### Sub-issue drafting and filing
 1. For each planned child, draft an issue specification following project conventions:
    - Concise imperative title.
-   - Problem statement and falsifiable scientific and engineering success criteria.
-   - Expected output artifacts and data paths.
+   - Stage-specific problem statement and falsifiable success criteria.
+   - Expected output artifacts or state evidence and relevant paths.
    - Scope boundaries (in scope / out of scope).
    - Test plan with concrete execution commands.
 2. Write local drafts as `ISSUE-<slug>.md`.
@@ -140,9 +147,10 @@ Incorporate strategic review discipline before finalizing children:
 
 A planning task is complete only when all criteria are met:
 1. **Depth boundary strictly observed:** No sub-issues nested beneath existing sub-issues.
-2. **Explicit falsifiable criteria:** Every planned child issue includes concrete, automated acceptance gates and expected artifacts.
+2. **Explicit falsifiable criteria:** Every planned child issue includes concrete, automated acceptance gates and stage-appropriate artifacts or state evidence.
 3. **Accurate dependency tracking:** `blockedBy` arrays reflect actual technical prerequisites.
 4. **Issue tracker synchronization:** For issue-filing tasks, parent issue tasklist matches filed child issues.
+5. **Bounded, complete plan:** The child-count and coverage constraints hold before returning or filing a plan.
 
 ## Task Outputs
 
