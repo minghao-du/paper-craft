@@ -478,10 +478,10 @@ class TestEnvelopeCLI(unittest.TestCase):
 
         env = data["environment"]
         self.assertEqual(env["repository"], "upstream-org/upstream-repo")
-        self.assertEqual(env.get("delivery_target"), "upstream-org/upstream-repo")
-        self.assertEqual(env.get("base_remote"), "upstream")
-        self.assertEqual(env.get("push_remote"), "origin")
         self.assertEqual(env.get("base_branch"), "main")
+        self.assertNotIn("delivery_target", env)
+        self.assertNotIn("base_remote", env)
+        self.assertNotIn("push_remote", env)
 
         params = data["inputs"]["parameters"]
         self.assertEqual(params.get("delivery_target"), "upstream-org/upstream-repo")
@@ -515,15 +515,99 @@ class TestEnvelopeCLI(unittest.TestCase):
 
         env = data["environment"]
         self.assertEqual(env["repository"], "explicit-upstream/repo")
-        self.assertEqual(env.get("delivery_target"), "explicit-upstream/repo")
-        self.assertEqual(env.get("base_remote"), "upstream")
-        self.assertEqual(env.get("push_remote"), "origin")
+        self.assertEqual(env.get("base_branch"), "main")
+        self.assertNotIn("delivery_target", env)
+        self.assertNotIn("base_remote", env)
+        self.assertNotIn("push_remote", env)
 
         params = data["inputs"]["parameters"]
         self.assertEqual(params.get("delivery_target"), "explicit-upstream/repo")
         self.assertEqual(params.get("base_remote"), "upstream")
         self.assertEqual(params.get("push_remote"), "origin")
         self.assertEqual(params.get("worktree_container"), "../explicit-worktrees")
+
+    def test_corrupted_workspace_config_raises_actionable_error(self) -> None:
+        """Malformed workspace-config.json raises EnvelopeCorruptedError and halts immediately."""
+        cfg_dir = self.root / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text("{ broken json", encoding="utf-8")
+
+        output_file = self.root / "broken_env.json"
+        res = self.run_cli(
+            "create",
+            "--output", str(output_file),
+            "--stage", "workspace_prepare",
+            "--step", "1",
+            "--root-issue", "38",
+            "--provider-type", "script",
+            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
+            "--workdir", str(self.root),
+            "--objective", "Prepare workspace with broken config",
+            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        )
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("Malformed JSON in workspace configuration", res.stderr)
+        self.assertIn("pc-workspace-config", res.stderr)
+
+        # In-memory API also raises EnvelopeCorruptedError
+        with self.assertRaises(envelope.EnvelopeCorruptedError):
+            envelope.create_envelope(
+                logical_stage="workspace_prepare",
+                step_index=1,
+                root_issue_id="38",
+                provider_type="script",
+                provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+                working_directory=str(self.root),
+                objective="Prepare workspace with broken config",
+                receipt_path=str(self.root / "receipts" / "01.md"),
+            )
+
+    def test_explicit_base_branch_main_not_overridden_by_config(self) -> None:
+        """Explicitly passed --base-branch main must take precedence over config default branch."""
+        cfg_dir = self.root / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "acme/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "develop",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+
+        output_file = self.root / "explicit_main_env.json"
+        res = self.run_cli(
+            "create",
+            "--output", str(output_file),
+            "--stage", "workspace_prepare",
+            "--step", "1",
+            "--root-issue", "38",
+            "--provider-type", "script",
+            "--provider-target", "skills/pc-workspace/scripts/prepare-worktree.py",
+            "--workdir", str(self.root),
+            "--base-branch", "main",
+            "--objective", "Prepare workspace with explicit main base branch",
+            "--receipt-path", str(self.root / "receipts" / "01.md"),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertEqual(data["environment"]["base_branch"], "main")
+
+        # In-memory API test: explicit base_branch="main" takes precedence
+        env_mem = envelope.create_envelope(
+            logical_stage="workspace_prepare",
+            step_index=1,
+            root_issue_id="38",
+            provider_type="script",
+            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            working_directory=str(self.root),
+            base_branch="main",
+            objective="Prepare workspace with explicit main",
+            receipt_path=str(self.root / "receipts" / "01.md"),
+        )
+        self.assertEqual(env_mem["environment"]["base_branch"], "main")
 
 
 if __name__ == "__main__":

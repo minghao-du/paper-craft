@@ -185,6 +185,20 @@ class TestStateMachine(unittest.TestCase):
         self.assertEqual(res_ok.returncode, 0)
         self.assertIn("valid", res_ok.stdout.lower())
 
+        # 3. Invalid config (e.g. missing required field) is rejected via validator delegation
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "owner/repo",
+            # missing base_remote
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+        res_invalid = self.run_cli("check-config", "--repo-dir", str(self.receipt_root))
+        self.assertEqual(res_invalid.returncode, 1)
+        self.assertIn("base_remote", res_invalid.stderr)
+        self.assertIn("pc-workspace-config", res_invalid.stderr)
+
     def test_init_with_require_config(self):
         # Without config, init with --require-config fails
         res_fail = self.run_cli(

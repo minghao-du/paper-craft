@@ -333,9 +333,6 @@ describe('Issue #38: Workspace Config E2E', () => {
 
     const envelope: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
     expect(envelope.environment.repository).toBe('paper-craft-upstream/demo-repo');
-    expect(envelope.environment.delivery_target).toBe('paper-craft-upstream/demo-repo');
-    expect(envelope.environment.base_remote).toBe('upstream');
-    expect(envelope.environment.push_remote).toBe('origin');
     expect(envelope.environment.base_branch).toBe('main');
     expect(envelope.inputs.parameters?.delivery_target).toBe('paper-craft-upstream/demo-repo');
     expect(envelope.inputs.parameters?.base_remote).toBe('upstream');

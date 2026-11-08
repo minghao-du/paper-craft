@@ -20,10 +20,18 @@ export const STATE_MACHINE_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-orchestrator/scripts/state_machine.py',
 );
+
+/**
+ * Absolute path to the workspace configuration CLI script (pc-workspace-config).
+ */
 export const WORKSPACE_CONFIG_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-workspace-config/scripts/config.py',
 );
+
+/**
+ * Absolute path to the worktree preparation CLI script (pc-workspace).
+ */
 export const PREPARE_WORKTREE_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-workspace/scripts/prepare-worktree.py',
@@ -52,9 +60,6 @@ export interface TaskInputEnvelope {
     base_branch: string;
     branch?: string | null;
     commit?: string | null;
-    delivery_target?: string;
-    base_remote?: string;
-    push_remote?: string;
   };
   inputs: {
     objective: string;

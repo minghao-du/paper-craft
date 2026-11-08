@@ -11,28 +11,11 @@ import sys
 from typing import Any, Dict, Optional
 
 
-def parse_repo_from_url(url: str) -> Optional[str]:
-    """Parse 'owner/repo' identifier from Git remote URL."""
-    if not url:
-        return None
-    m = re.search(r"[:/]([a-zA-Z0-9_\-\.]+)/([a-zA-Z0-9_\-\.]+?)(?:\.git)?$", url)
-    if m:
-        owner = m.group(1)
-        repo = m.group(2)
-        if owner == "git" and "/" in url:
-            parts = url.rstrip("/").split("/")
-            if len(parts) >= 2:
-                repo_part = parts[-1]
-                if repo_part.endswith(".git"):
-                    repo_part = repo_part[:-4]
-                return f"{parts[-2]}/{repo_part}"
-        return f"{owner}/{repo}"
-    path_obj = Path(url)
-    stem = path_obj.stem
-    parent_name = path_obj.parent.name
-    if stem and parent_name:
-        return f"{parent_name}/{stem}"
-    return None
+_CONFIG_DIR = str(Path(__file__).resolve().parent.parent.parent / "pc-workspace-config" / "scripts")
+if _CONFIG_DIR not in sys.path:
+    sys.path.insert(0, _CONFIG_DIR)
+
+from config import parse_repo_from_url
 
 
 def run(*args, cwd):
@@ -229,13 +212,9 @@ def prepare(args):
     if getattr(args, "workspace_config", None):
         config_file = Path(args.workspace_config).resolve()
     else:
-        for candidate in (
-            source / ".paper-craft" / "workspace-config.json",
-            source / ".paper-craft" / "workspace.json",
-        ):
-            if candidate.exists():
-                config_file = candidate
-                break
+        candidate = source / ".paper-craft" / "workspace-config.json"
+        if candidate.exists():
+            config_file = candidate
 
     if config_file and config_file.exists():
         try:
