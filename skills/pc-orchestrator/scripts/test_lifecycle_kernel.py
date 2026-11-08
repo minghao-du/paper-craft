@@ -157,6 +157,19 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertNotEqual(res3.returncode, 0)
         self.assertIn("active dispatch", res3.stderr.lower())
 
+        # Conflicting call with different workdir while previous dispatch is active
+        res_workdir_conflict = self.run_cli(
+            "prepare",
+            "--receipt-root", str(self.receipt_root),
+            "--stage", "stage_1_plan",
+            "--objective", "Plan issue 41",
+            "--provider-type", "skill",
+            "--provider-target", "pc-issue-plan",
+            "--workdir", str(self.receipt_root / "different-workdir"),
+        )
+        self.assertNotEqual(res_workdir_conflict.returncode, 0)
+        self.assertIn("active dispatch", res_workdir_conflict.stderr.lower())
+
     def test_prepare_budget_exhaustion(self):
         self.run_cli(
             "init",

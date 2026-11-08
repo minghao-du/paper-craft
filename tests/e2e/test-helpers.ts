@@ -11,15 +11,30 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Absolute root path of the repository.
+ */
 export const REPO_ROOT = path.resolve(__dirname, '../..');
+
+/**
+ * Absolute path to envelope CLI script (envelope.py).
+ */
 export const ENVELOPE_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-orchestrator/scripts/envelope.py',
 );
+
+/**
+ * Absolute path to deterministic state machine script (state_machine.py).
+ */
 export const STATE_MACHINE_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-orchestrator/scripts/state_machine.py',
 );
+
+/**
+ * Absolute path to dispatch lifecycle kernel CLI script (lifecycle_kernel.py).
+ */
 export const LIFECYCLE_KERNEL_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-orchestrator/scripts/lifecycle_kernel.py',

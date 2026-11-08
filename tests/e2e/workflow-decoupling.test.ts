@@ -337,29 +337,30 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
 
     for (let i = 0; i < stages.length; i++) {
       const stage = stages[i];
-      const envPath = path.join(testEnv.dir, `stage-${i}-input.json`);
-      const receiptPath = path.join(testEnv.dir, `stage-${i}-receipt.md`);
+      const stageRoot = path.join(testEnv.dir, `stage-${i}`);
+      runLifecycleKernelCli([
+        'init',
+        '--receipt-root', stageRoot,
+        '--root-issue', '100',
+      ]);
       const providerArgFlags = (stage.providerArgs ?? []).map((arg) => `--provider-arg=${arg}`);
 
-      const res = runEnvelopeCli([
-        'create',
-        '--output', envPath,
+      const res = runLifecycleKernelCli([
+        'prepare',
+        '--receipt-root', stageRoot,
         '--stage', stage.logicalTask,
-        '--step', String(i + 1),
-        '--root-issue', '100',
-        '--current-issue', '100',
         '--provider-type', stage.providerType,
         '--provider-target', stage.providerTarget,
         ...providerArgFlags,
         '--workdir', testEnv.dir,
         '--objective', `Execute stage ${stage.logicalTask}`,
-        '--receipt-path', receiptPath,
       ]);
 
       expect(res.status).toBe(0);
-      expect(fs.existsSync(envPath)).toBe(true);
+      const prepData = JSON.parse(res.stdout);
+      expect(fs.existsSync(prepData.envelope_path)).toBe(true);
 
-      const valRes = runEnvelopeCli(['validate', envPath]);
+      const valRes = runEnvelopeCli(['validate', prepData.envelope_path]);
       expect(valRes.status).toBe(0);
       expect(valRes.stdout).toContain('Valid envelope');
     }
@@ -368,38 +369,32 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
   it('W1.4: zero-perception provider substitution preserves state machine and contract invariance', () => {
     // Stage: workspace_prepare
     // Variant A: skill provider (pc-workspace)
-    const envSkillPath = path.join(testEnv.dir, 'step1-skill.json');
-    const receiptSkillPath = path.join(testEnv.dir, 'step1-skill-receipt.md');
-
-    runEnvelopeCli([
-      'create',
-      '--output', envSkillPath,
+    const rootSkill = path.join(testEnv.dir, 'skill-run');
+    runLifecycleKernelCli(['init', '--receipt-root', rootSkill, '--root-issue', '200']);
+    const prepSkill = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', rootSkill,
       '--stage', 'workspace_prepare',
-      '--step', '1',
-      '--root-issue', '200',
       '--provider-type', 'skill',
       '--provider-target', 'pc-workspace',
       '--workdir', testEnv.dir,
       '--objective', 'Prepare workspace via skill',
-      '--receipt-path', receiptSkillPath,
     ]);
+    const envSkillPath = JSON.parse(prepSkill.stdout).envelope_path;
 
     // Variant B: script provider (prepare-worktree.py)
-    const envScriptPath = path.join(testEnv.dir, 'step1-script.json');
-    const receiptScriptPath = path.join(testEnv.dir, 'step1-script-receipt.md');
-
-    runEnvelopeCli([
-      'create',
-      '--output', envScriptPath,
+    const rootScript = path.join(testEnv.dir, 'script-run');
+    runLifecycleKernelCli(['init', '--receipt-root', rootScript, '--root-issue', '200']);
+    const prepScript = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', rootScript,
       '--stage', 'workspace_prepare',
-      '--step', '1',
-      '--root-issue', '200',
       '--provider-type', 'script',
       '--provider-target', 'skills/pc-workspace/scripts/prepare-worktree.py',
       '--workdir', testEnv.dir,
       '--objective', 'Prepare workspace via script kernel',
-      '--receipt-path', receiptScriptPath,
     ]);
+    const envScriptPath = JSON.parse(prepScript.stdout).envelope_path;
 
     const envSkill: TaskInputEnvelope = JSON.parse(fs.readFileSync(envSkillPath, 'utf-8'));
     const envScript: TaskInputEnvelope = JSON.parse(fs.readFileSync(envScriptPath, 'utf-8'));
@@ -450,23 +445,23 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
   }, 15000);
 
   it('W1.5: rejects malformed provider definitions with schema validation error', () => {
-    const invalidEnvPath = path.join(testEnv.dir, 'bad-provider.json');
-    const res = runEnvelopeCli([
-      'create',
-      '--output', invalidEnvPath,
-      '--stage', 'issue_work',
-      '--step', '2',
+    runLifecycleKernelCli([
+      'init',
+      '--receipt-root', testEnv.dir,
       '--root-issue', '300',
+    ]);
+    const res = runLifecycleKernelCli([
+      'prepare',
+      '--receipt-root', testEnv.dir,
+      '--stage', 'issue_work',
       '--provider-type', 'unsupported_provider',
       '--provider-target', 'dummy-target',
       '--workdir', testEnv.dir,
       '--objective', 'Test bad provider type',
-      '--receipt-path', path.join(testEnv.dir, 'receipt.md'),
     ]);
 
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain("[provider.type] Expected 'skill' | 'script'");
-    expect(fs.existsSync(invalidEnvPath)).toBe(false);
   });
 
   it('W1.6: parseWorkflowStages actively rejects malformed stages instead of silently dropping', () => {

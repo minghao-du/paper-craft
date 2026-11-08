@@ -36,28 +36,7 @@ _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-try:
-    from envelope import validate_envelope, atomic_write_json
-except ImportError:
-    def atomic_write_json(file_path: Path, data: Dict[str, Any]) -> None:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_file = file_path.with_suffix(f".tmp.{os.getpid()}")
-        try:
-            with open(temp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-                f.write("\n")
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_file, file_path)
-        finally:
-            if temp_file.exists():
-                try:
-                    temp_file.unlink()
-                except OSError:
-                    pass
-
-    def validate_envelope(data: Any) -> List[str]:
-        return []
+from envelope import validate_envelope, atomic_write_json
 
 
 def get_state_file_path(receipt_root: Path | str) -> Path:
@@ -112,6 +91,8 @@ def _recover_uncommitted_dispatch(receipt_root_path: Path, state: Dict[str, Any]
                     "acceptance_criteria": inputs.get("acceptance_criteria", []),
                     "predecessors": inputs.get("predecessor_receipts", []),
                     "working_directory": env_env.get("working_directory", ""),
+                    "branch": env_env.get("branch"),
+                    "commit": env_env.get("commit"),
                 },
             }
             state["next_step_index"] = step_index + 1
@@ -123,8 +104,8 @@ def _recover_uncommitted_dispatch(receipt_root_path: Path, state: Dict[str, Any]
             state["stage_status"] = "pending"
             state["last_updated"] = datetime.now(timezone.utc).isoformat()
             atomic_write_json(get_state_file_path(receipt_root_path), state)
-    except Exception:
-        pass
+    except (json.JSONDecodeError, OSError) as err:
+        sys.stderr.write(f"Warning: Failed to recover uncommitted dispatch envelope {env_file}: {err}\n")
 
     return state
 
@@ -264,6 +245,12 @@ def prepare_task(
     if state.get("stage_status") == "halted" or state.get("orchestrator_decision") == "halt":
         raise RuntimeError("Cannot prepare task: Workflow is halted. Run 'resolve --decision continue' to resume first.")
 
+    # Context & Environment
+    context = state.get("context", {})
+    resolved_workdir = str(workdir or context.get("worktree") or context.get("working_directory") or Path.cwd())
+    resolved_branch = branch or context.get("branch")
+    resolved_commit = commit or context.get("commit")
+
     # Validate active dispatch
     active = state.get("active_dispatch")
     if active:
@@ -282,6 +269,9 @@ def prepare_task(
             and req.get("provider", {}).get("args", []) == (provider_args or [])
             and req.get("acceptance_criteria", []) == (acceptance_criteria or [])
             and req.get("predecessors", []) == (predecessor_receipts or [])
+            and req.get("working_directory") == resolved_workdir
+            and req.get("branch") == resolved_branch
+            and req.get("commit") == resolved_commit
         ):
             return {
                 "dispatch_id": active["dispatch_id"],
@@ -337,13 +327,42 @@ def prepare_task(
     envelope_filename = f"{step_index:02d}-input.json"
     envelope_path = receipt_root_path / envelope_filename
 
-    # Context & Environment
-    context = state.get("context", {})
-    resolved_workdir = workdir or context.get("worktree") or context.get("working_directory") or str(Path.cwd())
+    # Resolve environment and parameters
     repo = context.get("repository", "local/repo")
     base_branch = context.get("base_branch", "main")
-    resolved_branch = branch or context.get("branch")
-    resolved_commit = commit or context.get("commit")
+
+    resolved_predecessors = list(predecessor_receipts or [])
+    if not resolved_predecessors and state.get("completed_stages"):
+        latest_completed = state["completed_stages"][-1]
+        rec = latest_completed.get("receipt_path")
+        if rec:
+            resolved_predecessors.append(rec)
+
+    params = dict(parameters or {})
+    if "delivery_target" not in params and context.get("delivery_target"):
+        params["delivery_target"] = context["delivery_target"]
+    if "base_remote" not in params and context.get("base_remote"):
+        params["base_remote"] = context["base_remote"]
+    if "push_remote" not in params and context.get("push_remote"):
+        params["push_remote"] = context["push_remote"]
+    if "worktree_container" not in params and context.get("worktree_container"):
+        params["worktree_container"] = context["worktree_container"]
+
+    if not context.get("delivery_target"):
+        cfg_ok, _, cfg_data = check_workspace_config(Path(resolved_workdir))
+        if cfg_ok and cfg_data:
+            if repo == "local/repo" and cfg_data.get("delivery_target"):
+                repo = cfg_data["delivery_target"]
+            if base_branch == "main" and cfg_data.get("base_branch"):
+                base_branch = cfg_data["base_branch"]
+            if "delivery_target" not in params and cfg_data.get("delivery_target"):
+                params["delivery_target"] = cfg_data["delivery_target"]
+            if "base_remote" not in params and cfg_data.get("base_remote"):
+                params["base_remote"] = cfg_data["base_remote"]
+            if "push_remote" not in params and cfg_data.get("push_remote"):
+                params["push_remote"] = cfg_data["push_remote"]
+            if "worktree_container" not in params and cfg_data.get("worktree_container"):
+                params["worktree_container"] = cfg_data["worktree_container"]
 
     envelope_data = {
         "schema_version": "1.0",
@@ -370,8 +389,8 @@ def prepare_task(
             "objective": objective,
             "scope": scope,
             "acceptance_criteria": acceptance_criteria or [],
-            "predecessor_receipts": predecessor_receipts or [],
-            "parameters": parameters or {},
+            "predecessor_receipts": resolved_predecessors,
+            "parameters": params,
         },
         "contract": {
             "receipt_path": str(receipt_path),
@@ -380,8 +399,10 @@ def prepare_task(
         "budgets": {
             "delivery_attempts_used": budgets["delivery_attempts_used"],
             "delivery_attempts_max": max_attempts,
+            "delivery_attempts_limit": max_attempts,
             "replans_used": budgets.get("replans_used", 0),
             "replans_max": budgets.get("replans_max", 2),
+            "replans_limit": budgets.get("replans_max", 2),
         },
     }
 
@@ -411,8 +432,10 @@ def prepare_task(
             },
             "logical_stage": stage,
             "acceptance_criteria": acceptance_criteria or [],
-            "predecessors": predecessor_receipts or [],
-            "working_directory": str(resolved_workdir),
+            "predecessors": resolved_predecessors,
+            "working_directory": resolved_workdir,
+            "branch": resolved_branch,
+            "commit": resolved_commit,
         },
     }
     state["last_updated"] = datetime.now(timezone.utc).isoformat()
@@ -693,6 +716,7 @@ def resolve_decision(
         state["stage_status"] = "blocked"
     elif decision == "finish":
         state["stage_status"] = "succeeded"
+        state["current_stage"] = "completed"
     elif decision == "continue":
         # Resuming from wait cannot bypass unconfirmed external execution
         active = state.get("active_dispatch")
@@ -823,7 +847,7 @@ def main() -> None:
     p_prep.add_argument("--receipt-root", required=True, help="Absolute path to receipts root directory.")
     p_prep.add_argument("--stage", "--task-name", dest="stage", required=True, help="Logical stage/task name.")
     p_prep.add_argument("--objective", required=True, help="Task objective.")
-    p_prep.add_argument("--provider-type", required=True, choices=["skill", "script"], help="Provider type.")
+    p_prep.add_argument("--provider-type", required=True, help="Provider type ('skill' or 'script').")
     p_prep.add_argument("--provider-target", required=True, help="Provider target (skill name or script path).")
     p_prep.add_argument(
         "--provider-arg",
