@@ -98,7 +98,7 @@ Exit code is `0` when valid, or `1` when missing or invalid, printing actionable
 1. **pc-orchestrator Entry Gate**:
    On workflow entry, `pc-orchestrator` checks configuration validity. If configuration is missing or invalid, execution halts immediately with a clear explanation guiding the user to run `pc-workspace-config`. No task worktree is created on the error path.
 2. **Task Input Envelopes (`envelope.py`)**:
-   When creating task envelopes without repetitive CLI parameters, `envelope.py` automatically populates `environment.repository`, `environment.delivery_target`, `environment.base_remote`, `environment.push_remote`, and `environment.base_branch` from `.paper-craft/workspace-config.json`, preserving role decoupling in `inputs.parameters`.
+   When creating task envelopes without repetitive CLI parameters, `envelope.py` automatically populates `environment.repository` and `environment.base_branch` from `.paper-craft/workspace-config.json`, passing `delivery_target`, `base_remote`, `push_remote`, and `worktree_container` cleanly under `inputs.parameters`.
 3. **Workspace Preparation (`prepare-worktree.py`)**:
    `prepare-worktree.py` reads the configuration to resolve:
    - Target container directory from `worktree_container`.

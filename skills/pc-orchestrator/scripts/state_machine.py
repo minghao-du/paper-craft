@@ -9,40 +9,41 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, Tuple
 
+_CONFIG_DIR = str(Path(__file__).resolve().parent.parent.parent / "pc-workspace-config" / "scripts")
+if _CONFIG_DIR not in sys.path:
+    sys.path.insert(0, _CONFIG_DIR)
+
+from config import validate_workspace_config
+
 
 def check_workspace_config(repo_dir: Path) -> Tuple[bool, str]:
     """Check workspace configuration existence and validity."""
     config_file = repo_dir / ".paper-craft" / "workspace-config.json"
-    legacy_file = repo_dir / ".paper-craft" / "workspace.json"
-    target_file = config_file if config_file.exists() else legacy_file
 
-    if not target_file.exists():
+    if not config_file.exists():
         return False, (
             f"Error: Workspace configuration is missing at {config_file}.\n"
             f"Please run 'pc-workspace-config' to initialize the workspace before starting pc-orchestrator."
         )
 
     try:
-        with open(target_file, "r", encoding="utf-8") as f:
+        with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
         return False, (
-            f"Error: Workspace configuration at {target_file} is corrupted: {e}.\n"
+            f"Error: Workspace configuration at {config_file} is corrupted: {e}.\n"
             f"Please run 'pc-workspace-config' to reconfigure."
         )
 
-    if not isinstance(data, dict):
-        return False, "Error: Workspace configuration must be a JSON object."
+    errors = validate_workspace_config(data, repo_dir)
+    if errors:
+        return False, (
+            f"Error: Workspace configuration at {config_file} is invalid:\n  - "
+            + "\n  - ".join(errors)
+            + "\nPlease run 'pc-workspace-config' to reconfigure."
+        )
 
-    if data.get("schema_version") != "1.0":
-        return False, f"Error: Unsupported schema_version '{data.get('schema_version')}'. Expected '1.0'."
-
-    for field in ("delivery_target", "base_remote", "push_remote", "base_branch", "worktree_container"):
-        val = data.get(field)
-        if not val or not isinstance(val, str) or not val.strip():
-            return False, f"Error: Configuration field '{field}' is missing or empty. Please run 'pc-workspace-config' to reconfigure."
-
-    return True, f"Workspace configuration is valid: {target_file}"
+    return True, f"Workspace configuration is valid: {config_file}"
 
 
 def get_state_file_path(receipt_root: str) -> Path:
@@ -246,9 +247,7 @@ def cmd_check_config(args: argparse.Namespace) -> None:
         sys.exit(1)
     if getattr(args, "json", False):
         config_file = repo_dir / ".paper-craft" / "workspace-config.json"
-        legacy_file = repo_dir / ".paper-craft" / "workspace.json"
-        target_file = config_file if config_file.exists() else legacy_file
-        with open(target_file, "r", encoding="utf-8") as f:
+        with open(config_file, "r", encoding="utf-8") as f:
             print(f.read().strip())
     else:
         print(msg)

@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 SCHEMA_VERSION = "1.0"
 CONFIG_REL_PATH = Path(".paper-craft") / "workspace-config.json"
-LEGACY_CONFIG_REL_PATH = Path(".paper-craft") / "workspace.json"
 DEFAULT_WORKTREE_CONTAINER = "../project-worktrees"
 
 
@@ -63,14 +62,9 @@ def find_repo_root(directory: Path) -> Path:
     return directory.resolve()
 
 
-def get_config_file_path(repo_root: Path, check_legacy: bool = True) -> Path:
-    """Get path to workspace configuration file."""
-    primary = repo_root / CONFIG_REL_PATH
-    if check_legacy and not primary.exists():
-        legacy = repo_root / LEGACY_CONFIG_REL_PATH
-        if legacy.exists():
-            return legacy
-    return primary
+def get_config_file_path(repo_root: Path) -> Path:
+    """Get path to canonical workspace configuration file."""
+    return repo_root / CONFIG_REL_PATH
 
 
 def parse_repo_from_url(url: str) -> Optional[str]:
@@ -261,24 +255,37 @@ def cmd_init(args: argparse.Namespace) -> int:
             print("=== Paper-craft Workspace Configuration Wizard ===")
             print(f"Repository Root:    {repo_root}")
             if is_fork:
-                print("Fork repository setup detected (distinct upstream and origin remotes).")
-            ans = input(f"Delivery Target [{delivery_target}]: ").strip()
+                print("\nFork repository setup detected (distinct upstream and origin remotes):")
+                print("  - delivery_target: Upstream repository for Issues, PRs, and landing (e.g. upstream-owner/repo)")
+                print("  - base_remote:     Remote to fetch latest mainline code from (e.g. upstream)")
+                print("  - push_remote:     Remote to push personal feature branches to (e.g. origin)")
+                print("  - base_branch:     Mainline base branch on base_remote (e.g. main)")
+                print("  - worktree_container: Directory container for disposable git worktrees\n")
+            else:
+                print("\nStandard repository setup detected (origin is canonical base and push remote).\n")
+
+            print("delivery_target: Upstream repository for Issues, PRs, and landing (e.g. owner/repo)")
+            ans = input(f"  Delivery Target [{delivery_target}]: ").strip()
             if ans:
                 delivery_target = ans
 
-            ans = input(f"Base Remote [{base_remote}]: ").strip()
+            print("base_remote: Remote to fetch latest mainline code from (e.g. upstream or origin)")
+            ans = input(f"  Base Remote [{base_remote}]: ").strip()
             if ans:
                 base_remote = ans
 
-            ans = input(f"Push Remote [{push_remote}]: ").strip()
+            print("push_remote: Remote to push personal feature branches to (e.g. origin)")
+            ans = input(f"  Push Remote [{push_remote}]: ").strip()
             if ans:
                 push_remote = ans
 
-            ans = input(f"Base Branch [{base_branch}]: ").strip()
+            print("base_branch: Mainline base branch on base_remote (e.g. main)")
+            ans = input(f"  Base Branch [{base_branch}]: ").strip()
             if ans:
                 base_branch = ans
 
-            ans = input(f"Worktree Container [{worktree_container}]: ").strip()
+            print("worktree_container: Directory container for disposable git worktrees")
+            ans = input(f"  Worktree Container [{worktree_container}]: ").strip()
             if ans:
                 worktree_container = ans
         except (KeyboardInterrupt, EOFError):
