@@ -240,16 +240,11 @@ describe('Tier 2: Boundary & Corner Cases', () => {
     expect(checkOk.status).toBe(0);
     expect(checkOk.stdout).toContain('Budget OK: delivery_attempts_used is 0/3');
 
-    // Increment budget 3 times
-    for (let i = 0; i < 3; i++) {
-      runStateMachineCli([
-        'transition',
-        '--receipt-root', testEnv.dir,
-        '--stage', 'stage_2_work',
-        '--status', 'failed',
-        '--incr-budget', 'delivery_attempts_used',
-      ]);
-    }
+    // Set budget to 3 in state.json
+    const stateFile = path.join(testEnv.dir, 'state.json');
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+    state.budgets.delivery_attempts_used = 3;
+    fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
 
     // Now budget is 3/3, which reaches limit
     const checkExceeded = runStateMachineCli([

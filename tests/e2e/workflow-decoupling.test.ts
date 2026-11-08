@@ -15,9 +15,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import {
   createTestDir,
+  PREPARE_WORKTREE_SCRIPT,
   REPO_ROOT,
   runEnvelopeCli,
-  runStateMachineCli,
+  runLifecycleKernelCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
 
@@ -410,30 +411,42 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
     expect(envSkill.environment.working_directory).toBe(envScript.environment.working_directory);
     expect(envSkill.contract.receipt_template).toBe(envScript.contract.receipt_template);
 
-    // State machine zero-perception verification
-    runStateMachineCli([
+    // Kernel zero-perception verification
+    runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
       '--root-issue', '200',
-      '--initial-stage', 'workspace_prepare',
     ]);
-
-    fs.writeFileSync(receiptScriptPath, '# Script Receipt\nOutcome: prepared');
-    const transRes = runStateMachineCli([
-      'transition',
+    const prepRes = runLifecycleKernelCli([
+      'prepare',
       '--receipt-root', testEnv.dir,
-      '--stage', 'issue_plan',
-      '--status', 'succeeded',
-      '--outcome', 'prepared',
-      '--receipt', receiptScriptPath,
+      '--stage', 'workspace_prepare',
+      '--objective', 'Prepare workspace for issue 200',
+      '--provider-type', 'script',
+      '--provider-target', PREPARE_WORKTREE_SCRIPT,
     ]);
-    expect(transRes.status).toBe(0);
+    const prepData = JSON.parse(prepRes.stdout);
+    runLifecycleKernelCli([
+      'handoff',
+      '--receipt-root', testEnv.dir,
+    ]);
 
-    const stateShow = runStateMachineCli(['show', '--receipt-root', testEnv.dir, '--json']);
+    fs.writeFileSync(prepData.receipt_path, '# Script Receipt\nOutcome: prepared');
+    const compRes = runLifecycleKernelCli([
+      'complete',
+      '--receipt-root', testEnv.dir,
+      '--report', JSON.stringify({
+        execution_status: 'succeeded',
+        result: { outcome: 'prepared' },
+        receipt_path: prepData.receipt_path,
+        summary: 'Workspace prepared',
+      }),
+    ]);
+    expect(compRes.status).toBe(0);
+
+    const stateShow = runLifecycleKernelCli(['inspect', '--receipt-root', testEnv.dir, '--json']);
     const stateObj = JSON.parse(stateShow.stdout);
-    expect(stateObj.current_stage).toBe('issue_plan');
-    expect(stateObj.completed_stages[0].stage).toBe('workspace_prepare');
-    expect(stateObj.completed_stages[0].outcome).toBe('prepared');
+    expect(stateObj.completed_stages_count).toBe(1);
   }, 15000);
 
   it('W1.5: rejects malformed provider definitions with schema validation error', () => {

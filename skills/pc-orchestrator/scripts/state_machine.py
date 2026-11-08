@@ -125,63 +125,6 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(json.dumps(initial_state, indent=2, ensure_ascii=False))
 
 
-def cmd_transition(args: argparse.Namespace) -> None:
-    state = load_state(args.receipt_root)
-
-    prev_stage = state.get("current_stage")
-    now = datetime.now(timezone.utc).isoformat()
-
-    if args.current_issue:
-        state["current_issue_id"] = str(args.current_issue)
-
-    if "context" not in state:
-        state["context"] = {}
-
-    if args.set:
-        for item in args.set:
-            if "=" not in item:
-                sys.stderr.write(f"Error: Invalid --set format '{item}'. Expected key=value.\n")
-                sys.exit(1)
-            key, val = item.split("=", 1)
-            state["context"][key.strip()] = val.strip()
-
-    if "budgets" not in state:
-        state["budgets"] = {"delivery_attempts_used": 0, "replans_used": 0}
-
-    if args.incr_budget:
-        budget_key = args.incr_budget
-        if budget_key not in state["budgets"]:
-            state["budgets"][budget_key] = 0
-        state["budgets"][budget_key] += 1
-
-    # Record completed stages if concluding or advancing
-    record_history = False
-    if args.outcome or args.receipt or args.status in ("succeeded", "failed", "blocked", "halted"):
-        record_history = True
-
-    if record_history:
-        commit = state.get("context", {}).get("commit") or state.get("context", {}).get("merged_commit")
-        history_entry = {
-            "stage": prev_stage,
-            "status": args.status,
-            "outcome": args.outcome or None,
-            "receipt_path": args.receipt or None,
-            "commit": commit,
-            "timestamp": now,
-        }
-        if "completed_stages" not in state:
-            state["completed_stages"] = state.get("history", [])
-        state["completed_stages"].append(history_entry)
-
-    state["current_stage"] = args.stage
-    state["stage_status"] = args.status
-    state["last_updated"] = now
-
-    state_file = get_state_file_path(args.receipt_root)
-    atomic_write_json(state_file, state)
-    print(json.dumps(state, indent=2, ensure_ascii=False))
-
-
 def cmd_show(args: argparse.Namespace) -> None:
     state = load_state(args.receipt_root)
     if args.json:
@@ -276,18 +219,6 @@ def main() -> None:
     cfg_parser.add_argument("--repo-dir", default=".", help="Path to repository root.")
     cfg_parser.add_argument("--json", action="store_true", help="Output config JSON if valid.")
     cfg_parser.set_defaults(func=cmd_check_config)
-
-    # transition
-    trans_parser = subparsers.add_parser("transition", help="Transition workflow to next stage or status.")
-    trans_parser.add_argument("--receipt-root", required=True, help="Absolute path to receipts root directory.")
-    trans_parser.add_argument("--stage", required=True, help="Target stage name.")
-    trans_parser.add_argument("--status", required=True, choices=["pending", "in_progress", "succeeded", "failed", "blocked", "halted"], help="Stage status.")
-    trans_parser.add_argument("--outcome", help="Professional outcome (e.g. direct, decomposed, landed, verified).")
-    trans_parser.add_argument("--receipt", help="Absolute path to stage receipt file.")
-    trans_parser.add_argument("--current-issue", help="Update current issue ID.")
-    trans_parser.add_argument("--set", action="append", help="Set context key=value (can be used multiple times).")
-    trans_parser.add_argument("--incr-budget", choices=["delivery_attempts_used", "replans_used"], help="Increment a budget counter.")
-    trans_parser.set_defaults(func=cmd_transition)
 
     # show
     show_parser = subparsers.add_parser("show", help="Display workflow state.")

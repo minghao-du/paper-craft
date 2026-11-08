@@ -20,6 +20,10 @@ export const STATE_MACHINE_SCRIPT = path.join(
   REPO_ROOT,
   'skills/pc-orchestrator/scripts/state_machine.py',
 );
+export const LIFECYCLE_KERNEL_SCRIPT = path.join(
+  REPO_ROOT,
+  'skills/pc-orchestrator/scripts/lifecycle_kernel.py',
+);
 
 /**
  * Absolute path to the workspace configuration CLI script (pc-workspace-config).
@@ -139,6 +143,16 @@ export function runStateMachineCli(
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): ProcessResult {
   return runPython(STATE_MACHINE_SCRIPT, args, options);
+}
+
+/**
+ * Execute lifecycle_kernel.py CLI subcommand.
+ */
+export function runLifecycleKernelCli(
+  args: string[],
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+): ProcessResult {
+  return runPython(LIFECYCLE_KERNEL_SCRIPT, args, options);
 }
 
 /**
