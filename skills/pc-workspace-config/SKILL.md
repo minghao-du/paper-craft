@@ -34,6 +34,21 @@ The configuration file is stored at `.paper-craft/workspace-config.json` (relati
 - `base_branch` (string, required): Mainline base branch name (e.g. `main` or `master`).
 - `worktree_container` (string, required): Directory container for task worktrees. Defaults to `../project-worktrees` (resolved relative to the repository root). Custom relative or absolute paths are supported.
 
+### Project Scenarios
+
+1. **Standard Repository**:
+   - `base_remote`: `"origin"`
+   - `push_remote`: `"origin"`
+   - `delivery_target`: parsed from `origin` URL
+   - `base_branch`: default branch on `origin`
+
+2. **Fork Repository**:
+   - `base_remote`: `"upstream"` (mainline fetch)
+   - `push_remote`: `"origin"` (feature push)
+   - `delivery_target`: parsed from `upstream` URL (e.g. `upstream-owner/repo`)
+   - `base_branch`: default branch on `upstream`
+   - Automated detection when `upstream` remote exists; fully configurable via CLI flags.
+
 ---
 
 ## 2. CLI Commands & Options
@@ -83,10 +98,11 @@ Exit code is `0` when valid, or `1` when missing or invalid, printing actionable
 1. **pc-orchestrator Entry Gate**:
    On workflow entry, `pc-orchestrator` checks configuration validity. If configuration is missing or invalid, execution halts immediately with a clear explanation guiding the user to run `pc-workspace-config`. No task worktree is created on the error path.
 2. **Task Input Envelopes (`envelope.py`)**:
-   When creating task envelopes without repetitive CLI parameters, `envelope.py` automatically populates `environment.repository` and `environment.base_branch` from `.paper-craft/workspace-config.json`.
+   When creating task envelopes without repetitive CLI parameters, `envelope.py` automatically populates `environment.repository`, `environment.delivery_target`, `environment.base_remote`, `environment.push_remote`, and `environment.base_branch` from `.paper-craft/workspace-config.json`, preserving role decoupling in `inputs.parameters`.
 3. **Workspace Preparation (`prepare-worktree.py`)**:
    `prepare-worktree.py` reads the configuration to resolve:
    - Target container directory from `worktree_container`.
-   - Mainline fetch remote from `base_remote`.
-   - Expected repository identity from `delivery_target`.
-   Explicit CLI parameters (`--repo-dir`, `--worktree`, `--base`, `--branch`, `--commit`) retain highest precedence for full backwards compatibility.
+   - Mainline fetch remote from `base_remote` (starting worktrees from `refs/remotes/<base_remote>/<base_branch>`).
+   - Expected repository identity from `delivery_target`, ensuring valid forks are not falsely rejected when `origin` differs from `delivery_target`.
+   - Compact reports and receipts preserve `delivery_target`, `base_remote`, and `push_remote`.
+   Explicit CLI parameters (`--repo-dir`, `--worktree`, `--base`, `--branch`, `--commit`, `--base-remote`, `--push-remote`, `--delivery-target`, `--worktree-container`) retain highest precedence for full backwards compatibility.

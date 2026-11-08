@@ -231,6 +231,9 @@ def create_envelope(
     provider_args: Optional[List[str]] = None,
     working_directory: Union[str, Path],
     repository: str = "local/repo",
+    delivery_target: Optional[str] = None,
+    base_remote: Optional[str] = None,
+    push_remote: Optional[str] = None,
     base_branch: str = "main",
     branch: Optional[str] = None,
     commit: Optional[str] = None,
@@ -239,6 +242,7 @@ def create_envelope(
     acceptance_criteria: Optional[List[str]] = None,
     predecessor_receipts: Optional[List[str]] = None,
     parameters: Optional[Dict[str, Any]] = None,
+    worktree_container: Optional[str] = None,
     receipt_path: Union[str, Path],
     receipt_template: str = "templates/subagent-receipt.template.md",
     delivery_attempts_used: int = 0,
@@ -259,9 +263,12 @@ def create_envelope(
     workdir_str = str(Path(working_directory).resolve()) if working_directory else ""
     receipt_str = str(Path(receipt_path).resolve()) if receipt_path else ""
 
-    repo_val = str(repository or "local/repo")
-    base_b_val = str(base_branch or "main")
-    if (repo_val == "local/repo" or base_b_val == "main") and workdir_str:
+    cfg_repo = None
+    cfg_base_remote = None
+    cfg_push_remote = None
+    cfg_base_b = None
+    cfg_container = None
+    if workdir_str:
         try:
             w_path = Path(workdir_str)
             for cand in (
@@ -271,13 +278,31 @@ def create_envelope(
                 if cand.exists():
                     with open(cand, "r", encoding="utf-8") as cf:
                         cfg = json.load(cf)
-                        if repo_val == "local/repo" and cfg.get("delivery_target"):
-                            repo_val = cfg["delivery_target"]
-                        if base_b_val == "main" and cfg.get("base_branch"):
-                            base_b_val = cfg["base_branch"]
+                        cfg_repo = cfg.get("delivery_target")
+                        cfg_base_remote = cfg.get("base_remote")
+                        cfg_push_remote = cfg.get("push_remote")
+                        cfg_base_b = cfg.get("base_branch")
+                        cfg_container = cfg.get("worktree_container")
                     break
         except Exception:
             pass
+
+    resolved_deliv = delivery_target or (repository if repository != "local/repo" else None) or cfg_repo or "local/repo"
+    repo_val = resolved_deliv
+    resolved_base_remote = base_remote or cfg_base_remote or "origin"
+    resolved_push_remote = push_remote or cfg_push_remote or "origin"
+    base_b_val = (base_branch if base_branch != "main" else None) or cfg_base_b or base_branch or "main"
+    resolved_container = worktree_container or cfg_container
+
+    params = dict(parameters or {})
+    if "delivery_target" not in params and resolved_deliv != "local/repo":
+        params["delivery_target"] = resolved_deliv
+    if "base_remote" not in params:
+        params["base_remote"] = resolved_base_remote
+    if "push_remote" not in params:
+        params["push_remote"] = resolved_push_remote
+    if "worktree_container" not in params and resolved_container:
+        params["worktree_container"] = resolved_container
 
     envelope: Dict[str, Any] = {
         "schema_version": schema_version,
@@ -296,6 +321,9 @@ def create_envelope(
         "environment": {
             "working_directory": workdir_str,
             "repository": repo_val,
+            "delivery_target": resolved_deliv,
+            "base_remote": resolved_base_remote,
+            "push_remote": resolved_push_remote,
             "base_branch": base_b_val,
             "branch": branch,
             "commit": commit,
@@ -305,7 +333,7 @@ def create_envelope(
             "scope": str(scope or ""),
             "acceptance_criteria": list(acceptance_criteria or []),
             "predecessor_receipts": list(predecessor_receipts or []),
-            "parameters": dict(parameters or {}),
+            "parameters": params,
         },
         "contract": {
             "receipt_path": receipt_str,
@@ -405,7 +433,10 @@ def cmd_create(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     cfg_repo = None
+    cfg_base_remote = None
+    cfg_push_remote = None
     cfg_base = None
+    cfg_container = None
     try:
         w_path = Path(working_directory).resolve()
         for cand in (
@@ -416,14 +447,38 @@ def cmd_create(args: argparse.Namespace) -> None:
                 with open(cand, "r", encoding="utf-8") as cf:
                     cfg = json.load(cf)
                     cfg_repo = cfg.get("delivery_target")
+                    cfg_base_remote = cfg.get("base_remote")
+                    cfg_push_remote = cfg.get("push_remote")
                     cfg_base = cfg.get("base_branch")
+                    cfg_container = cfg.get("worktree_container")
                 break
     except Exception:
         pass
 
+    delivery_target = (
+        getattr(args, "delivery_target", None)
+        or state_data.get("context", {}).get("delivery_target")
+        or cfg_repo
+    )
     repo_arg = args.repository
-    if repo_arg == "local/repo" and cfg_repo:
-        repo_arg = cfg_repo
+    if repo_arg == "local/repo" and (delivery_target or cfg_repo):
+        repo_arg = delivery_target or cfg_repo
+
+    base_remote = (
+        getattr(args, "base_remote", None)
+        or state_data.get("context", {}).get("base_remote")
+        or cfg_base_remote
+    )
+    push_remote = (
+        getattr(args, "push_remote", None)
+        or state_data.get("context", {}).get("push_remote")
+        or cfg_push_remote
+    )
+    worktree_container = (
+        getattr(args, "worktree_container", None)
+        or state_data.get("context", {}).get("worktree_container")
+        or cfg_container
+    )
 
     if args.base_branch and args.base_branch != "main":
         base_branch = args.base_branch
@@ -459,6 +514,9 @@ def cmd_create(args: argparse.Namespace) -> None:
             provider_args=args.provider_args,
             working_directory=working_directory,
             repository=repo_arg,
+            delivery_target=delivery_target,
+            base_remote=base_remote,
+            push_remote=push_remote,
             base_branch=base_branch,
             branch=branch,
             commit=commit,
@@ -466,6 +524,7 @@ def cmd_create(args: argparse.Namespace) -> None:
             scope=args.scope,
             acceptance_criteria=args.acceptance_criteria,
             predecessor_receipts=predecessors,
+            worktree_container=worktree_container,
             receipt_path=args.receipt_path,
             receipt_template=args.receipt_template,
             delivery_attempts_used=delivery_used,
@@ -616,6 +675,10 @@ def main() -> None:
         help="Working directory.",
     )
     create_parser.add_argument("--repository", default="local/repo", help="Repository identifier.")
+    create_parser.add_argument("--delivery-target", help="Delivery target repository (owner/repo).")
+    create_parser.add_argument("--base-remote", help="Mainline base git remote (e.g. origin or upstream).")
+    create_parser.add_argument("--push-remote", help="Feature push git remote (e.g. origin).")
+    create_parser.add_argument("--worktree-container", help="Container directory for worktrees.")
     create_parser.add_argument("--base-branch", default="main", help="Base branch.")
     create_parser.add_argument("--branch", help="Feature branch.")
     create_parser.add_argument("--commit", help="Commit SHA.")

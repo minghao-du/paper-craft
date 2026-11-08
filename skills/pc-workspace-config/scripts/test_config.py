@@ -98,6 +98,47 @@ class WorkspaceConfigTests(unittest.TestCase):
         self.assertEqual(data.get("delivery_target"), "custom-org/custom-repo")
         self.assertEqual(data.get("worktree_container"), "../custom-worktrees")
 
+    def test_init_fork_scenario_defaults(self):
+        """Fork repo with origin and upstream remotes defaults to upstream baseline and origin push."""
+        self.git(self.repo, "remote", "add", "upstream", "git@github.com:upstream-owner/my-project.git")
+        res = self.run_config("init", "--defaults")
+        self.assertEqual(res.returncode, 0)
+
+        config_file = self.repo / ".paper-craft" / "workspace-config.json"
+        self.assertTrue(config_file.exists())
+
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertEqual(data.get("delivery_target"), "upstream-owner/my-project")
+        self.assertEqual(data.get("base_remote"), "upstream")
+        self.assertEqual(data.get("push_remote"), "origin")
+        self.assertEqual(data.get("base_branch"), "main")
+        self.assertEqual(data.get("worktree_container"), "../project-worktrees")
+
+    def test_init_fork_with_custom_flags(self):
+        """Fork repo with custom flags overrides probed defaults."""
+        self.git(self.repo, "remote", "add", "upstream", "git@github.com:upstream-owner/my-project.git")
+        res = self.run_config(
+            "init",
+            "--delivery-target", "upstream-owner/custom-target",
+            "--base-remote", "upstream",
+            "--push-remote", "origin",
+            "--base-branch", "main",
+            "--worktree-container", "../custom-fork-worktrees",
+            "--defaults",
+        )
+        self.assertEqual(res.returncode, 0)
+
+        config_file = self.repo / ".paper-craft" / "workspace-config.json"
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertEqual(data.get("delivery_target"), "upstream-owner/custom-target")
+        self.assertEqual(data.get("base_remote"), "upstream")
+        self.assertEqual(data.get("push_remote"), "origin")
+        self.assertEqual(data.get("worktree_container"), "../custom-fork-worktrees")
+
     def test_show_subcommand_and_flag(self):
         """Show subcommand outputs JSON configuration."""
         self.run_config("init", "--defaults")

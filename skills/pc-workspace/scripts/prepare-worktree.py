@@ -5,9 +5,34 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any, Dict, Optional
+
+
+def parse_repo_from_url(url: str) -> Optional[str]:
+    """Parse 'owner/repo' identifier from Git remote URL."""
+    if not url:
+        return None
+    m = re.search(r"[:/]([a-zA-Z0-9_\-\.]+)/([a-zA-Z0-9_\-\.]+?)(?:\.git)?$", url)
+    if m:
+        owner = m.group(1)
+        repo = m.group(2)
+        if owner == "git" and "/" in url:
+            parts = url.rstrip("/").split("/")
+            if len(parts) >= 2:
+                repo_part = parts[-1]
+                if repo_part.endswith(".git"):
+                    repo_part = repo_part[:-4]
+                return f"{parts[-2]}/{repo_part}"
+        return f"{owner}/{repo}"
+    path_obj = Path(url)
+    stem = path_obj.stem
+    parent_name = path_obj.parent.name
+    if stem and parent_name:
+        return f"{parent_name}/{stem}"
+    return None
 
 
 def run(*args, cwd):
@@ -83,6 +108,9 @@ def build_markdown_receipt(
 
     workdir = artifacts.get("working_directory", "N/A")
     repo = artifacts.get("repository", "N/A")
+    delivery_target = artifacts.get("delivery_target") or repo
+    base_remote = artifacts.get("base_remote") or "origin"
+    push_remote = artifacts.get("push_remote") or "origin"
     worktree = artifacts.get("worktree", "N/A")
     base_b = artifacts.get("baseBranch", "N/A")
     branch = artifacts.get("branch")
@@ -93,12 +121,18 @@ def build_markdown_receipt(
     if status == "succeeded":
         verification_text = f"""- Git repository root: {getattr(args, 'repo_dir', '.')}
 - Target worktree directory: {worktree}
+- Delivery target: {delivery_target}
+- Base remote: {base_remote}
+- Push remote: {push_remote}
 - Cleanliness verified: Source repository and target worktree verified clean (no uncommitted or untracked files).
 - Branch and revision: Pinned to commit {commit} (branch: {branch_str if branch else 'detached HEAD'}).
 - Worktree ownership: {'created fresh feature worktree' if created else 'reused existing registered worktree'}."""
 
         task_result_text = f"""Successfully {'created' if created else 'validated and reused'} Git execution environment at `{worktree}`.
 - Repository: `{repo}`
+- Delivery target: `{delivery_target}`
+- Base remote: `{base_remote}`
+- Push remote: `{push_remote}`
 - Worktree path: `{worktree}`
 - Base branch: `{base_b}`
 - Branch: `{branch_str}`
@@ -149,6 +183,9 @@ Remediation required before retrying workspace preparation."""
 
 - working_directory: {workdir}
 - repository: {repo}
+- delivery_target: {delivery_target}
+- base_remote: {base_remote}
+- push_remote: {push_remote}
 - worktree: {worktree}
 - baseBranch: {base_b}
 - branch: {branch_str}
@@ -207,27 +244,63 @@ def prepare(args):
         except Exception as e:
             raise RuntimeError(f"Workspace configuration at {config_file} is invalid: {e}. Please re-run 'pc-workspace-config' to fix it.")
 
+    remotes = [r.strip() for r in git(source, "remote").splitlines() if r.strip()]
+
     if config:
-        base_remote = config.get("base_remote", "origin")
-        observed_repo = config.get("delivery_target") or "local/repo"
+        base_remote = getattr(args, "base_remote", None) or config.get("base_remote") or "origin"
+        push_remote = getattr(args, "push_remote", None) or config.get("push_remote") or "origin"
+        observed_repo = getattr(args, "delivery_target", None) or config.get("delivery_target") or "local/repo"
         default_base = config.get("base_branch") or "main"
+        worktree_container = getattr(args, "worktree_container", None) or config.get("worktree_container")
     else:
-        base_remote = "origin"
-        remote_url = git(source, "remote", "get-url", "origin")
-        metadata = json.loads(run(
-            "gh", "repo", "view", remote_url, "--json",
-            "nameWithOwner,defaultBranchRef", cwd=source
-        ))
-        if not metadata.get("defaultBranchRef"):
-            raise RuntimeError("The GitHub repository needs a default branch with an initial commit.")
-        observed_repo = metadata.get("nameWithOwner")
-        default_base = metadata["defaultBranchRef"]["name"]
+        base_remote = getattr(args, "base_remote", None)
+        if not base_remote:
+            base_remote = "upstream" if "upstream" in remotes else ("origin" if "origin" in remotes else (remotes[0] if remotes else "origin"))
+        push_remote = getattr(args, "push_remote", None)
+        if not push_remote:
+            push_remote = "origin" if "origin" in remotes else base_remote
+        worktree_container = getattr(args, "worktree_container", None)
+
+        observed_repo = getattr(args, "delivery_target", None)
+        default_base = "main"
+        if not observed_repo:
+            target_remote = base_remote if base_remote in remotes else ("origin" if "origin" in remotes else None)
+            if target_remote:
+                try:
+                    remote_url = git(source, "remote", "get-url", target_remote)
+                    metadata = json.loads(run(
+                        "gh", "repo", "view", remote_url, "--json",
+                        "nameWithOwner,defaultBranchRef", cwd=source
+                    ))
+                    if metadata.get("nameWithOwner"):
+                        observed_repo = metadata.get("nameWithOwner")
+                    if metadata.get("defaultBranchRef"):
+                        default_base = metadata["defaultBranchRef"]["name"]
+                except Exception:
+                    pass
+        if not observed_repo:
+            observed_repo = "local/repo"
 
     expected_repo = getattr(args, "expected_repository", None)
-    if expected_repo and expected_repo != "local/repo" and expected_repo != observed_repo:
-        raise RuntimeError(
-            f"Expected repository {expected_repo}, observed {observed_repo}."
-        )
+    if expected_repo and expected_repo != "local/repo":
+        match = (expected_repo == observed_repo)
+        if not match:
+            if config and config.get("delivery_target") == expected_repo:
+                match = True
+            for r in remotes:
+                try:
+                    r_url = git(source, "remote", "get-url", r)
+                    parsed = parse_repo_from_url(r_url)
+                    if parsed == expected_repo:
+                        match = True
+                        break
+                except Exception:
+                    pass
+        if not match:
+            raise RuntimeError(
+                f"Expected repository {expected_repo}, observed {observed_repo}."
+            )
+        observed_repo = expected_repo
 
     base = args.base or default_base
     branch = None if args.commit else args.branch or f"issue-{args.issue}"
@@ -249,8 +322,9 @@ def prepare(args):
     elif matches:
         target = Path(matches[0]["worktree"]).resolve()
     else:
-        if config and config.get("worktree_container"):
-            container = Path(config["worktree_container"])
+        container_path = worktree_container or (config.get("worktree_container") if config else None)
+        if container_path:
+            container = Path(container_path)
             if not container.is_absolute():
                 container = (primary / container).resolve()
             target = container / f"issue-{args.issue}"
@@ -304,9 +378,18 @@ def prepare(args):
         raise RuntimeError(f"Expected integrated HEAD {args.commit}, found {commit}.")
     if args.expected_head and git(target, "rev-parse", f"{args.expected_head}^{{commit}}") != commit:
         raise RuntimeError(f"Expected predecessor HEAD {args.expected_head}, found {commit}.")
-    return dict(repository=observed_repo, working_directory=str(target),
-                worktree=str(target), branch=branch, baseBranch=base, commit=commit,
-                created=not bool(matches))
+    return dict(
+        repository=observed_repo,
+        delivery_target=observed_repo,
+        base_remote=base_remote,
+        push_remote=push_remote,
+        working_directory=str(target),
+        worktree=str(target),
+        branch=branch,
+        baseBranch=base,
+        commit=commit,
+        created=not bool(matches),
+    )
 
 
 def parse_args(argv=None):
@@ -320,6 +403,10 @@ def parse_args(argv=None):
     parser.add_argument("--worktree", help="Explicit worktree path. Existing registered worktrees are validated and reused.")
     parser.add_argument("--expected-head", help="Required predecessor commit for rework. Requires an existing worktree.")
     parser.add_argument("--workspace-config", help="Path to workspace-config.json")
+    parser.add_argument("--delivery-target", help="Target delivery repository (e.g. owner/repo).")
+    parser.add_argument("--base-remote", help="Mainline base git remote (e.g. origin or upstream).")
+    parser.add_argument("--push-remote", help="Feature push git remote (e.g. origin).")
+    parser.add_argument("--worktree-container", help="Container directory for task worktrees.")
     parser.add_argument("--input-envelope", "--input", dest="input_envelope", help="Path to Task Input Envelope JSON file (<step>-input.json)")
     parser.add_argument("--receipt-path", help="Path to write Markdown receipt.")
     parser.add_argument("--output-format", choices=["raw", "compact"], default=None, help="Output format for stdout: raw environment dict or compact report JSON")
@@ -387,6 +474,14 @@ def main():
         # 5. Repository verification attribute
         if env_section.get("repository"):
             args.expected_repository = env_section["repository"]
+        if getattr(args, "delivery_target", None) is None:
+            args.delivery_target = env_section.get("delivery_target") or params_section.get("delivery_target")
+        if getattr(args, "base_remote", None) is None:
+            args.base_remote = env_section.get("base_remote") or params_section.get("base_remote")
+        if getattr(args, "push_remote", None) is None:
+            args.push_remote = env_section.get("push_remote") or params_section.get("push_remote")
+        if getattr(args, "worktree_container", None) is None:
+            args.worktree_container = params_section.get("worktree_container")
 
         # 6. Working directory & Worktree resolution
         env_workdir = env_section.get("working_directory")
@@ -477,6 +572,9 @@ def main():
                 artifacts=dict(
                     working_directory=target_path,
                     repository=env_result.get("repository", "N/A"),
+                    delivery_target=env_result.get("delivery_target", env_result.get("repository", "N/A")),
+                    base_remote=env_result.get("base_remote", "origin"),
+                    push_remote=env_result.get("push_remote", "origin"),
                     worktree=env_result.get("worktree", target_path),
                     baseBranch=env_result.get("baseBranch", "N/A"),
                     branch=branch,
@@ -519,6 +617,9 @@ def main():
                     artifacts=dict(
                         working_directory=str(getattr(args, "worktree", "N/A")),
                         repository=getattr(args, "expected_repository", "N/A"),
+                        delivery_target=getattr(args, "delivery_target", getattr(args, "expected_repository", "N/A")),
+                        base_remote=getattr(args, "base_remote", "origin"),
+                        push_remote=getattr(args, "push_remote", "origin"),
                         worktree=str(getattr(args, "worktree", "N/A")),
                         baseBranch=getattr(args, "base", "N/A"),
                         branch=getattr(args, "branch", None),

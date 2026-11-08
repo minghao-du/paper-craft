@@ -52,6 +52,9 @@ export interface TaskInputEnvelope {
     base_branch: string;
     branch?: string | null;
     commit?: string | null;
+    delivery_target?: string;
+    base_remote?: string;
+    push_remote?: string;
   };
   inputs: {
     objective: string;
