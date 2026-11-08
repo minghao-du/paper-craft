@@ -81,7 +81,7 @@ When invoked manually without an envelope, the kernel accepts explicit CLI argum
 
 ```bash
 # Feature worktree by issue number
-python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --issue <number> [--receipt-path "<path>"]
+python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --issue <number> [--receipt-path "<path>"] [--base-remote <remote>] [--delivery-target <target>] [--worktree-container <dir>]
 
 # Feature worktree by explicit branch and destination
 python3 <skill-dir>/scripts/prepare-worktree.py --repo-dir "<checkout>" --branch "<branch>" --worktree "<absolute-path>" [--base "<base>"]
@@ -109,12 +109,12 @@ If script execution is blocked by environment constraints (e.g., Python unavaila
    Halt if uncommitted modifications exist.
 2. **Fetch Base Branch**:
    ```bash
-   git -C "<source-checkout>" fetch origin "+refs/heads/<base>:refs/remotes/origin/<base>"
+   git -C "<source-checkout>" fetch <base_remote> "+refs/heads/<base>:refs/remotes/<base_remote>/<base>"
    ```
 3. **Create or Validate Worktree**:
    - *Feature worktree*:
      ```bash
-     git -C "<source-checkout>" worktree add -b <branch> "<target-path>" "refs/remotes/origin/<base>"
+     git -C "<source-checkout>" worktree add -b <branch> "<target-path>" "refs/remotes/<base_remote>/<base>"
      ```
    - *Detached verification worktree*:
      ```bash

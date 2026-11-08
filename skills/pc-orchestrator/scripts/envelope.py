@@ -219,6 +219,37 @@ def assert_valid_envelope(data: Any) -> None:
         raise EnvelopeValidationError(errors)
 
 
+def load_workspace_config_from_dir(workdir: Path) -> Optional[Dict[str, Any]]:
+    """Load and parse workspace configuration JSON if present.
+
+    Raises EnvelopeCorruptedError if the configuration file is corrupted or malformed.
+    Returns None if the file does not exist.
+    """
+    config_file = workdir / ".paper-craft" / "workspace-config.json"
+    if not config_file.exists():
+        return None
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise EnvelopeCorruptedError(
+            f"Malformed JSON in workspace configuration at {config_file}: {e}. "
+            "Please run 'pc-workspace-config' to reconfigure."
+        ) from e
+    except Exception as e:
+        raise EnvelopeCorruptedError(
+            f"Failed to read workspace configuration at {config_file}: {e}. "
+            "Please run 'pc-workspace-config' to reconfigure."
+        ) from e
+
+    if not isinstance(data, dict):
+        raise EnvelopeCorruptedError(
+            f"Workspace configuration at {config_file} must be a JSON object. "
+            "Please run 'pc-workspace-config' to reconfigure."
+        )
+    return data
+
+
 def create_envelope(
     *,
     logical_stage: str,
@@ -231,7 +262,10 @@ def create_envelope(
     provider_args: Optional[List[str]] = None,
     working_directory: Union[str, Path],
     repository: str = "local/repo",
-    base_branch: str = "main",
+    delivery_target: Optional[str] = None,
+    base_remote: Optional[str] = None,
+    push_remote: Optional[str] = None,
+    base_branch: Optional[str] = None,
     branch: Optional[str] = None,
     commit: Optional[str] = None,
     objective: str,
@@ -239,6 +273,7 @@ def create_envelope(
     acceptance_criteria: Optional[List[str]] = None,
     predecessor_receipts: Optional[List[str]] = None,
     parameters: Optional[Dict[str, Any]] = None,
+    worktree_container: Optional[str] = None,
     receipt_path: Union[str, Path],
     receipt_template: str = "templates/subagent-receipt.template.md",
     delivery_attempts_used: int = 0,
@@ -259,6 +294,45 @@ def create_envelope(
     workdir_str = str(Path(working_directory).resolve()) if working_directory else ""
     receipt_str = str(Path(receipt_path).resolve()) if receipt_path else ""
 
+    config_delivery_target = None
+    config_base_remote = None
+    config_push_remote = None
+    config_base_branch = None
+    config_worktree_container = None
+    if workdir_str:
+        config = load_workspace_config_from_dir(Path(workdir_str))
+        if config:
+            config_delivery_target = config.get("delivery_target")
+            config_base_remote = config.get("base_remote")
+            config_push_remote = config.get("push_remote")
+            config_base_branch = config.get("base_branch")
+            config_worktree_container = config.get("worktree_container")
+
+    resolved_delivery_target = (
+        delivery_target
+        or (repository if repository != "local/repo" else None)
+        or config_delivery_target
+        or "local/repo"
+    )
+    resolved_repository = resolved_delivery_target
+    resolved_base_remote = base_remote or config_base_remote or "origin"
+    resolved_push_remote = push_remote or config_push_remote or "origin"
+    if base_branch is not None:
+        resolved_base_branch = base_branch
+    else:
+        resolved_base_branch = config_base_branch or "main"
+    resolved_worktree_container = worktree_container or config_worktree_container
+
+    params = dict(parameters or {})
+    if "delivery_target" not in params and resolved_delivery_target != "local/repo":
+        params["delivery_target"] = resolved_delivery_target
+    if "base_remote" not in params:
+        params["base_remote"] = resolved_base_remote
+    if "push_remote" not in params:
+        params["push_remote"] = resolved_push_remote
+    if "worktree_container" not in params and resolved_worktree_container:
+        params["worktree_container"] = resolved_worktree_container
+
     envelope: Dict[str, Any] = {
         "schema_version": schema_version,
         "task": {
@@ -275,8 +349,8 @@ def create_envelope(
         },
         "environment": {
             "working_directory": workdir_str,
-            "repository": str(repository or "local/repo"),
-            "base_branch": str(base_branch or "main"),
+            "repository": resolved_repository,
+            "base_branch": resolved_base_branch,
             "branch": branch,
             "commit": commit,
         },
@@ -285,7 +359,7 @@ def create_envelope(
             "scope": str(scope or ""),
             "acceptance_criteria": list(acceptance_criteria or []),
             "predecessor_receipts": list(predecessor_receipts or []),
-            "parameters": dict(parameters or {}),
+            "parameters": params,
         },
         "contract": {
             "receipt_path": receipt_str,
@@ -384,12 +458,51 @@ def cmd_create(args: argparse.Namespace) -> None:
         sys.stderr.write("Error: --workdir / --working-directory is required\n")
         sys.exit(1)
 
-    base_branch = (
-        args.base_branch
-        or state_data.get("context", {}).get("base_branch")
-        or state_data.get("context", {}).get("baseBranch")
-        or "main"
+    try:
+        config = load_workspace_config_from_dir(Path(working_directory).resolve())
+    except EnvelopeCorruptedError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+    config_delivery_target = config.get("delivery_target") if config else None
+    config_base_remote = config.get("base_remote") if config else None
+    config_push_remote = config.get("push_remote") if config else None
+    config_base_branch = config.get("base_branch") if config else None
+    config_worktree_container = config.get("worktree_container") if config else None
+
+    delivery_target = (
+        getattr(args, "delivery_target", None)
+        or state_data.get("context", {}).get("delivery_target")
+        or config_delivery_target
     )
+    repo_arg = args.repository
+    if repo_arg == "local/repo" and (delivery_target or config_delivery_target):
+        repo_arg = delivery_target or config_delivery_target
+
+    base_remote = (
+        getattr(args, "base_remote", None)
+        or state_data.get("context", {}).get("base_remote")
+        or config_base_remote
+    )
+    push_remote = (
+        getattr(args, "push_remote", None)
+        or state_data.get("context", {}).get("push_remote")
+        or config_push_remote
+    )
+    worktree_container = (
+        getattr(args, "worktree_container", None)
+        or state_data.get("context", {}).get("worktree_container")
+        or config_worktree_container
+    )
+
+    if args.base_branch is not None:
+        base_branch = args.base_branch
+    elif state_data.get("context", {}).get("base_branch"):
+        base_branch = state_data["context"]["base_branch"]
+    elif config_base_branch:
+        base_branch = config_base_branch
+    else:
+        base_branch = "main"
 
     branch = args.branch or state_data.get("context", {}).get("branch")
     commit = args.commit or state_data.get("context", {}).get("commit")
@@ -415,7 +528,10 @@ def cmd_create(args: argparse.Namespace) -> None:
             provider_target=args.provider_target,
             provider_args=args.provider_args,
             working_directory=working_directory,
-            repository=args.repository,
+            repository=repo_arg,
+            delivery_target=delivery_target,
+            base_remote=base_remote,
+            push_remote=push_remote,
             base_branch=base_branch,
             branch=branch,
             commit=commit,
@@ -423,6 +539,7 @@ def cmd_create(args: argparse.Namespace) -> None:
             scope=args.scope,
             acceptance_criteria=args.acceptance_criteria,
             predecessor_receipts=predecessors,
+            worktree_container=worktree_container,
             receipt_path=args.receipt_path,
             receipt_template=args.receipt_template,
             delivery_attempts_used=delivery_used,
@@ -431,7 +548,7 @@ def cmd_create(args: argparse.Namespace) -> None:
             replans_max=args.replans_max,
             validate=not args.no_validate,
         )
-    except EnvelopeValidationError as e:
+    except (EnvelopeValidationError, EnvelopeCorruptedError) as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
     except Exception as e:
@@ -521,7 +638,7 @@ def cmd_show(args: argparse.Namespace) -> None:
     env = data.get("environment", {})
     workdir = env.get("working_directory", "unknown")
     repo = env.get("repository", "")
-    base_b = env.get("base_branch", "")
+    base_branch = env.get("base_branch", "")
     branch = env.get("branch", "")
     contract = data.get("contract", {})
     receipt = contract.get("receipt_path", "")
@@ -537,7 +654,7 @@ def cmd_show(args: argparse.Namespace) -> None:
     print(f"Envelope: {path} (v{data.get('schema_version', '1.0')})")
     print(f"Task: {stage} (step {step}, attempt {attempt}) | Root: #{root_id}, Current: #{curr_id}")
     print(f"Provider: {p_type} -> {p_target}")
-    print(f"Environment: {workdir} (repo: {repo}, base: {base_b}, branch: {branch})")
+    print(f"Environment: {workdir} (repo: {repo}, base: {base_branch}, branch: {branch})")
     print(f"Inputs: Objective=\"{objective}\", Criteria={len(criteria)}")
     print(f"Contract: Receipt={receipt}")
     print(f"Budgets: Delivery={del_used}/{del_max}, Replans={rep_used}/{rep_max}")
@@ -573,7 +690,11 @@ def main() -> None:
         help="Working directory.",
     )
     create_parser.add_argument("--repository", default="local/repo", help="Repository identifier.")
-    create_parser.add_argument("--base-branch", default="main", help="Base branch.")
+    create_parser.add_argument("--delivery-target", help="Delivery target repository (owner/repo).")
+    create_parser.add_argument("--base-remote", help="Mainline base git remote (e.g. origin or upstream).")
+    create_parser.add_argument("--push-remote", help="Feature push git remote (e.g. origin).")
+    create_parser.add_argument("--worktree-container", help="Container directory for worktrees.")
+    create_parser.add_argument("--base-branch", default=None, help="Base branch (defaults to workspace config or 'main').")
     create_parser.add_argument("--branch", help="Feature branch.")
     create_parser.add_argument("--commit", help="Commit SHA.")
     create_parser.add_argument("--objective", required=True, help="Task objective.")

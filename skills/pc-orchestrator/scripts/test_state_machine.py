@@ -162,6 +162,77 @@ class TestStateMachine(unittest.TestCase):
         self.assertEqual(res_exceeded.returncode, 1)
         self.assertIn("Budget exceeded: delivery_attempts_used is 3, limit is 3", res_exceeded.stderr)
 
+    def test_check_workspace_config_missing_and_valid(self):
+        # 1. Missing config fails and guides user to run pc-workspace-config
+        res_missing = self.run_cli("check-config", "--repo-dir", str(self.receipt_root))
+        self.assertEqual(res_missing.returncode, 1)
+        self.assertIn("pc-workspace-config", res_missing.stderr)
+        self.assertIn("missing", res_missing.stderr.lower())
+
+        # 2. Valid config passes
+        cfg_dir = self.receipt_root / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "owner/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+
+        res_ok = self.run_cli("check-config", "--repo-dir", str(self.receipt_root))
+        self.assertEqual(res_ok.returncode, 0)
+        self.assertIn("valid", res_ok.stdout.lower())
+
+        # 3. Invalid config (e.g. missing required field) is rejected via validator delegation
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "owner/repo",
+            # missing base_remote
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+        res_invalid = self.run_cli("check-config", "--repo-dir", str(self.receipt_root))
+        self.assertEqual(res_invalid.returncode, 1)
+        self.assertIn("base_remote", res_invalid.stderr)
+        self.assertIn("pc-workspace-config", res_invalid.stderr)
+
+    def test_init_with_require_config(self):
+        # Without config, init with --require-config fails
+        res_fail = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "42",
+            "--require-config",
+            "--repo-dir", str(self.receipt_root),
+        )
+        self.assertEqual(res_fail.returncode, 1)
+        self.assertIn("pc-workspace-config", res_fail.stderr)
+
+        # With config, init with --require-config succeeds
+        cfg_dir = self.receipt_root / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "owner/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+
+        res_ok = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "42",
+            "--require-config",
+            "--repo-dir", str(self.receipt_root),
+        )
+        self.assertEqual(res_ok.returncode, 0)
+        self.assertTrue((self.receipt_root / "state.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

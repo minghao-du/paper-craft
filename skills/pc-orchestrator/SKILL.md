@@ -176,7 +176,12 @@ are fully decoupled into modular workflow files.
 - **Default workflow**: Load `skills/pc-orchestrator/workflows/default.md` (the standard 6-stage delivery workflow).
 - **Custom workflow override**: If the user specifies an alternative workflow path in their prompt or configuration, load and follow that workflow definition instead.
 
-### 2. Execution Loop
+### 2. Workflow Entry & Configuration Gate
+Before creating task worktrees or initializing workflow runtime state:
+1. **Workspace Configuration Check**: Verify that `.paper-craft/workspace-config.json` exists and is valid (run `python3 skills/pc-workspace-config/scripts/config.py validate --repo-dir <repo_dir>` or `python3 skills/pc-orchestrator/scripts/state_machine.py check-config --repo-dir <repo_dir>`).
+2. **Missing / Invalid Configuration Handling**: If the configuration is missing or invalid, halt immediately to the Decision Board. Clearly explain the missing configuration and guide the user to run `pc-workspace-config`. Do NOT dispatch task worktrees on the error path.
+
+### 3. Execution Loop
 For each stage defined in the loaded workflow:
 1. **Identify Stage Contract & Resolve Provider**: Read the stage's `logical_stage`, `provider` (`type`, `target`, `args`), inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules.
 2. **Prepare Environment**: Apply [Workspace lifecycle and dispatch](references/workspaces.md), verifying or creating the assigned workspace before professional execution.
