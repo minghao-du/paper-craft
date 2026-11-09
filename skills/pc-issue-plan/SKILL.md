@@ -117,7 +117,7 @@ Incorporate strategic review discipline before finalizing children:
    - Scope boundaries (in scope / out of scope).
    - Test plan with concrete execution commands.
 2. Write local drafts as `ISSUE-<slug>.md`.
-3. File only when issue filing is requested. Reconcile the plan with existing native children and tasklist entries before creating anything. Reuse matching issues. Submit new drafts via `/pc-issue-file` with explicit CREATE intent and target repository, distinguishing the parent reference from an issue to update.
+3. A request to execute or deliver the root issue authorizes creating the necessary children: complete filing and relationship verification before returning the execution plan. Explicit assessment-only or draft-only requests stop at the report and local drafts. Reconcile the plan with existing native children and tasklist entries before creating anything. Reuse matching issues. Submit new drafts via `/pc-issue-file` with explicit CREATE intent and target repository, distinguishing the parent reference from an issue to update.
 4. Establish each child's native parent using the [GitHub sub-issue API](https://docs.github.com/en/rest/issues/sub-issues). Fetch the child's numeric issue `id` and call `POST /repos/{owner}/{repo}/issues/{parent_number}/sub_issues` with `sub_issue_id` (for example, `gh api --method POST <endpoint> -F sub_issue_id=<id>`). Read back each child's parent and the parent's paginated child list. Reuse matching links and resolve conflicting parents before continuing.
 5. Update the parent issue body with the child tasklist (`- [ ] #<number> <title>`), preserving all existing progress. Completion requires the plan, native relationships, and tasklist to agree. On partial failure, report created issue numbers, verified links, and pending synchronization so a retry can resume from existing state.
 6. Return the assignment plan structure:
@@ -154,7 +154,7 @@ A planning task is complete only when all criteria are met:
 1. **Depth boundary strictly observed:** No sub-issues nested beneath existing sub-issues.
 2. **Explicit falsifiable criteria:** Every planned child issue includes concrete, automated acceptance gates and stage-appropriate artifacts or state evidence.
 3. **Accurate dependency tracking:** `blockedBy` arrays reflect actual technical prerequisites.
-4. **Issue tracker synchronization:** For issue-filing tasks, read-back native parent/child relationships and the parent tasklist match the plan.
+4. **Issue tracker synchronization:** For delivery or issue-filing tasks, every child has a real issue number, and read-back native parent/child relationships and the parent tasklist match the plan. Partial filing or synchronization failure is an incomplete plan; report resumable state rather than a dispatch-ready success.
 5. **Bounded, complete plan:** The child-count and coverage constraints hold before returning or filing a plan.
 
 ## Task Outputs
@@ -163,5 +163,5 @@ A planning task is complete only when all criteria are met:
 - Decomposed execution: `{ outcome: "decomposed", summary: "...", plan: { tasks: [...] } }`
 - Root planning report with the stage table, candidate disposition reasons, and parent-requirement coverage.
 - Scope reassessment: `{ outcome: "revised_plan" | "optional_improvement" | "decision_required", summary: "...", ... }` with the supporting assessment described above.
-- Filed GitHub child issues, verified native parent/child relationships, and updated parent tasklist when issue filing was requested.
+- Filed GitHub child issues, verified native parent/child relationships, and updated parent tasklist for delivery or issue-filing requests.
 - Report the decision or plan directly to the calling agent or user.

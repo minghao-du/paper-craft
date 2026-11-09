@@ -163,13 +163,14 @@ Carry explicit artifact locations into verification and research recording. Afte
     target: pc-issue-plan
     args: []
   ```
-- **Objective**: Determine whether subissues are needed and establish the execution plan.
+- **Objective**: Determine whether subissues are needed and establish a filed, dispatch-ready execution plan.
 - **Environment**: Explicit existing repository checkout validated by `workspace_prepare`.
-- **Inputs**: Root objective, problem context, and acceptance criteria.
-- **Expected Result**: Native `result.outcome` of `direct` or `decomposed`. For `decomposed`, include child issue IDs in dependency order in the compact result and preserve the full graph in the receipt.
+- **Inputs**: Root objective, problem context, acceptance criteria, and delivery intent authorizing the planner to create necessary child issues and synchronize their native relationships and parent tasklist.
+- **Expected Result**: Native `result.outcome` of `direct` or `decomposed`. The receipt contains the stage table, candidate disposition reasons, and parent-requirement coverage required by `pc-issue-plan`. For `decomposed`, include real child issue IDs and `blockedBy` dependencies in the compact result and preserve the full graph and verified filing evidence in the receipt.
+- **Acceptance**: Before routing, check the planning evidence. A root `direct` requires one cohesive stage and reasons why other candidates lack separate acceptance checkpoints; a depth-limited `direct` requires verified parent evidence. A `decomposed` plan requires filed children, synchronized relationships and tasklist, and an acyclic dependency graph covering the planned work. For a structurally valid report with incomplete planning evidence, dispatch one fresh planner with the missing evidence and predecessor receipt; if still incomplete, halt to the Decision Board. Pending filing is not permission to implement the root instead.
 - **Routing**:
   - `direct`: Set `current_issue_id = root_issue_id`, transition to `stage_2_work`.
-  - `decomposed`: Retain the ordered child IDs, set `current_issue_id` to the first child issue, and transition to `stage_2_work` for each child in sequence.
+  - `decomposed`: Retain child IDs and dependencies. Set `current_issue_id` to a child whose `blockedBy` prerequisites have accepted delivery evidence, and transition to `stage_2_work`. Execute the children sequentially through Stage 2; the root remains the integrated acceptance target.
   - A successful plan completes planning only.
 
 ---
@@ -207,10 +208,10 @@ Deliver the `current_issue_id` through an implementation and landing loop.
   ```
 - **Objective**: Review, verify pre-merge checks, and land (merge) the implementation changes.
 - **Environment**: Same feature worktree with verified worktree and latest delivered SHA.
-- **Inputs**: Implementation receipt with verified worktree and SHA.
-- **Expected Result**: Native `result.outcome`, `merged`, and, for `landed`, `mergedCommit`. The provider validates and uses predecessor worktree and SHA.
+- **Inputs**: Implementation receipt with verified worktree and SHA. For a child, include the parent issue and tasklist entry; assign the landing provider to mark that entry complete after verified landing and read it back, preserving other entries.
+- **Expected Result**: Native `result.outcome`, `merged`, and, for `landed`, `mergedCommit`. The provider validates and uses predecessor worktree and SHA, and records parent-tasklist synchronization evidence for child delivery.
 - **Routing**:
-  - `landed` with verified merge evidence: Delivery accepted. If there are remaining child issues, advance `current_issue_id` to the next child and repeat `stage_2_work`. Once all child issues (or the root issue) are delivered, transition to `stage_3_verify`.
+  - `landed` with verified merge evidence: Delivery accepted. Record completion for `current_issue_id` and the provider's parent-tasklist synchronization evidence. If children remain, select the next child whose `blockedBy` prerequisites have accepted delivery evidence and repeat `stage_2_work`, passing predecessor receipts. If none is ready, report the dependency blocker. Once all child issues (or the direct root issue) are delivered, transition to `stage_3_verify` with the root objective and all delivery receipts.
   - `rework_needed`: Routes to a fresh `stage_2_work` execution with the landing receipt. It reads findings, reconciles the recorded environment and SHA, and writes a new receipt. Pass that receipt to a fresh `stage_2_land` execution. Maximum of 3 delivery attempts per issue, including the initial attempt.
   - `blocked`: Execution status `blocked` when prerequisites prevent landing; halt to Blocker Decision Board.
 
@@ -230,12 +231,13 @@ Accept delivery only for `landed` with verified merge evidence.
     args: []
   ```
   *(Alternative script provider: `type: script`, `target: scripts/acceptance-runner.py`)*
-- **Objective**: Verify parent objective against the integrated HEAD across delivered work.
+- **Entry Gate**: All planned children have accepted delivery evidence, or the root was delivered directly. Individual child completion does not establish parent acceptance.
+- **Objective**: Verify every original parent requirement and acceptance threshold against the integrated HEAD and combined artifacts. Check that the delivered children collectively fulfill the parent, including cross-child integration; child receipts support this verification but do not replace it.
 - **Environment**: Isolated detached worktree pinned to the integrated base commit prepared by `workspace_prepare`.
 - **Inputs**: Parent objective, acceptance criteria, delivery receipt paths. Supply execution directory and expected SHA; the verifier validates and records them before checks. Feature-branch receipts serve as delivery evidence when verifying the integrated tree.
 - **Expected Result**: Native `result.outcome` and `evaluatedHead`.
 - **Routing**:
-  - `verified`: Satisfies acceptance for that integrated HEAD; transition to `stage_4_refactor_audit`.
+  - `verified`: Every original parent acceptance criterion has passing evidence for that integrated HEAD; transition to `stage_4_refactor_audit`. Missing evidence or unmet criteria keep parent acceptance incomplete, even when all children are closed.
   - `rework_needed`: Routes targeted repairs to `stage_2_work`, followed by another integrated verification. For gaps discovered after merge, assign a fresh repair branch and worktree based on the current base branch, retaining the original issue and delivery-attempt count. Dispatch `workspace_prepare` first, then supply the accepted environment assignment to the worker. Use the merged predecessor for findings and historical evidence. Create repair environment from current base branch. Keep issue delivery-attempt budget across repairs.
 
 ---
