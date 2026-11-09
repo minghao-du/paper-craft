@@ -32,7 +32,9 @@ Before executing, verify the following inputs:
 ### Step 1: Resolve the writing brief
 
 Read [the research-state convention](references/convention.md).
-Resolve the fixed entry from project agent/startup guidance and read it with the records relevant to the update. Obtain the caller's findings or agreed plan, evidence locations, limitations, and intended changes. Use accessible materials to fill factual gaps; return missing scientific decisions to the caller.
+Resolve the fixed entry from project agent/startup guidance and read it with the records relevant to the update.
+**Progressive disclosure & context hygiene:** For large research state files (>10KB such as `RESEARCH-STATE.local.md`), avoid dumping the entire file into context at once. Use outline discovery (e.g. `grep -n "^## "` or table of contents) and section slicing (`StartLine`/`EndLine`) to read only the sections relevant to the update brief (e.g., core conclusions, specific model phase, evidence tables).
+Obtain the caller's findings or agreed plan, evidence locations, limitations, and intended changes. Use accessible materials to fill factual gaps; return missing scientific decisions to the caller.
 If another session coordinates this project, route proposed scientific changes through it before writing; invoking this skill does not transfer coordination.
 
 For initialization or migration, resolve one designated research home, apply the convention's ignore and tracked-file handling, and establish its discovery pointer.

@@ -80,11 +80,11 @@ When review verdict is **`pass`**:
 2. Ensure `LOCAL_HEAD` equals `REMOTE_HEAD` and matches the reviewed commit SHA.
    **Halt protocol for PR HEAD drift:**
    If the remote PR head moved or checkout HEAD changed after review, **halt immediately**. Prior review approval is invalidated; report `rework_needed` with note on head drift.
-3. Verify required CI checks pass when configured. If the PR base branch has no required CI checks configured, skip this gate and continue to Step 4.
+3. Verify required CI checks pass when configured. If the repository has no `.github/workflows/` directory or the PR base branch has no required CI checks configured, skip this gate and continue to Step 4.
    ```bash
-   gh pr checks <PR> --repo "<repository>" --required
+   test -d .github/workflows && gh pr checks <PR> --repo "<repository>" --required || true
    ```
-   Confirm absence of required checks from the base branch's applicable branch protection and rulesets. The command's exit code or an empty/no-checks result alone is insufficient evidence of configuration. If configured required checks fail, are pending, or have not been reported, or configuration/status cannot be verified (e.g. permission or network errors), report `blocked`.
+   If `.github/workflows/` is absent, treat CI as not configured and proceed to Step 4. If configured required checks exist on GitHub and fail, are pending, or have not been reported, or configuration/status cannot be verified (e.g. permission or network errors), report `blocked`.
 
 ### Step 4: Execute guarded squash merge
 

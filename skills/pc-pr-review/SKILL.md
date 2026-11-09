@@ -132,19 +132,22 @@ Scan changed files for artifacts that should never be committed:
 
 ### Step 5: Run automated quality checks
 
-Run the repository's configured static and dynamic validation commands:
+Run the repository's configured static and dynamic validation commands.
+**Probe tool availability before executing:** Always check whether the linter/checker binary actually exists (e.g. `which ruff || test -f .venv/bin/ruff`) before running. If a tool in the table below is not installed in the repository environment, fall back to the repo's existing configured tooling (e.g. `flake8`, `black --check`) rather than failing with exit code 127.
 
 | Tool Indicator | Check Commands |
 |----------------|----------------|
 | `package.json` (TypeScript/JS) | `npm run typecheck && npm run lint && npm test` |
-| `pyproject.toml` with ruff | `ruff check . && pytest` |
+| `pyproject.toml` with ruff | Probe first (`which ruff || test -f .venv/bin/ruff`); run `ruff check . && pytest` if installed, else run available linters/tests |
 | `pixi.toml` | `pixi run check` or `pixi run test` |
 | `Makefile` with `check` | `make check` |
 | `build.zig` | `zig build test && zig fmt --check src/ tests/` |
 | `go.mod` | `go test ./... && go vet ./...` |
-| `Snakefile` | `snakemake --lint` |
+| `Snakefile` | Run main entry: `snakemake --lint -s workflow/Snakefile` (never run lint on standalone `.smk` rule files) |
 
-Verify all automated checks exit 0 without errors.
+- **CI / GitHub Actions Checks**: Before checking remote CI status via `gh pr checks`, verify whether the repository actually configures CI (`test -d .github/workflows`). If no workflow files exist, mark remote CI checks as `not configured (skipped)` and do not treat absent checks as a failure.
+
+Verify all applicable automated checks exit 0 without errors.
 
 ### Step 6: Test quality audit
 
