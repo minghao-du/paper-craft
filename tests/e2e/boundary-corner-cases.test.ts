@@ -12,6 +12,7 @@ import {
   createTestDir,
   runEnvelopeCli,
   runLifecycleKernelCli,
+  runPrepareTaskCli,
   runStateMachineCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
@@ -79,15 +80,15 @@ describe('Tier 2: Boundary & Corner Cases', () => {
   it('B2.4: rejects invalid schema version and bad numeric types', () => {
     const rootB24 = path.join(testEnv.dir, 'b24');
     runLifecycleKernelCli(['init', '--receipt-root', rootB24, '--root-issue', '1']);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootB24,
-      '--stage', 'stage_1_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Version check test',
-    ]);
+    const prepRes = runPrepareTaskCli(rootB24, {
+      stage: 'stage_1_plan',
+      objective: 'Version check test',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     const invalidVerPath = JSON.parse(prepRes.stdout).envelope_path;
 
     const data: Record<string, unknown> = JSON.parse(fs.readFileSync(invalidVerPath, 'utf-8'));
@@ -113,15 +114,15 @@ describe('Tier 2: Boundary & Corner Cases', () => {
   it('B2.5: rejects empty string fields where non-empty string is required', () => {
     const rootB25 = path.join(testEnv.dir, 'b25');
     runLifecycleKernelCli(['init', '--receipt-root', rootB25, '--root-issue', '1']);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootB25,
-      '--stage', 'stage_1_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Non-empty test',
-    ]);
+    const prepRes = runPrepareTaskCli(rootB25, {
+      stage: 'stage_1_plan',
+      objective: 'Non-empty test',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     const emptyFieldPath = JSON.parse(prepRes.stdout).envelope_path;
 
     const data: Record<string, unknown> = JSON.parse(fs.readFileSync(emptyFieldPath, 'utf-8'));
@@ -148,18 +149,17 @@ describe('Tier 2: Boundary & Corner Cases', () => {
     const criteria1 = '支持 --input-envelope 驱动脚本执行';
     const criteria2 = '输出回执符合 { execution_status, result, receipt_path, summary }';
 
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootB26,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-workspace',
-      '--workdir', testEnv.dir,
-      '--objective', complexObjective,
-      '--scope', complexScope,
-      '--criteria', criteria1,
-      '--criteria', criteria2,
-    ]);
+    const result = runPrepareTaskCli(rootB26, {
+      stage: 'workspace_prepare',
+      objective: complexObjective,
+      provider: {
+        type: 'skill',
+        target: 'pc-workspace',
+      },
+      workdir: testEnv.dir,
+      scope: complexScope,
+      acceptance_criteria: [criteria1, criteria2],
+    });
 
     expect(result.status).toBe(0);
     const unicodeEnvelopePath = JSON.parse(result.stdout).envelope_path;
@@ -175,15 +175,15 @@ describe('Tier 2: Boundary & Corner Cases', () => {
   it('B2.7: creates parent directories automatically when output path is deeply nested', () => {
     const deepReceiptRoot = path.join(testEnv.dir, 'a/b/c/d');
     runLifecycleKernelCli(['init', '--receipt-root', deepReceiptRoot, '--root-issue', '404']);
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', deepReceiptRoot,
-      '--stage', 'issue_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', testEnv.dir,
-      '--objective', 'Deep nested creation',
-    ]);
+    const result = runPrepareTaskCli(deepReceiptRoot, {
+      stage: 'issue_work',
+      objective: 'Deep nested creation',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: testEnv.dir,
+    });
 
     expect(result.status).toBe(0);
     const deepNestedPath = JSON.parse(result.stdout).envelope_path;
@@ -193,15 +193,15 @@ describe('Tier 2: Boundary & Corner Cases', () => {
   it('B2.8: halts and returns non-zero when requesting non-existent field via show --field', () => {
     const rootB28 = path.join(testEnv.dir, 'b28');
     runLifecycleKernelCli(['init', '--receipt-root', rootB28, '--root-issue', '1']);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootB28,
-      '--stage', 'issue_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Field check',
-    ]);
+    const prepRes = runPrepareTaskCli(rootB28, {
+      stage: 'issue_plan',
+      objective: 'Field check',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     const envelopePath = JSON.parse(prepRes.stdout).envelope_path;
 
     const result = runEnvelopeCli(['show', envelopePath, '--field', 'non.existent.field']);
@@ -228,14 +228,14 @@ describe('Tier 2: Boundary & Corner Cases', () => {
     expect(checkOk.stdout).toContain('Budget OK: delivery_attempts_used is 0/3');
 
     // Attempt 1
-    const p1 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--objective', 'Task 1',
-    ]);
+    const p1 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_work',
+      objective: 'Task 1',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+    });
     const p1Data = JSON.parse(p1.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
     fs.writeFileSync(p1Data.receipt_path, '# Receipt 1');
@@ -251,15 +251,15 @@ describe('Tier 2: Boundary & Corner Cases', () => {
     ]);
 
     // Attempt 2
-    const p2 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--objective', 'Task 1',
-      '--attempt-intent', 'new',
-    ]);
+    const p2 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_work',
+      objective: 'Task 1',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      attempt_intent: 'new',
+    });
     const p2Data = JSON.parse(p2.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
     fs.writeFileSync(p2Data.receipt_path, '# Receipt 2');
@@ -275,15 +275,15 @@ describe('Tier 2: Boundary & Corner Cases', () => {
     ]);
 
     // Attempt 3
-    const p3 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--objective', 'Task 1',
-      '--attempt-intent', 'new',
-    ]);
+    const p3 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_work',
+      objective: 'Task 1',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      attempt_intent: 'new',
+    });
     const p3Data = JSON.parse(p3.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
     fs.writeFileSync(p3Data.receipt_path, '# Receipt 3');

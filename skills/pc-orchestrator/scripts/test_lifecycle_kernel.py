@@ -26,6 +26,14 @@ class TestLifecycleKernel(unittest.TestCase):
             text=True,
         )
 
+    def prepare(self, request):
+        request_path = self.receipt_root / "prepare-request.json"
+        request_path.write_text(json.dumps(request), encoding="utf-8")
+        return self.run_cli(
+            "prepare", "--receipt-root", str(self.receipt_root),
+            "--request", str(request_path),
+        )
+
     def test_init_creates_state_json_with_expected_schema(self):
         res = self.run_cli(
             "init",
@@ -77,16 +85,15 @@ class TestLifecycleKernel(unittest.TestCase):
     def test_prepare_allocates_step_and_generates_envelope_and_receipt_path(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "41")
 
-        res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--criteria", "Plan created",
-            "--criteria", "Tests budgeted",
-        )
+        provider_args = ["--repo-dir", "/tmp/repo with spaces", "--workdir", "--", "", "--key=a=b", "quote'\"与换行\n"]
+        objective = "--objective-like text\nwith 'quotes' and 中文"
+        res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": objective,
+            "provider": {"type": "skill", "target": "pc-issue-plan", "args": provider_args},
+            "acceptance_criteria": ["Plan created", "--criterion-like text"],
+            "scope": "--scope-like text",
+        })
         self.assertEqual(res.returncode, 0, res.stderr)
         data = json.loads(res.stdout)
         self.assertEqual(data["step_index"], 1)
@@ -107,7 +114,10 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(env_data["task"]["logical_stage"], "stage_1_plan")
         self.assertEqual(env_data["provider"]["type"], "skill")
         self.assertEqual(env_data["provider"]["target"], "pc-issue-plan")
-        self.assertEqual(env_data["inputs"]["acceptance_criteria"], ["Plan created", "Tests budgeted"])
+        self.assertEqual(env_data["provider"]["args"], provider_args)
+        self.assertEqual(env_data["inputs"]["objective"], objective)
+        self.assertEqual(env_data["inputs"]["scope"], "--scope-like text")
+        self.assertEqual(env_data["inputs"]["acceptance_criteria"], ["Plan created", "--criterion-like text"])
         self.assertEqual(env_data["contract"]["receipt_path"], str(expected_receipt))
         template = Path(env_data["contract"]["receipt_template"])
         self.assertTrue(template.is_absolute())
@@ -120,57 +130,106 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertIsNotNone(state.get("active_dispatch"))
         self.assertEqual(state["active_dispatch"]["dispatch_id"], data["dispatch_id"])
 
+    def test_invalid_prepare_request_leaves_state_and_orphan_envelope_unchanged(self):
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "41")
+        state_path = self.receipt_root / "state.json"
+        initial_state = state_path.read_bytes()
+        valid = {
+            "stage": "stage_1_plan", "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }
+        prepared = self.prepare(valid)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        # Leave an envelope awaiting recovery to detect premature workflow state loading.
+        state_path.write_bytes(initial_state)
+        envelope_path = self.receipt_root / "01-input.json"
+        initial_envelope = envelope_path.read_bytes()
+        invalid_requests = [
+            None, [], {},
+            {**valid, "stage": " "},
+            {**valid, "objective": 41},
+            {**valid, "provider": None},
+            {**valid, "provider": {"type": "engine", "target": "operation"}},
+            {**valid, "provider": {"type": "skill"}},
+            {**valid, "provider": {**valid["provider"], "args": "--repo-dir"}},
+            {**valid, "provider": {**valid["provider"], "args": ["--repo-dir", None]}},
+            {**valid, "provider": {**valid["provider"], "extra": True}},
+            {**valid, "acceptance_criteria": [1]},
+            {**valid, "predecessor_receipts": None},
+            {**valid, "workdir": ""},
+            {**valid, "scope": False},
+            {**valid, "attempt_intent": "new_attempt"},
+            {**valid, "branch": None},
+            {**valid, "commit": 1},
+            {**valid, "receipt_template": []},
+            {**valid, "parameters": {}},
+            {**valid, "step_index": 99},
+        ]
+        for request in invalid_requests:
+            with self.subTest(request=request):
+                result = self.prepare(request)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Error:", result.stderr)
+                self.assertEqual(state_path.read_bytes(), initial_state)
+                self.assertEqual(envelope_path.read_bytes(), initial_envelope)
+                self.assertEqual(
+                    sorted(path.name for path in self.receipt_root.iterdir()),
+                    ["01-input.json", "prepare-request.json", "state.json"],
+                )
+
+        request_path = self.receipt_root / "prepare-request.json"
+        request_path.write_text("{broken JSON", encoding="utf-8")
+        for request_arg, receipt_arg in (
+            (str(request_path), str(self.receipt_root)),
+            (str(self.receipt_root / "missing.json"), str(self.receipt_root)),
+            ("relative-request.json", str(self.receipt_root)),
+            (str(request_path), "relative-receipts"),
+        ):
+            with self.subTest(request_path=request_arg, receipt_root=receipt_arg):
+                result = self.run_cli("prepare", "--receipt-root", receipt_arg, "--request", request_arg)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(state_path.read_bytes(), initial_state)
+                self.assertEqual(envelope_path.read_bytes(), initial_envelope)
+
     def test_prepare_idempotency_and_conflict_rejection(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "41")
 
         # First call
-        res1 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        res1 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertEqual(res1.returncode, 0, res1.stderr)
         d1 = json.loads(res1.stdout)
 
         # Idempotent re-call with same parameters
-        res2 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        res2 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertEqual(res2.returncode, 0, res2.stderr)
         d2 = json.loads(res2.stdout)
         self.assertEqual(d1["dispatch_id"], d2["dispatch_id"])
         self.assertEqual(d1["step_index"], d2["step_index"])
 
         # Conflicting call with different stage while previous dispatch is active
-        res3 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_2_work",
-            "--objective", "Implement issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-work",
-        )
+        res3 = self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Implement issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        })
         self.assertNotEqual(res3.returncode, 0)
         self.assertIn("active dispatch", res3.stderr.lower())
 
         # Conflicting call with different workdir while previous dispatch is active
-        res_workdir_conflict = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--workdir", str(self.receipt_root / "different-workdir"),
-        )
+        res_workdir_conflict = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "workdir": str(self.receipt_root / "different-workdir"),
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertNotEqual(res_workdir_conflict.returncode, 0)
         self.assertIn("active dispatch", res_workdir_conflict.stderr.lower())
 
@@ -182,14 +241,11 @@ class TestLifecycleKernel(unittest.TestCase):
             "--delivery-attempts-max", "1",
         )
         # First task (attempt 1) consumes the only attempt
-        res1 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        res1 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertEqual(res1.returncode, 0, res1.stderr)
 
         # Simulating completing or cancelling to clear active dispatch
@@ -200,16 +256,13 @@ class TestLifecycleKernel(unittest.TestCase):
         with open(state_file, "w", encoding="utf-8") as f:
             json.dump(state, f)
 
-        # Attempting a second attempt with --attempt-intent new should be rejected
-        res2 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Re-plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--attempt-intent", "new",
-        )
+        # Attempting a second attempt with attempt_intent=new should be rejected
+        res2 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Re-plan issue 41",
+            "attempt_intent": "new",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertNotEqual(res2.returncode, 0)
         self.assertIn("budget exceeded", res2.stderr.lower())
 
@@ -222,14 +275,11 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertIn("no active dispatch", res0.stderr.lower())
 
         # Prepare a task
-        prep_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        prep_res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertEqual(prep_res.returncode, 0, prep_res.stderr)
         prep_data = json.loads(prep_res.stdout)
         dispatch_id = prep_data["dispatch_id"]
@@ -268,14 +318,11 @@ class TestLifecycleKernel(unittest.TestCase):
     def test_complete_requires_handoff_and_existing_nonempty_receipt(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "41")
 
-        prep_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        prep_res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         prep = json.loads(prep_res.stdout)
         receipt_path = Path(prep["receipt_path"])
 
@@ -360,14 +407,11 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(info1["blocking_reasons"], [])
 
         # Prepare a task: inspect shows active dispatch and blocking reason
-        self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         res2 = self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json")
         self.assertEqual(res2.returncode, 0, res2.stderr)
         info2 = json.loads(res2.stdout)
@@ -380,15 +424,12 @@ class TestLifecycleKernel(unittest.TestCase):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "41")
 
         # 2. prepare task 1 (stage_1_plan)
-        p1_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--criteria", "Plan drafted",
-        )
+        p1_res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 41",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+            "acceptance_criteria": ["Plan drafted"],
+        })
         self.assertEqual(p1_res.returncode, 0, p1_res.stderr)
         p1 = json.loads(p1_res.stdout)
         self.assertEqual(p1["step_index"], 1)
@@ -424,17 +465,14 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(state["budgets"]["delivery_attempts_used"], 1)
         self.assertIsNone(state.get("active_dispatch"))
 
-        # 6. prepare task 2 (stage_2_work) within same attempt (--attempt-intent same)
-        p2_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_2_work",
-            "--objective", "Implement issue 41",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-work",
-            "--attempt-intent", "same",
-            "--criteria", "Tests pass",
-        )
+        # 6. prepare task 2 (stage_2_work) within same attempt (attempt_intent=same)
+        p2_res = self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Implement issue 41",
+            "attempt_intent": "same",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+            "acceptance_criteria": ["Tests pass"],
+        })
         self.assertEqual(p2_res.returncode, 0, p2_res.stderr)
         p2 = json.loads(p2_res.stdout)
         self.assertEqual(p2["step_index"], 2)
@@ -494,14 +532,11 @@ class TestLifecycleKernel(unittest.TestCase):
 
     def test_duplicate_and_conflicting_complete(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
-        prep_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        prep_res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         prep = json.loads(prep_res.stdout)
         receipt_path = Path(prep["receipt_path"])
         dispatch_id = prep["dispatch_id"]
@@ -568,14 +603,11 @@ class TestLifecycleKernel(unittest.TestCase):
             "--delivery-attempts-max", "0",
             "--force",
         )
-        res0 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        res0 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertNotEqual(res0.returncode, 0)
         self.assertIn("budget exceeded", res0.stderr.lower())
 
@@ -588,14 +620,11 @@ class TestLifecycleKernel(unittest.TestCase):
             "--force",
         )
         # Attempt 1
-        p1 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        p1 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertEqual(p1.returncode, 0, p1.stderr)
         d1 = json.loads(p1.stdout)
         self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
@@ -613,15 +642,12 @@ class TestLifecycleKernel(unittest.TestCase):
         )
 
         # Attempt 2 with attempt-intent new
-        p2 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Re-plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--attempt-intent", "new",
-        )
+        p2 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Re-plan issue 42",
+            "attempt_intent": "new",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertEqual(p2.returncode, 0, p2.stderr)
         d2 = json.loads(p2.stdout)
         self.assertEqual(d2["attempt"], 2)
@@ -640,28 +666,22 @@ class TestLifecycleKernel(unittest.TestCase):
         )
 
         # Attempt 3 with attempt-intent new must be rejected
-        p3 = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Re-plan issue 42 third time",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--attempt-intent", "new",
-        )
+        p3 = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Re-plan issue 42 third time",
+            "attempt_intent": "new",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertNotEqual(p3.returncode, 0)
         self.assertIn("budget exceeded", p3.stderr.lower())
 
     def test_report_protocol_errors_record_inspect_visible_blockers(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
-        prep_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        prep_res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         prep = json.loads(prep_res.stdout)
         assigned_receipt = Path(prep["receipt_path"])
         self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
@@ -723,14 +743,11 @@ class TestLifecycleKernel(unittest.TestCase):
 
     def test_rework_needed_outcome_recorded_as_specialist_result_not_business_acceptance(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
-        prep_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_2_work",
-            "--objective", "Implement feature",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-work",
-        )
+        prep_res = self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Implement feature",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        })
         prep = json.loads(prep_res.stdout)
         receipt_path = Path(prep["receipt_path"])
         self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
@@ -817,29 +834,23 @@ class TestLifecycleKernel(unittest.TestCase):
 
         # Calling prepare with a conflicting task while an uncommitted envelope exists MUST fail
         # and MUST NOT overwrite the uncommitted envelope
-        conf_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_2_work",
-            "--objective", "Conflicting work",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-work",
-        )
+        conf_res = self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Conflicting work",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        })
         self.assertNotEqual(conf_res.returncode, 0)
         with open(env_path, "r", encoding="utf-8") as f:
             persisted_env = json.load(f)
         self.assertEqual(persisted_env["task"]["logical_stage"], "stage_1_plan")
 
         # Call prepare with identical task: should recover from uncommitted envelope
-        prep_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42 after crash",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-            "--criteria", "Plan approved",
-        )
+        prep_res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42 after crash",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+            "acceptance_criteria": ["Plan approved"],
+        })
         self.assertEqual(prep_res.returncode, 0, prep_res.stderr)
         prep = json.loads(prep_res.stdout)
         self.assertEqual(prep["step_index"], 1)
@@ -856,14 +867,11 @@ class TestLifecycleKernel(unittest.TestCase):
 
     def test_unconfirmed_handed_off_dispatch_across_reload_refuses_auto_retry(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
-        prep_res = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        prep_res = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         prep = json.loads(prep_res.stdout)
         receipt_path = Path(prep["receipt_path"])
 
@@ -876,14 +884,11 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertTrue(any("unconfirmed" in r.lower() or "in flight" in r.lower() for r in insp["blocking_reasons"]))
 
         # Prepare refuses auto-retry
-        p_again = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        p_again = self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.assertNotEqual(p_again.returncode, 0)
         self.assertIn("already been handed off", p_again.stderr.lower())
 
@@ -900,14 +905,11 @@ class TestLifecycleKernel(unittest.TestCase):
 
     def test_decisions_persist_across_reload_and_continue_cannot_bypass_unconfirmed_execution(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "42")
-        self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_1_plan",
-            "--objective", "Plan issue 42",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-plan",
-        )
+        self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 42",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
         self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
 
         # 1. Resolve wait_user
@@ -961,14 +963,11 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(insp3["stage_status"], "halted")
 
         # Halted workflow rejects new prepare or handoff
-        res_prep = self.run_cli(
-            "prepare",
-            "--receipt-root", str(self.receipt_root),
-            "--stage", "stage_2_work",
-            "--objective", "Work",
-            "--provider-type", "skill",
-            "--provider-target", "pc-issue-work",
-        )
+        res_prep = self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Work",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        })
         self.assertNotEqual(res_prep.returncode, 0)
         self.assertIn("halted", res_prep.stderr.lower())
 

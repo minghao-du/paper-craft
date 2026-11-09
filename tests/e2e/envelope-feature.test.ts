@@ -13,6 +13,7 @@ import {
   createTestDir,
   runEnvelopeCli,
   runLifecycleKernelCli,
+  runPrepareTaskCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
 
@@ -36,21 +37,20 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       '--replans-max', '2',
     ]);
 
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-workspace',
-      '--workdir', testEnv.dir,
-      '--branch', 'issue-42',
-      '--commit', 'abcdef1234567890abcdef1234567890abcdef12',
-      '--objective', 'Prepare feature worktree for issue 42',
-      '--scope', 'Isolated worktree creation',
-      '--criteria', 'Worktree directory must exist',
-      '--criteria', 'Branch issue-42 checked out',
-      '--receipt-template', 'templates/subagent-receipt.template.md',
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare feature worktree for issue 42',
+      provider: {
+        type: 'skill',
+        target: 'pc-workspace',
+      },
+      workdir: testEnv.dir,
+      branch: 'issue-42',
+      commit: 'abcdef1234567890abcdef1234567890abcdef12',
+      scope: 'Isolated worktree creation',
+      receipt_template: 'templates/subagent-receipt.template.md',
+      acceptance_criteria: ['Worktree directory must exist', 'Branch issue-42 checked out'],
+    });
 
     expect(result.status).toBe(0);
     const prepData = JSON.parse(result.stdout);
@@ -91,15 +91,15 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       '--root-issue', '101',
     ]);
 
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Formulate research plan',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_plan',
+      objective: 'Formulate research plan',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     expect(prepRes.status).toBe(0);
     const envelopePath = JSON.parse(prepRes.stdout).envelope_path;
 
@@ -119,15 +119,15 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       '--root-issue', '88',
     ]);
 
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_verify',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-verify',
-      '--workdir', testEnv.dir,
-      '--objective', 'Run acceptance tests',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_verify',
+      objective: 'Run acceptance tests',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-verify',
+      },
+      workdir: testEnv.dir,
+    });
     expect(prepRes.status).toBe(0);
     const envelopePath = JSON.parse(prepRes.stdout).envelope_path;
 
@@ -150,16 +150,16 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       '--root-issue', '99',
     ]);
 
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'pipeline_refactor',
-      '--provider-type', 'script',
-      '--provider-target', 'scripts/refactor.py',
-      '--provider-arg=--dry-run',
-      '--workdir', testEnv.dir,
-      '--objective', 'Refactor snakemake rules',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'pipeline_refactor',
+      objective: 'Refactor snakemake rules',
+      provider: {
+        type: 'script',
+        target: 'scripts/refactor.py',
+        args: ['--dry-run'],
+      },
+      workdir: testEnv.dir,
+    });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const envelopePath = prepData.envelope_path;
@@ -196,15 +196,15 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       '--replans-max', '3',
     ]);
 
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', testEnv.dir,
-      '--objective', 'Implement feature X',
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_work',
+      objective: 'Implement feature X',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: testEnv.dir,
+    });
 
     expect(result.status).toBe(0);
     const envelopePath = JSON.parse(result.stdout).envelope_path;
@@ -225,15 +225,15 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       '--current-issue', '301',
     ]);
 
-    const prep1 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Plan issue 301',
-    ]);
+    const prep1 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_plan',
+      objective: 'Plan issue 301',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     expect(prep1.status).toBe(0);
     const prepData1 = JSON.parse(prep1.stdout);
 
@@ -256,17 +256,17 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     ]);
     expect(compRes.status).toBe(0);
 
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', testEnv.dir,
-      '--branch', 'issue-301',
-      '--commit', '1234567890123456789012345678901234567890',
-      '--objective', 'Implement child issue 301',
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_work',
+      objective: 'Implement child issue 301',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: testEnv.dir,
+      branch: 'issue-301',
+      commit: '1234567890123456789012345678901234567890',
+    });
 
     expect(result.status).toBe(0);
     const envelopePath = JSON.parse(result.stdout).envelope_path;
@@ -299,15 +299,15 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '50',
     ]);
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-workspace',
-      '--workdir', testEnv.dir,
-      '--objective', 'Prepare workspace via skill',
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace via skill',
+      provider: {
+        type: 'skill',
+        target: 'pc-workspace',
+      },
+      workdir: testEnv.dir,
+    });
 
     expect(result.status).toBe(0);
     const envelopePath = JSON.parse(result.stdout).envelope_path;
@@ -323,17 +323,16 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '50',
     ]);
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'script',
-      '--provider-target', 'skills/pc-workspace/scripts/prepare-worktree.py',
-      '--provider-arg=--issue',
-      '--provider-arg=50',
-      '--workdir', testEnv.dir,
-      '--objective', 'Prepare workspace via script kernel',
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace via script kernel',
+      provider: {
+        type: 'script',
+        target: 'skills/pc-workspace/scripts/prepare-worktree.py',
+        args: ['--issue', '50'],
+      },
+      workdir: testEnv.dir,
+    });
 
     expect(result.status).toBe(0);
     const envelopePath = JSON.parse(result.stdout).envelope_path;
@@ -349,18 +348,18 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '60',
     ]);
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_work',
-      '--provider-type', 'plugin', // Invalid: only 'skill' | 'script' allowed
-      '--provider-target', 'custom-plugin',
-      '--workdir', testEnv.dir,
-      '--objective', 'Test invalid provider',
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_work',
+      objective: 'Test invalid provider',
+      provider: {
+        type: 'plugin',
+        target: 'custom-plugin',
+      },
+      workdir: testEnv.dir,
+    });
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("[provider.type] Expected 'skill' | 'script'");
+    expect(result.stderr).toContain("Provider 'type' must be 'skill' or 'script'");
   });
 
   it('F2.4: preserves multiple ordered provider arguments', () => {
@@ -369,50 +368,54 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '70',
     ]);
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_verify',
-      '--provider-type', 'script',
-      '--provider-target', 'scripts/verify.py',
-      '--provider-arg=--suite=e2e',
-      '--provider-arg=--timeout=60',
-      '--provider-arg=--strict',
-      '--workdir', testEnv.dir,
-      '--objective', 'Run verification script',
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_verify',
+      objective: 'Run verification script',
+      provider: {
+        type: 'script',
+        target: 'scripts/verify.py',
+        args: [
+          '--suite=e2e', '--timeout=60', '--strict', '--repo-dir',
+          '/tmp/path with spaces', '', '--', "a'b\"c", '--strict',
+        ],
+      },
+      workdir: testEnv.dir,
+    });
 
     expect(result.status).toBe(0);
     const envelopePath = JSON.parse(result.stdout).envelope_path;
     const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
-    expect(env.provider.args).toEqual(['--suite=e2e', '--timeout=60', '--strict']);
+    expect(env.provider.args).toEqual([
+      '--suite=e2e', '--timeout=60', '--strict', '--repo-dir',
+      '/tmp/path with spaces', '', '--', "a'b\"c", '--strict',
+    ]);
   });
 
   it('F2.5: stage definition schema remains identical across provider types', () => {
     const rootSkill = path.join(testEnv.dir, 'skill-run');
     runLifecycleKernelCli(['init', '--receipt-root', rootSkill, '--root-issue', '80']);
-    const prepSkill = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootSkill,
-      '--stage', 'issue_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Planning stage with skill',
-    ]);
+    const prepSkill = runPrepareTaskCli(rootSkill, {
+      stage: 'issue_plan',
+      objective: 'Planning stage with skill',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     const skillEnvPath = JSON.parse(prepSkill.stdout).envelope_path;
 
     const rootScript = path.join(testEnv.dir, 'script-run');
     runLifecycleKernelCli(['init', '--receipt-root', rootScript, '--root-issue', '80']);
-    const prepScript = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootScript,
-      '--stage', 'issue_plan',
-      '--provider-type', 'script',
-      '--provider-target', 'scripts/automated_plan.py',
-      '--workdir', testEnv.dir,
-      '--objective', 'Planning stage with script',
-    ]);
+    const prepScript = runPrepareTaskCli(rootScript, {
+      stage: 'issue_plan',
+      objective: 'Planning stage with script',
+      provider: {
+        type: 'script',
+        target: 'scripts/automated_plan.py',
+      },
+      workdir: testEnv.dir,
+    });
     const scriptEnvPath = JSON.parse(prepScript.stdout).envelope_path;
 
     const skillEnv: TaskInputEnvelope = JSON.parse(fs.readFileSync(skillEnvPath, 'utf-8'));

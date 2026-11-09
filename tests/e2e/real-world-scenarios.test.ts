@@ -16,6 +16,7 @@ import {
   createTestDir,
   runEnvelopeCli,
   runLifecycleKernelCli,
+  runPrepareTaskCli,
   runPython,
   type TaskInputEnvelope,
 } from './test-helpers.js';
@@ -106,17 +107,17 @@ if __name__ == "__main__":
     // Phase 1: Workspace Preparation (Script Provider)
     // ==========================================
     const kernelScript = createWorkspaceKernelScript();
-    const env1Res = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootDir,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'script',
-      '--provider-target', kernelScript,
-      '--workdir', worktreeDir,
-      '--branch', `issue-${issueId}`,
-      '--commit', 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
-      '--objective', 'Prepare isolated worktree environment',
-    ]);
+    const env1Res = runPrepareTaskCli(rootDir, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare isolated worktree environment',
+      provider: {
+        type: 'script',
+        target: kernelScript,
+      },
+      workdir: worktreeDir,
+      branch: `issue-${issueId}`,
+      commit: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+    });
     expect(env1Res.status).toBe(0);
     const p1 = JSON.parse(env1Res.stdout);
     const step1EnvelopePath = p1.envelope_path;
@@ -150,17 +151,16 @@ if __name__ == "__main__":
     // ==========================================
     // Phase 2: Implementation Stage (Skill Provider)
     // ==========================================
-    const env2Res = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootDir,
-      '--stage', 'issue_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', worktreeDir,
-      '--objective', 'Implement features for issue 42',
-      '--criteria', 'All unit tests pass',
-      '--criteria', 'Linting passes',
-    ]);
+    const env2Res = runPrepareTaskCli(rootDir, {
+      stage: 'issue_work',
+      objective: 'Implement features for issue 42',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: worktreeDir,
+      acceptance_criteria: ['All unit tests pass', 'Linting passes'],
+    });
     expect(env2Res.status).toBe(0);
     const p2 = JSON.parse(env2Res.stdout);
     const step2EnvelopePath = p2.envelope_path;
@@ -199,15 +199,15 @@ if __name__ == "__main__":
     // ==========================================
     // Phase 3: Verification Stage (Skill Provider)
     // ==========================================
-    const env3Res = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootDir,
-      '--stage', 'issue_verify',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-verify',
-      '--workdir', worktreeDir,
-      '--objective', 'Run integrated acceptance verification',
-    ]);
+    const env3Res = runPrepareTaskCli(rootDir, {
+      stage: 'issue_verify',
+      objective: 'Run integrated acceptance verification',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-verify',
+      },
+      workdir: worktreeDir,
+    });
     expect(env3Res.status).toBe(0);
     const p3 = JSON.parse(env3Res.stdout);
     const step3EnvelopePath = p3.envelope_path;
@@ -274,15 +274,15 @@ sys.exit(1)
       '--root-issue', '99',
     ]);
 
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_2_work',
-      '--provider-type', 'script',
-      '--provider-target', failingScriptPath,
-      '--workdir', testEnv.dir,
-      '--objective', 'Run failing kernel script',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_work',
+      objective: 'Run failing kernel script',
+      provider: {
+        type: 'script',
+        target: failingScriptPath,
+      },
+      workdir: testEnv.dir,
+    });
     const prepData = JSON.parse(prepRes.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
 
@@ -324,14 +324,13 @@ sys.exit(1)
     const stateBefore = fs.readFileSync(stateFile, 'utf-8');
 
     // Attempt invalid prepare (missing required objective)
-    const result = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      // Omit --objective
-    ]);
+    const result = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_plan',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+    });
 
     expect(result.status).not.toBe(0);
     // Envelope 01-input.json should not exist

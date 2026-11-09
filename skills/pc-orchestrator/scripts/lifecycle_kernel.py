@@ -823,6 +823,64 @@ def inspect_state(
     return info
 
 
+def load_prepare_request(request_path: str) -> Dict[str, Any]:
+    """Validate an absolute JSON request file and return prepare_task keyword arguments.
+
+    Validation happens before loading workflow state, which can perform crash recovery.
+    Provider arguments are preserved as individual string tokens.
+    """
+    path = Path(request_path)
+    if not path.is_absolute():
+        raise ValueError(f"Request path must be absolute, received {request_path!r}")
+    with path.open("r", encoding="utf-8") as request_file:
+        request = json.load(request_file)
+    if not isinstance(request, dict):
+        raise ValueError(f"Prepare request must be a JSON object, received {request!r}")
+
+    allowed_fields = {
+        "stage", "objective", "provider", "acceptance_criteria", "predecessor_receipts",
+        "workdir", "scope", "attempt_intent", "branch", "commit", "receipt_template",
+    }
+    unknown = request.keys() - allowed_fields
+    if unknown:
+        raise ValueError(f"Unknown prepare request fields: {', '.join(sorted(unknown))}")
+    for field in ("stage", "objective", "provider"):
+        if field not in request:
+            raise ValueError(f"Prepare request missing required field {field!r}")
+    for field in ("stage", "objective", "workdir", "scope", "branch", "commit", "receipt_template"):
+        if field in request:
+            value = request[field]
+            if not isinstance(value, str) or (field != "scope" and not value.strip()):
+                expected = "a string" if field == "scope" else "a non-empty string"
+                raise ValueError(f"Request {field!r} must be {expected}, received {value!r}")
+    if "attempt_intent" in request and request["attempt_intent"] not in ("same", "new"):
+        raise ValueError(f"Request 'attempt_intent' must be 'same' or 'new', received {request['attempt_intent']!r}")
+
+    provider = request["provider"]
+    if not isinstance(provider, dict):
+        raise ValueError(f"Request 'provider' must be an object, received {provider!r}")
+    unknown = provider.keys() - {"type", "target", "args"}
+    if unknown:
+        raise ValueError(f"Unknown provider fields: {', '.join(sorted(unknown))}")
+    if provider.get("type") not in ("skill", "script"):
+        raise ValueError(f"Provider 'type' must be 'skill' or 'script', received {provider.get('type')!r}")
+    target = provider.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError(f"Provider 'target' must be a non-empty string, received {target!r}")
+    for field, value in (
+        ("provider.args", provider.get("args", [])),
+        ("acceptance_criteria", request.get("acceptance_criteria", [])),
+        ("predecessor_receipts", request.get("predecessor_receipts", [])),
+    ):
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError(f"Request {field!r} must be an array of strings, received {value!r}")
+
+    payload = dict(request)
+    del payload["provider"]
+    payload.update(provider_type=provider["type"], provider_target=target, provider_args=provider.get("args", []))
+    return payload
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Minimal dispatch lifecycle kernel for pc-orchestrator workflows."
@@ -845,38 +903,7 @@ def main() -> None:
     # prepare
     p_prep = subparsers.add_parser("prepare", help="Prepare a fixed task dispatch and envelope.")
     p_prep.add_argument("--receipt-root", required=True, help="Absolute path to receipts root directory.")
-    p_prep.add_argument("--stage", "--task-name", dest="stage", required=True, help="Logical stage/task name.")
-    p_prep.add_argument("--objective", required=True, help="Task objective.")
-    p_prep.add_argument("--provider-type", required=True, help="Provider type ('skill' or 'script').")
-    p_prep.add_argument("--provider-target", required=True, help="Provider target (skill name or script path).")
-    p_prep.add_argument(
-        "--provider-arg",
-        dest="provider_args",
-        action="append",
-        default=[],
-        help="Provider argument.",
-    )
-    p_prep.add_argument(
-        "--criteria",
-        "--criterion",
-        dest="acceptance_criteria",
-        action="append",
-        default=[],
-        help="Acceptance criterion.",
-    )
-    p_prep.add_argument(
-        "--predecessor-receipt",
-        dest="predecessor_receipts",
-        action="append",
-        default=[],
-        help="Predecessor receipt path.",
-    )
-    p_prep.add_argument("--workdir", help="Working directory.")
-    p_prep.add_argument("--scope", default="", help="Task scope.")
-    p_prep.add_argument("--attempt-intent", default="same", choices=["same", "new", "same_attempt", "new_attempt"], help="Attempt intent.")
-    p_prep.add_argument("--branch", help="Feature branch override.")
-    p_prep.add_argument("--commit", help="Commit SHA override.")
-    p_prep.add_argument("--receipt-template", default=DEFAULT_RECEIPT_TEMPLATE, help="Receipt template path.")
+    p_prep.add_argument("--request", required=True, help="Absolute path to the prepare request JSON file.")
 
     # handoff
     p_hand = subparsers.add_parser("handoff", help="Record execution handoff boundary.")
@@ -921,22 +948,10 @@ def main() -> None:
             )
             print(json.dumps(state, indent=2, ensure_ascii=False))
         elif args.command == "prepare":
-            disp = prepare_task(
-                receipt_root=args.receipt_root,
-                stage=args.stage,
-                objective=args.objective,
-                provider_type=args.provider_type,
-                provider_target=args.provider_target,
-                provider_args=args.provider_args,
-                acceptance_criteria=args.acceptance_criteria,
-                predecessor_receipts=args.predecessor_receipts,
-                workdir=args.workdir,
-                scope=args.scope,
-                attempt_intent=args.attempt_intent,
-                branch=args.branch,
-                commit=args.commit,
-                receipt_template=args.receipt_template,
-            )
+            if not Path(args.receipt_root).is_absolute():
+                raise ValueError(f"Receipt root must be absolute, received {args.receipt_root!r}")
+            request = load_prepare_request(args.request)
+            disp = prepare_task(receipt_root=args.receipt_root, **request)
             print(json.dumps(disp, indent=2, ensure_ascii=False))
         elif args.command == "handoff":
             res = handoff_dispatch(

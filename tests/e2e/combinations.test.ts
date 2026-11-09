@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createTestDir,
   runLifecycleKernelCli,
+  runPrepareTaskCli,
   runStateMachineCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
@@ -44,17 +45,17 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     fs.mkdirSync(fakeWorkdir, { recursive: true });
 
     // 3. Generate envelope from prepare
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', fakeWorkdir,
-      '--branch', 'issue-777',
-      '--commit', '9999999999999999999999999999999999999999',
-      '--objective', 'Formulate delivery plan for issue 777',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_plan',
+      objective: 'Formulate delivery plan for issue 777',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: fakeWorkdir,
+      branch: 'issue-777',
+      commit: '9999999999999999999999999999999999999999',
+    });
     expect(prepRes.status).toBe(0);
 
     const envelopePath = JSON.parse(prepRes.stdout).envelope_path;
@@ -75,15 +76,15 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     ]);
 
     // 2. Complete stage 1 with receipt
-    const p1 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Plan stage 1',
-    ]);
+    const p1 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_plan',
+      objective: 'Plan stage 1',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     const p1Data = JSON.parse(p1.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
     fs.writeFileSync(p1Data.receipt_path, '# Stage 1 Plan Receipt\nOutcome: direct');
@@ -99,15 +100,15 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     ]);
 
     // 3. Generate envelope for stage 2
-    const p2 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_2_work',
-      '--provider-type', 'script',
-      '--provider-target', 'skills/pc-workspace/scripts/prepare-worktree.py',
-      '--workdir', testEnv.dir,
-      '--objective', 'Execute work for issue 888',
-    ]);
+    const p2 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_work',
+      objective: 'Execute work for issue 888',
+      provider: {
+        type: 'script',
+        target: 'skills/pc-workspace/scripts/prepare-worktree.py',
+      },
+      workdir: testEnv.dir,
+    });
     expect(p2.status).toBe(0);
 
     const p2Data = JSON.parse(p2.stdout);
@@ -125,15 +126,15 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     ]);
 
     // Stage 1: Skill provider
-    const p1 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_1_plan',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-plan',
-      '--workdir', testEnv.dir,
-      '--objective', 'Plan with skill',
-    ]);
+    const p1 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_plan',
+      objective: 'Plan with skill',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
     const p1Data = JSON.parse(p1.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
     fs.writeFileSync(p1Data.receipt_path, '# Receipt 1');
@@ -149,16 +150,16 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     ]);
 
     // Stage 2: Script provider (zero perception by state machine)
-    const p2 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_2_work',
-      '--provider-type', 'script',
-      '--provider-target', 'scripts/automated_worker.py',
-      '--provider-arg=--fast',
-      '--workdir', testEnv.dir,
-      '--objective', 'Work with script',
-    ]);
+    const p2 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_work',
+      objective: 'Work with script',
+      provider: {
+        type: 'script',
+        target: 'scripts/automated_worker.py',
+        args: ['--fast'],
+      },
+      workdir: testEnv.dir,
+    });
     expect(p2.status).toBe(0);
     const p2Data = JSON.parse(p2.stdout);
 
@@ -188,15 +189,15 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     ]);
 
     // Attempt 1 fails
-    const p1 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_2_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', testEnv.dir,
-      '--objective', 'Initial implementation attempt 1',
-    ]);
+    const p1 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_work',
+      objective: 'Initial implementation attempt 1',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: testEnv.dir,
+    });
     const p1Data = JSON.parse(p1.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
     fs.writeFileSync(p1Data.receipt_path, '# Attempt 1 Receipt');
@@ -212,16 +213,16 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     ]);
 
     // Attempt 2: rework cycle with --attempt-intent new
-    const p2 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_2_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', testEnv.dir,
-      '--objective', 'Rework implementation attempt 2',
-      '--attempt-intent', 'new',
-    ]);
+    const p2 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_work',
+      objective: 'Rework implementation attempt 2',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: testEnv.dir,
+      attempt_intent: 'new',
+    });
     expect(p2.status).toBe(0);
     const p2Data = JSON.parse(p2.stdout);
     const env2: TaskInputEnvelope = JSON.parse(fs.readFileSync(p2Data.envelope_path, 'utf-8'));
@@ -242,16 +243,16 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     ]);
 
     // Attempt 3: reached budget limit
-    const p3 = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'stage_2_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', testEnv.dir,
-      '--objective', 'Rework implementation attempt 3',
-      '--attempt-intent', 'new',
-    ]);
+    const p3 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_work',
+      objective: 'Rework implementation attempt 3',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: testEnv.dir,
+      attempt_intent: 'new',
+    });
     expect(p3.status).toBe(0);
     const p3Data = JSON.parse(p3.stdout);
     runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);

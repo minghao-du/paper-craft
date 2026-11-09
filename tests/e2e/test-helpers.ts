@@ -170,6 +170,24 @@ export function runLifecycleKernelCli(
   return runPython(LIFECYCLE_KERNEL_SCRIPT, args, options);
 }
 
+/** Write a preparation request fixture, execute the real CLI, and remove the fixture. */
+export function runPrepareTaskCli(
+  receiptRoot: string,
+  request: Record<string, unknown>,
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+): ProcessResult {
+  const requestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-prepare-request-'));
+  try {
+    const requestPath = path.join(requestDir, 'request.json');
+    fs.writeFileSync(requestPath, JSON.stringify(request));
+    return runLifecycleKernelCli([
+      'prepare', '--receipt-root', receiptRoot, '--request', requestPath,
+    ], options);
+  } finally {
+    fs.rmSync(requestDir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Execute pc-workspace-config/scripts/config.py CLI subcommand.
  */

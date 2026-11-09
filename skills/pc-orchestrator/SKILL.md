@@ -191,7 +191,7 @@ For each stage defined in the loaded workflow:
 1. **Identify Stage Contract & Resolve Provider**: Read the stage's `logical_stage`, `provider` (`type`, `target`, `args`), inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules.
 2. **Prepare Environment**: Apply [Workspace lifecycle and dispatch](references/workspaces.md), verifying or creating the assigned workspace before professional execution.
 3. **Prepare Task Dispatch**:
-   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" prepare --receipt-root "<receipt_root>" --stage <stage> --objective "<objective>" --provider-type <skill|script> --provider-target <target> ...`.
+   - Write the [prepare request](#prepare-request) with a JSON serializer, then execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`.
    - The kernel atomically allocates monotonically increasing `step_index`, generates `<step_index>-input.json`, assigns `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
 4. **Handoff Execution**:
    - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" handoff --receipt-root "<receipt_root>"` to authorize execution launch.
@@ -290,7 +290,7 @@ Wait for the human user's prompt instruction before proceeding.
 - **Lifecycle Kernel (`scripts/lifecycle_kernel.py`)** — The authoritative controller for runtime state snapshots, task dispatches, and orchestrator decisions. The kernel provides 6 distinct operations:
   - **`init`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py init --receipt-root "<receipt_root>" --root-issue <root_id> [--repo-dir <repo_dir>] [--require-config]`
     Creates workflow run state in `<receipt_root>/state.json`. Validates workspace configuration and populates root context.
-  - **`prepare`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py prepare --receipt-root "<receipt_root>" --stage <stage> --objective "<objective>" --provider-type <skill|script> --provider-target <target> [--provider-arg <arg>] [--criteria <criterion>] [--predecessor-receipt <path>] [--workdir <dir>] [--attempt-intent same|new]`
+  - **`prepare`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`
     Prepares a fixed task, allocates monotonically increasing `step_index`, generates Task Input Envelope `<step_index>-input.json`, assigns deterministic receipt path `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
   - **`handoff`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py handoff --receipt-root "<receipt_root>" [--dispatch-id <id>] [--platform-handle <handle>]`
     Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Subsequent calls or queries do NOT grant new launch permission.
@@ -308,3 +308,21 @@ Wait for the human user's prompt instruction before proceeding.
   1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using recorded receipt references, active dispatch status, and consumed budgets.
   2. If `state.json` is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.
+
+### Prepare Request
+
+Write a JSON object to an absolute file path using a JSON serializer. Required fields are non-empty strings `stage` and `objective`, plus `provider` with `type` (`skill` or `script`) and a non-empty string `target`.
+
+```json
+{
+  "stage": "workspace_prepare",
+  "objective": "Prepare the assigned workspace",
+  "provider": {
+    "type": "script",
+    "target": "/absolute/pc-workspace/scripts/prepare-worktree.py",
+    "args": ["--repo-dir", "/absolute/repository with spaces"]
+  }
+}
+```
+
+Optional string arrays `provider.args`, `acceptance_criteria`, and `predecessor_receipts` default to empty lists. Each provider argument occupies one array element and retains its exact contents. Empty predecessor lists inherit the latest completed receipt. Optional `scope` is a string defaulting to `""`. Optional `workdir`, `branch`, `commit`, and `receipt_template` are non-empty strings, with workspace fields inherited from runtime context and the bundled receipt template used by default. `attempt_intent` accepts `same` (default) or `new`. Unknown fields and invalid values fail validation before workflow state is loaded. The kernel supplies issue context and allocates the step index, attempts, budgets and output paths.

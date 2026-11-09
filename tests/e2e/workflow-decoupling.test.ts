@@ -19,6 +19,7 @@ import {
   REPO_ROOT,
   runEnvelopeCli,
   runLifecycleKernelCli,
+  runPrepareTaskCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
 
@@ -343,18 +344,17 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
         '--receipt-root', stageRoot,
         '--root-issue', '100',
       ]);
-      const providerArgFlags = (stage.providerArgs ?? []).map((arg) => `--provider-arg=${arg}`);
 
-      const res = runLifecycleKernelCli([
-        'prepare',
-        '--receipt-root', stageRoot,
-        '--stage', stage.logicalTask,
-        '--provider-type', stage.providerType,
-        '--provider-target', stage.providerTarget,
-        ...providerArgFlags,
-        '--workdir', testEnv.dir,
-        '--objective', `Execute stage ${stage.logicalTask}`,
-      ]);
+      const res = runPrepareTaskCli(stageRoot, {
+        stage: stage.logicalTask,
+        objective: `Execute stage ${stage.logicalTask}`,
+        provider: {
+          type: stage.providerType,
+          target: stage.providerTarget,
+          args: stage.providerArgs,
+        },
+        workdir: testEnv.dir,
+      });
 
       expect(res.status).toBe(0);
       const prepData = JSON.parse(res.stdout);
@@ -371,29 +371,29 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
     // Variant A: skill provider (pc-workspace)
     const rootSkill = path.join(testEnv.dir, 'skill-run');
     runLifecycleKernelCli(['init', '--receipt-root', rootSkill, '--root-issue', '200']);
-    const prepSkill = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootSkill,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-workspace',
-      '--workdir', testEnv.dir,
-      '--objective', 'Prepare workspace via skill',
-    ]);
+    const prepSkill = runPrepareTaskCli(rootSkill, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace via skill',
+      provider: {
+        type: 'skill',
+        target: 'pc-workspace',
+      },
+      workdir: testEnv.dir,
+    });
     const envSkillPath = JSON.parse(prepSkill.stdout).envelope_path;
 
     // Variant B: script provider (prepare-worktree.py)
     const rootScript = path.join(testEnv.dir, 'script-run');
     runLifecycleKernelCli(['init', '--receipt-root', rootScript, '--root-issue', '200']);
-    const prepScript = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', rootScript,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'script',
-      '--provider-target', 'skills/pc-workspace/scripts/prepare-worktree.py',
-      '--workdir', testEnv.dir,
-      '--objective', 'Prepare workspace via script kernel',
-    ]);
+    const prepScript = runPrepareTaskCli(rootScript, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace via script kernel',
+      provider: {
+        type: 'script',
+        target: 'skills/pc-workspace/scripts/prepare-worktree.py',
+      },
+      workdir: testEnv.dir,
+    });
     const envScriptPath = JSON.parse(prepScript.stdout).envelope_path;
 
     const envSkill: TaskInputEnvelope = JSON.parse(fs.readFileSync(envSkillPath, 'utf-8'));
@@ -412,14 +412,14 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '200',
     ]);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'workspace_prepare',
-      '--objective', 'Prepare workspace for issue 200',
-      '--provider-type', 'script',
-      '--provider-target', PREPARE_WORKTREE_SCRIPT,
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace for issue 200',
+      provider: {
+        type: 'script',
+        target: PREPARE_WORKTREE_SCRIPT,
+      },
+    });
     const prepData = JSON.parse(prepRes.stdout);
     runLifecycleKernelCli([
       'handoff',
@@ -450,18 +450,18 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '300',
     ]);
-    const res = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_work',
-      '--provider-type', 'unsupported_provider',
-      '--provider-target', 'dummy-target',
-      '--workdir', testEnv.dir,
-      '--objective', 'Test bad provider type',
-    ]);
+    const res = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_work',
+      objective: 'Test bad provider type',
+      provider: {
+        type: 'unsupported_provider',
+        target: 'dummy-target',
+      },
+      workdir: testEnv.dir,
+    });
 
     expect(res.status).not.toBe(0);
-    expect(res.stderr).toContain("[provider.type] Expected 'skill' | 'script'");
+    expect(res.stderr).toContain("Provider 'type' must be 'skill' or 'script'");
   });
 
   it('W1.6: parseWorkflowStages actively rejects malformed stages instead of silently dropping', () => {

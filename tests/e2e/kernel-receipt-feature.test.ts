@@ -13,6 +13,7 @@ import {
   createTestDir,
   REPO_ROOT,
   runLifecycleKernelCli,
+  runPrepareTaskCli,
   runPython,
   type TaskInputEnvelope,
 } from './test-helpers.js';
@@ -91,15 +92,15 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '12',
     ]);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'script',
-      '--provider-target', kernelScript,
-      '--workdir', testEnv.dir,
-      '--objective', 'Prepare workspace tree',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace tree',
+      provider: {
+        type: 'script',
+        target: kernelScript,
+      },
+      workdir: testEnv.dir,
+    });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const envelopePath = prepData.envelope_path;
@@ -121,16 +122,16 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '15',
     ]);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_work',
-      '--provider-type', 'script',
-      '--provider-target', kernelScript,
-      '--workdir', testEnv.dir,
-      '--objective', 'Run parameter-driven task',
-      '--scope', 'Scope details here',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_work',
+      objective: 'Run parameter-driven task',
+      provider: {
+        type: 'script',
+        target: kernelScript,
+      },
+      workdir: testEnv.dir,
+      scope: 'Scope details here',
+    });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const envelopePath = prepData.envelope_path;
@@ -151,15 +152,15 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '25',
     ]);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'pipeline_audit',
-      '--provider-type', 'script',
-      '--provider-target', kernelScript,
-      '--workdir', testEnv.dir,
-      '--objective', 'Audit pipeline rules',
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'pipeline_audit',
+      objective: 'Audit pipeline rules',
+      provider: {
+        type: 'script',
+        target: kernelScript,
+      },
+      workdir: testEnv.dir,
+    });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const envelopePath = prepData.envelope_path;
@@ -190,15 +191,15 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '55',
     ]);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_verify',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-verify',
-      '--workdir', testEnv.dir,
-      '--objective', 'Cognitive wrapper test',
-    ], { cwd: testEnv.dir });
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_verify',
+      objective: 'Cognitive wrapper test',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-verify',
+      },
+      workdir: testEnv.dir,
+    }, { cwd: testEnv.dir });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const envelopePath = prepData.envelope_path;
@@ -275,16 +276,16 @@ describe('Tier 1: Unified Receipt Contract Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '100',
     ]);
-    const prepRes = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', testEnv.dir,
-      '--stage', 'issue_work',
-      '--provider-type', 'skill',
-      '--provider-target', 'pc-issue-work',
-      '--workdir', testEnv.dir,
-      '--objective', 'Implement from step 1 plan',
-      '--predecessor-receipt', step1Receipt,
-    ]);
+    const prepRes = runPrepareTaskCli(testEnv.dir, {
+      stage: 'issue_work',
+      objective: 'Implement from step 1 plan',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-work',
+      },
+      workdir: testEnv.dir,
+      predecessor_receipts: [step1Receipt],
+    });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const step2EnvelopePath = prepData.envelope_path;

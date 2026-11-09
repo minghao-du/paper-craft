@@ -16,6 +16,7 @@ import {
   createTestDir,
   PREPARE_WORKTREE_SCRIPT,
   runLifecycleKernelCli,
+  runPrepareTaskCli,
   runPrepareWorktreeCli,
   runStateMachineCli,
   runWorkspaceConfigCli,
@@ -152,15 +153,15 @@ describe('Issue #38: Workspace Config E2E', () => {
       '--root-issue', '38',
       '--repo-dir', repoDir,
     ]);
-    const prepResEnvelope = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', receiptRoot,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'script',
-      '--provider-target', PREPARE_WORKTREE_SCRIPT,
-      '--workdir', repoDir,
-      '--objective', 'Prepare workspace for Issue #38',
-    ]);
+    const prepResEnvelope = runPrepareTaskCli(receiptRoot, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace for Issue #38',
+      provider: {
+        type: 'script',
+        target: PREPARE_WORKTREE_SCRIPT,
+      },
+      workdir: repoDir,
+    });
     expect(prepResEnvelope.status).toBe(0);
     const envelopePath = path.join(receiptRoot, '01-input.json');
 
@@ -264,15 +265,15 @@ describe('Issue #38: Workspace Config E2E', () => {
       '--root-issue', '50',
       '--repo-dir', repoDir,
     ]);
-    const prepResEnvelope = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', receiptRoot,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'script',
-      '--provider-target', PREPARE_WORKTREE_SCRIPT,
-      '--workdir', repoDir,
-      '--objective', 'Custom container test',
-    ]);
+    const prepResEnvelope = runPrepareTaskCli(receiptRoot, {
+      stage: 'workspace_prepare',
+      objective: 'Custom container test',
+      provider: {
+        type: 'script',
+        target: PREPARE_WORKTREE_SCRIPT,
+      },
+      workdir: repoDir,
+    });
     expect(prepResEnvelope.status).toBe(0);
     const envelopePath = path.join(receiptRoot, '01-input.json');
 
@@ -320,15 +321,15 @@ describe('Issue #38: Workspace Config E2E', () => {
       '--root-issue', '39',
       '--repo-dir', repoDir,
     ]);
-    const prepResEnvelope = runLifecycleKernelCli([
-      'prepare',
-      '--receipt-root', receiptRoot,
-      '--stage', 'workspace_prepare',
-      '--provider-type', 'script',
-      '--provider-target', PREPARE_WORKTREE_SCRIPT,
-      '--workdir', repoDir,
-      '--objective', 'Prepare workspace for fork issue #39',
-    ]);
+    const prepResEnvelope = runPrepareTaskCli(receiptRoot, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare workspace for fork issue #39',
+      provider: {
+        type: 'script',
+        target: PREPARE_WORKTREE_SCRIPT,
+      },
+      workdir: repoDir,
+    });
     expect(prepResEnvelope.status).toBe(0);
     const envelopePath = path.join(receiptRoot, '01-input.json');
 
