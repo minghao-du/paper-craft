@@ -1,6 +1,6 @@
 ---
 name: pc-issue-plan
-description: Plan scientific or engineering issues by verifiable execution stages, draft and file up to five sub-issues, and define acceptance gates and dependencies
+description: Plan scientific or engineering issues by verifiable execution stages, draft and file bounded sub-issues, and define acceptance gates and dependencies
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep
 ---
 
@@ -59,7 +59,7 @@ Read the assigned issue, original scientific objective, constraints, existing ch
 Verify repository and issue identity from the provided brief or environment.
 
 #### Depth-1 strict boundary check
-Check if the issue has a parent or was created as a sub-issue (via GitHub native sub-issue metadata or parent issue references in description).
+Read the native parent (`GET /repos/{owner}/{repo}/issues/{number}/parent`) and all pages of native sub-issues (`GET /repos/{owner}/{repo}/issues/{number}/sub_issues`). Reconcile these with explicit parent declarations and child tasklists in issue bodies, including legacy children. Ordinary related-issue links establish context only. Resolve conflicting or unreadable hierarchy evidence before classifying depth.
 - **If already a sub-issue:** strictly bypass decomposition. Return:
   ```json
   {
@@ -70,8 +70,10 @@ Check if the issue has a parent or was created as a sub-issue (via GitHub native
   ```
   Halt planning and yield execution to direct delivery. Never nest sub-issues within sub-issues.
 
+Root status establishes hierarchy depth. For a root, decide delivery granularity separately in Step 2.
+
 ### Step 2: Identify verifiable execution stages
-For a root issue, map the work needed to satisfy its acceptance criteria into stages with distinct artifacts or state evidence and completion gates. A clear objective, one module, or a single feasible PR can still contain multiple stages.
+For a root issue, produce a stage table before choosing an outcome. Cover every proposed phase and parent acceptance requirement, recording each candidate's deliverable or observable state, automated acceptance gate, and prerequisites. Record retained stages and reasons for merging or rejecting candidates. A clear objective, one module, or a single feasible PR can still contain multiple stages.
 
 Consider cleanup and contract repair, data preparation, feasibility validation, remaining execution, and analysis or synthesis where the work requires them. Each candidate must have a meaningful completion checkpoint that enables downstream work or can be accepted separately. Keep routine commands and small implementation steps inside their owning stage.
 
@@ -79,7 +81,7 @@ For multiple configurations or batch runs, inspect existing evidence for the sha
 
 An issue **must be decomposed** (`outcome: "decomposed"`) when at least two such stages exist. Module boundaries, delivery budgets, and experimental uncertainty can help locate checkpoints.
 
-Return `direct` only when the root issue has one cohesive delivery stage. Justify the absence of further meaningful acceptance checkpoints.
+Return `direct` only when the table leaves one cohesive delivery stage. Explain why each other candidate lacks a meaningful separate acceptance checkpoint. Shared files, sequential execution, and a common final scientific gate alone do not justify merging independently verifiable stages. Include the table and rationale in the planning report for either outcome.
 
 ```json
 {
@@ -93,7 +95,9 @@ Return `direct` only when the root issue has one cohesive delivery stage. Justif
 When decomposition is required, propose bounded child issues and actionable worker briefs:
 
 #### Child count and coverage
-A decomposed plan must contain **2–5 direct sub-issues**, including existing children retained in the plan. Five is a hard maximum. When more stages are identified, combine repeated runs and smaller adjacent preparation stages while preserving critical feasibility gates. Use fewer children when that covers the work coherently.
+A decomposed plan normally contains **2–4 direct sub-issues**, including existing children retained in the plan. Choose the smallest count that preserves bounded responsibilities and meaningful acceptance checkpoints. Reserve **5** for unusually complex tasks, explaining why grouping into four would make a child unbounded or obscure a critical dependency or feasibility gate. Five is a hard maximum.
+
+Several execution stages can belong to one child when they share a coherent acceptance contract. Group repeated runs and adjacent preparation work where appropriate, retaining their individual checks and critical feasibility gates. Explain the grouping. Stage count alone does not justify an equal number of children.
 
 Map every parent requirement to a child, including configuration, scripts, interfaces, and tests. Assign implementation work to the stage that needs it. Reuse existing children where they cover planned work, and resolve an over-limit plan before filing additional children. Apply these constraints to reassessment proposals as well.
 
@@ -101,7 +105,7 @@ Map every parent requirement to a child, including configuration, scripts, inter
 Incorporate strategic review discipline before finalizing children:
 - **Stage deliverables:** Explicitly list expected artifacts or state evidence and their paths where applicable.
 - **Scope discipline:** Define each child's bounded responsibility.
-- **Falsifiable gates:** Every child task must have an observable, automated acceptance gate (tests, CLI assertions, pipeline dry-run, or benchmark scripts).
+- **Falsifiable gates:** Every child task must have an observable, automated acceptance gate (tests, CLI assertions, pipeline dry-run, or benchmark scripts). Assign local behavioral checks to implementation children and integrated scientific thresholds to the final evaluation child. Preserve every parent threshold in the coverage map.
 - **Cost & complexity check:** Verify any algorithmic complexity or resource claims with back-of-the-envelope calculations. Flag scaling cliffs or unrealistic performance assumptions.
 - **Dependency & collision graph:** Distinguish strict prerequisites (`blockedBy`) from resource/file collision constraints.
 
@@ -113,9 +117,10 @@ Incorporate strategic review discipline before finalizing children:
    - Scope boundaries (in scope / out of scope).
    - Test plan with concrete execution commands.
 2. Write local drafts as `ISSUE-<slug>.md`.
-3. Submit each draft to GitHub via `/pc-issue-file` (`gh issue create --title "<title>" --body-file ISSUE-<slug>.md`).
-4. Update the parent issue body with the child tasklist (`- [ ] #<number> <title>`), preserving all existing progress.
-5. Return the assignment plan structure:
+3. File only when issue filing is requested. Reconcile the plan with existing native children and tasklist entries before creating anything. Reuse matching issues. Submit new drafts via `/pc-issue-file` with explicit CREATE intent and target repository, distinguishing the parent reference from an issue to update.
+4. Establish each child's native parent using the [GitHub sub-issue API](https://docs.github.com/en/rest/issues/sub-issues). Fetch the child's numeric issue `id` and call `POST /repos/{owner}/{repo}/issues/{parent_number}/sub_issues` with `sub_issue_id` (for example, `gh api --method POST <endpoint> -F sub_issue_id=<id>`). Read back each child's parent and the parent's paginated child list. Reuse matching links and resolve conflicting parents before continuing.
+5. Update the parent issue body with the child tasklist (`- [ ] #<number> <title>`), preserving all existing progress. Completion requires the plan, native relationships, and tasklist to agree. On partial failure, report created issue numbers, verified links, and pending synchronization so a retry can resume from existing state.
+6. Return the assignment plan structure:
    ```json
    {
      "outcome": "decomposed",
@@ -149,13 +154,14 @@ A planning task is complete only when all criteria are met:
 1. **Depth boundary strictly observed:** No sub-issues nested beneath existing sub-issues.
 2. **Explicit falsifiable criteria:** Every planned child issue includes concrete, automated acceptance gates and stage-appropriate artifacts or state evidence.
 3. **Accurate dependency tracking:** `blockedBy` arrays reflect actual technical prerequisites.
-4. **Issue tracker synchronization:** For issue-filing tasks, parent issue tasklist matches filed child issues.
+4. **Issue tracker synchronization:** For issue-filing tasks, read-back native parent/child relationships and the parent tasklist match the plan.
 5. **Bounded, complete plan:** The child-count and coverage constraints hold before returning or filing a plan.
 
 ## Task Outputs
 
 - Direct execution: `{ outcome: "direct", summary: "...", reason: "..." }`
 - Decomposed execution: `{ outcome: "decomposed", summary: "...", plan: { tasks: [...] } }`
+- Root planning report with the stage table, candidate disposition reasons, and parent-requirement coverage.
 - Scope reassessment: `{ outcome: "revised_plan" | "optional_improvement" | "decision_required", summary: "...", ... }` with the supporting assessment described above.
-- Filed GitHub child issues and updated parent tasklist when issue filing was requested.
+- Filed GitHub child issues, verified native parent/child relationships, and updated parent tasklist when issue filing was requested.
 - Report the decision or plan directly to the calling agent or user.
