@@ -16,6 +16,7 @@ if _CONFIG_DIR not in sys.path:
     sys.path.insert(0, _CONFIG_DIR)
 
 from config import parse_repo_from_url
+from cleanup import cleanup
 
 
 def run(*args, cwd):
@@ -82,7 +83,7 @@ def build_markdown_receipt(
 
     root_issue = str(task.get("root_issue_id") or getattr(args, "issue", "") or "N/A")
     current_issue = str(task.get("current_issue_id") or getattr(args, "issue", "") or "N/A")
-    logical_stage = task.get("logical_stage") or "workspace_prepare"
+    logical_stage = "workspace_cleanup" if getattr(args, "cleanup", False) else task.get("logical_stage") or "workspace_prepare"
     attempt = task.get("attempt", 1)
     del_used = budgets.get("delivery_attempts_used", 0)
     rep_used = budgets.get("replans_used", 0)
@@ -142,6 +143,12 @@ Remediation required before retrying workspace preparation."""
 - Delivery attempts used: {del_used}
 - Replans used: {rep_used}
 - Recovery note: Resolve reported blocker before retrying workspace preparation."""
+
+    if getattr(args, "cleanup", False):
+        verification_text = "Candidate checks and per-resource cleanup results are recorded in the compact report."
+        task_result_text = summary
+        feedback_text = "Retained resources and reasons are recorded in the compact report. Retry with the same candidates after resolving conflicts."
+        recovery_text = f"- Origin stage: workspace_cleanup\n- Attempt: {attempt}"
 
     return f"""# Subagent Receipt
 
@@ -373,6 +380,7 @@ def prepare(args):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cleanup", action="store_true", help="Clean only explicit envelope candidates, including merged local and remote branches.")
     parser.add_argument("--repo-dir", help="Existing checkout. Remote origin must identify the GitHub repository.")
     parser.add_argument("--issue", type=int, help="Positive issue number for default branch and path names.")
     revision = parser.add_mutually_exclusive_group()
@@ -390,6 +398,28 @@ def parse_args(argv=None):
     parser.add_argument("--receipt-path", help="Path to write Markdown receipt.")
     parser.add_argument("--output-format", choices=["raw", "compact"], default=None, help="Output format for stdout: raw environment dict or compact report JSON")
     return parser.parse_args(argv), parser
+
+
+def cleanup_main(args, envelope):
+    """Execute cleanup through the same envelope and durable receipt entry point."""
+    if not envelope or not args.receipt_path:
+        print("Cleanup requires --input-envelope with contract.receipt_path.", file=sys.stderr)
+        return 1
+    status = "succeeded"
+    try:
+        result = cleanup(args, envelope, git, run)
+        summary = f"Removed {len(result['removed_paths'])} worktrees; retained {len(result['retained_paths'])} candidates."
+    except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
+        status = "blocked"
+        result = {"error": str(error)}
+        summary = f"Workspace cleanup blocked: {error}"
+    report = dict(execution_status=status, result=result,
+                  receipt_path=str(Path(args.receipt_path).resolve()), summary=summary)
+    receipt = build_markdown_receipt(status=status, compact_report=report, artifacts={},
+                                     created=False, args=args, envelope_data=envelope, summary=summary)
+    atomic_write_text(Path(report["receipt_path"]), receipt)
+    print(json.dumps(report, indent=2))
+    return 0 if status == "succeeded" else 1
 
 
 def main():
@@ -413,6 +443,8 @@ def main():
         inputs_section = envelope_data.get("inputs", {}) if isinstance(envelope_data, dict) else {}
         params_section = inputs_section.get("parameters", {}) if isinstance(inputs_section, dict) else {}
         contract_section = envelope_data.get("contract", {}) if isinstance(envelope_data, dict) else {}
+
+        args.cleanup = args.cleanup or task_section.get("logical_stage") == "workspace_cleanup"
 
         # 1. Issue extraction
         if args.issue is None:
@@ -500,6 +532,9 @@ def main():
     # Default output format
     if args.output_format is None:
         args.output_format = "compact" if (args.input_envelope or args.receipt_path) else "raw"
+
+    if args.cleanup:
+        return cleanup_main(args, envelope_data)
 
     # Validation checks
     if args.issue is not None and args.issue <= 0:

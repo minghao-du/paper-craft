@@ -342,9 +342,9 @@ Organize touched pipeline files under scientific invariance with a human steerin
     args: ["--cleanup"]
   ```
   *(Alternative script provider: `type: script`, `target: <workspace-skill-dir>/scripts/prepare-worktree.py`, `args: ["--cleanup"]`)*
-- **Objective**: Perform deterministic cleanup of temporary worktrees and branches created during the workflow run while preserving retained directories.
-- **Inputs**: Created workspace candidates, final SHAs, delivery/verification receipts, artifact retention evidence.
-- **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { removed_paths: [...], retained_paths: [...] }, receipt_path, summary }`.
+- **Objective**: Remove eligible worktrees and merged local and remote task branches created during this run, retaining changed or still-used resources with reasons.
+- **Inputs**: Supply `inputs.parameters.candidates` using the cleanup candidate contract in `pc-workspace` §5. Reconcile this run’s creation receipts with final SHAs, PR identities, delivery/verification receipts, durable artifact locations, and completed-consumer status. Carry the recorded delivery target, base remote, and push remote for each branch.
+- **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { removed_paths: [...], retained_paths: [...], removed_branches: [...], retained_branches: [...] }, receipt_path, summary }`.
 - **Routing**:
   - Conclude workflow run and declare root issue completed.
 

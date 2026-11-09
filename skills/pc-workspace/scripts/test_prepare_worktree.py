@@ -519,5 +519,125 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn("upstream", receipt_text)
 
 
+class CleanupTests(unittest.TestCase):
+    """Exercise destructive cleanup with real local refs and isolated PR metadata."""
+
+    setUp = WorkspaceTests.setUp
+    git = WorkspaceTests.git
+    prepare = WorkspaceTests.prepare
+    create_envelope_file = WorkspaceTests.create_envelope_file
+
+    def merged_candidate(self):
+        """Create a squash-merged feature whose tip is not an ancestor of main."""
+        candidate = self.prepare("--issue", "73")
+        target = Path(candidate["worktree"])
+        (target / "feature.txt").write_text("feature\n")
+        self.git(target, "add", "feature.txt")
+        self.git(target, "commit", "-m", "Feature")
+        candidate["commit"] = self.git(target, "rev-parse", "HEAD")
+        self.git(target, "push", "--set-upstream", "origin", "issue-73")
+        self.git(self.source, "merge", "--squash", "issue-73")
+        self.git(self.source, "commit", "-m", "Squash delivery")
+        merged = self.git(self.source, "rev-parse", "HEAD")
+        # A different squash message guarantees a distinct commit object.
+        self.assertNotEqual(merged, candidate["commit"])
+        self.git(self.source, "push", "origin", "main")
+        candidate.update(pr=73, consumers_finished=True)
+        metadata = dict(state="MERGED", headRefName="issue-73", headRefOid=candidate["commit"],
+                        baseRefName="main", mergeCommit=dict(oid=merged),
+                        headRepository=dict(name="repo"), headRepositoryOwner=dict(login="test"))
+        (self.root / "pr.json").write_text(json.dumps(metadata))
+        gh = self.root / "bin" / "gh"
+        gh.write_text(f"""#!/bin/sh
+if [ "$1" = "pr" ]; then
+    cat "{self.root / 'pr.json'}"
+else
+    printf '%s\\n' '{{"nameWithOwner":"test/repo","defaultBranchRef":{{"name":"main"}}}}'
+fi
+""")
+        return candidate
+
+    def clean_candidate(self, candidate, flag=False):
+        """Run the public cleanup envelope entry point and check its durable receipt."""
+        envelope = self.create_envelope_file(self.root / "cleanup.json", logical_stage="workspace_cleanup",
+                                             parameters=dict(candidates=[candidate]))
+        result = self.prepare("--input-envelope", str(envelope), *(["--cleanup"] if flag else []))
+        receipt = Path(json.loads(envelope.read_text())["contract"]["receipt_path"])
+        self.assertIn("workspace_cleanup", receipt.read_text())
+        return result
+
+    def test_cleanup_squash_merge_and_retry(self):
+        candidate = self.merged_candidate()
+        for flag in (False, True):
+            result = self.clean_candidate(candidate, flag)
+            self.assertEqual(result["retained_paths"], [])
+            self.assertEqual(result["retained_branches"], [])
+            self.assertFalse(Path(candidate["worktree"]).exists())
+            self.assertEqual(self.git(self.source, "branch", "--list", "issue-73"), "")
+            self.assertNotIn("branch.issue-73.", self.git(self.source, "config", "--local", "--list"))
+            self.assertEqual(self.git(self.source, "ls-remote", "origin", "refs/heads/issue-73"), "")
+
+    def test_cleanup_retains_changed_or_unowned_resources(self):
+        candidate = self.merged_candidate()
+        target = Path(candidate["worktree"])
+        for key in ("created", "consumers_finished"):
+            changed = dict(candidate, **{key: False})
+            self.assertTrue(self.clean_candidate(changed)["retained_paths"])
+        (target / "evidence.log").write_text("retain me")
+        self.assertTrue(self.clean_candidate(candidate)["retained_paths"])
+        (target / "evidence.log").unlink()
+        self.git(target, "commit", "--allow-empty", "-m", "After delivery")
+        newer = self.git(target, "rev-parse", "HEAD")
+        self.assertTrue(self.clean_candidate(candidate)["retained_paths"])
+        # Restore local state but leave a newer remote tip.
+        self.git(target, "push", "origin", "issue-73")
+        self.git(target, "reset", "--hard", candidate["commit"])
+        self.assertTrue(self.clean_candidate(candidate)["retained_paths"])
+        self.assertTrue(target.exists())
+        self.assertIn(newer, self.git(self.source, "ls-remote", "origin", "refs/heads/issue-73"))
+
+    def test_cleanup_requires_matching_merge_evidence(self):
+        candidate = self.merged_candidate()
+        metadata_path = self.root / "pr.json"
+        original = json.loads(metadata_path.read_text())
+        for changes in (dict(state="OPEN"), dict(headRefOid=self.initial),
+                        dict(baseRefName="other"), dict(mergeCommit=dict(oid=candidate["commit"])),
+                        dict(headRepositoryOwner=dict(login="another-owner"))):
+            with self.subTest(changes=changes):
+                metadata_path.write_text(json.dumps(dict(original, **changes)))
+                result = self.clean_candidate(candidate)
+                self.assertTrue(result["retained_paths"])
+                self.assertTrue(Path(candidate["worktree"]).exists())
+                self.assertIn(candidate["commit"], self.git(self.source, "ls-remote", "origin", "refs/heads/issue-73"))
+
+    def test_cleanup_detached_and_ignored_material(self):
+        candidate = self.prepare("--commit", self.initial, "--worktree", str(self.root / "verify"))
+        candidate.update(consumers_finished=True, verification_completed=True)
+        target = Path(candidate["worktree"])
+        exclude = self.source / ".git" / "info" / "exclude"
+        exclude.write_text("evidence.log\n")
+        (target / "evidence.log").write_text("preserve scientific evidence")
+        self.assertTrue(self.clean_candidate(candidate)["retained_paths"])
+        (target / "evidence.log").unlink()
+        result = self.clean_candidate(candidate)
+        self.assertEqual(result["retained_paths"], [])
+        self.assertFalse(target.exists())
+
+    def test_cleanup_locked_worktree_and_partial_retry(self):
+        candidate = self.merged_candidate()
+        target = Path(candidate["worktree"])
+        # Locked worktrees retain every resource. A partial prior cleanup remains retryable.
+        self.git(target, "config", "core.hooksPath", "/dev/null")
+        self.git(self.source, "worktree", "lock", str(target))
+        self.assertTrue(self.clean_candidate(candidate)["retained_paths"])
+        self.assertIn(candidate["commit"], self.git(self.source, "ls-remote", "origin", "refs/heads/issue-73"))
+        self.git(self.source, "worktree", "unlock", str(target))
+        self.git(self.source, "push", "origin", ":refs/heads/issue-73")
+        self.git(self.source, "worktree", "remove", str(target))
+        result = self.clean_candidate(candidate)
+        self.assertEqual(result["retained_branches"], [])
+        self.assertEqual(self.git(self.source, "branch", "--list", "issue-73"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

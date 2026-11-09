@@ -25,6 +25,8 @@ python3 <skill-dir>/scripts/prepare-worktree.py --input-envelope "<envelope_path
 ```
 
 ### Automated Kernel Actions
+Cleanup envelopes (`task.logical_stage: workspace_cleanup`) or `--cleanup` route to §5 before preparation.
+
 When invoked with `--input-envelope`, the kernel script automatically:
 1. Loads and parses the input envelope (`schema_version: "1.0"`).
 2. Extracts source checkout (`environment.working_directory`), base branch (`environment.base_branch`), issue identity (`task.current_issue_id` or `task.root_issue_id`), branch (`environment.branch`), integrated revision (`environment.commit`), explicit worktree target (`inputs.parameters.worktree` if specified), and receipt path (`contract.receipt_path`).
@@ -134,15 +136,33 @@ If script execution is blocked by environment constraints (e.g., Python unavaila
 
 ## 5. Cleanup Protocol
 
-Accept only explicitly assigned candidate directories. Automatic cleanup applies to directories created for completed work whose consumers have finished.
+`--cleanup` authorizes removal of assigned, run-created worktrees and their merged local and remote task branches. Run the same helper with the cleanup envelope from the retained persistent checkout. The kernel also recognizes `task.logical_stage: workspace_cleanup` without the flag.
 
-1. **Verify State**: Confirm registered path, branch, and recorded final HEAD. Retain missing or conflicting environments with observed state.
-2. **Inspect Material**: Check tracked/untracked/ignored changes with `git status --short --ignored`. Retain candidates containing unpreserved research records, data, logs, or active users.
-3. **Confirm Delivery**: Verify feature work is merged into base via PR merge commit evidence. Detached verification environments require completed verification evidence.
-4. **Remove Worktree**:
-   ```bash
-   git -C "<retained-checkout>" worktree remove "<candidate-path>"
-   ```
-   Preserve directories Git refuses to remove and report the reason. Keep branch refs unless deletion was explicitly requested.
+```bash
+python3 <skill-dir>/scripts/prepare-worktree.py --cleanup --input-envelope "<envelope_path>"
+```
 
-Return removed and retained paths with reasons. A retained directory is an explicit cleanup result.
+Before execution, reconcile creation receipts with final delivery/verification receipts and durable artifact locations. Confirm all consumers have finished. Supply only this run's explicitly owned candidates in `inputs.parameters.candidates`. Reused or manual environments remain outside automatic cleanup. Each candidate uses the following fields from its preparation result, updated with its final delivered HEAD and PR identity.
+
+```json
+{
+  "worktree": "/absolute/path/to/task-worktree",
+  "created": true,
+  "consumers_finished": true,
+  "branch": "issue-12",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "baseBranch": "main",
+  "delivery_target": "owner/repo",
+  "base_remote": "origin",
+  "push_remote": "origin",
+  "pr": 12
+}
+```
+
+For detached verification candidates, use `branch: null` and `verification_completed: true` after checking the verification receipt. Receipts and preserved artifacts must reside outside disposable candidates.
+
+The kernel checks registered path, repository, branch and final HEAD, completed consumers, worktree locks, and tracked/untracked/ignored material. Feature cleanup requires live PR state `MERGED`, matching head branch/SHA and base, plus the PR merge commit in the fetched delivery base. This supports squash merges. Both remote identities must match the PR base and head repositories, including fork delivery.
+
+Delete the remote branch with an exact-SHA lease, remove the worktree without force, then compare-and-delete the local ref at its delivered SHA. Retain changed, active, unmerged, or conflicting resources and report why. Already absent resources permit retry after partial cleanup.
+
+The compact result and durable cleanup receipt contain `removed_paths`, `retained_paths` (path and reason), `removed_branches` (branch, scope, and remote where applicable), and `retained_branches` (branch and reason). Partial progress remains visible in these lists. A safely retained candidate is a successful cleanup conclusion. Invalid cleanup inputs report `blocked`.
