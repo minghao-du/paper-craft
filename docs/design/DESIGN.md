@@ -18,9 +18,9 @@ The architecture separates professional task knowledge from workflow policy.
 - **Skill**: teaches how to complete a coherent professional task. Specialist skills know neither workflows nor the orchestrator and require no dispatch CLI. Genuine dependencies on other skills are permitted; dispatch-specific modes and workflow routing logic are not. Specialist skills focus on professional collaboration without introducing a separate skill for every operation.
 - **Orchestrator**: owns ordering, executor selection, result associations, failure branches and overall completion. It understands failure reasons to choose subsequent work but does not manually copy findings or assemble input fields.
 
-Every dispatch starts a new agent conversation, including repeated roles and repair attempts. Context travels through explicit inputs rather than conversation reuse. Professional agents own domain judgments. The Orchestrator owns routing and acceptance. A successfully executed review can conclude that changes are required, and a successful scope assessment can identify work outside its authorization. Detailed evidence stays in file receipts.
+Every skill dispatch starts a new agent conversation, including repeated roles and repair attempts. Context travels through explicit inputs rather than conversation reuse. Professional agents own domain judgments. The Orchestrator owns routing and acceptance. A successfully executed review can conclude that changes are required, and a successful scope assessment can identify work outside its authorization. Detailed evidence stays in file receipts.
 
-The skills enforce contracts through kernel scripts and agent instructions. Programmatic verification and state machine enforcement guard every dispatch and receipt. Operational limits, report repair, scope reassessment, and recovery procedures belong in the orchestrator skill.
+The skills enforce contracts through internal scripts and agent instructions. These scripts are skill implementation details; invoking them remains skill execution. Programmatic verification and state machine enforcement guard every dispatch and receipt. Operational limits, report repair, scope reassessment, and recovery procedures belong in the orchestrator skill.
 
 ## Stage-provider decoupling
 
@@ -28,17 +28,17 @@ Workflow stages decouple abstract logical tasks from concrete execution provider
 
 ```yaml
 provider:
-  type: "skill" | "script"
-  target: "<skill-name> | <script-path>"
+  type: "skill" | "engine"
+  target: "<skill-name> | <engine-operation>"
   args: []
 ```
 
-Two provider types fulfill the contract:
+The target architecture includes two provider types. The independent paper-craft engine is not yet implemented; the engine pathway and configuration below describe the design, not an existing capability:
 
 - **`skill` provider**: The Orchestrator dispatches an autonomous LLM Specialist Subagent via the platform adapter, loading `skills/<target>/SKILL.md` with a standardized slim prompt referencing the task input envelope.
-- **`script` provider**: The Orchestrator or headless runner executes a deterministic CLI kernel script (`target`) with `--input-envelope <path>`, capturing the compact execution report from standard output.
+- **`engine` provider**: The Orchestrator invokes deterministic operations through an independent paper-craft engine without starting a specialist agent. `target` identifies an engine operation, not a script path. Engine code lives outside `skills/`; this pathway does not directly invoke skill-internal scripts.
 
-Because both provider pathways consume the identical task input envelope and produce the identical receipt contract, substituting a `skill` provider with a `script` provider requires zero modifications to workflow stage logic, routing tables, or state persistence.
+A workflow can mix skill and engine calls. Both providers follow the same task input envelope and receipt contract while owning separate implementations. Switching providers requires matching operation semantics, preconditions, and results for the stage; a shared contract alone does not guarantee interchangeability.
 
 ## Task input envelope
 
@@ -50,7 +50,7 @@ The Task Input Envelope adheres to a standardized 7-block schema (`schema_versio
 {
   "schema_version": "1.0",
   "task": { "logical_stage": "...", "step_index": 0, "attempt": 1, "root_issue_id": "...", "current_issue_id": "..." },
-  "provider": { "type": "skill | script", "target": "...", "args": [] },
+  "provider": { "type": "skill | engine", "target": "...", "args": [] },
   "environment": { "working_directory": "...", "repository": "...", "base_branch": "...", "branch": "...", "commit": "..." },
   "inputs": { "objective": "...", "scope": "...", "acceptance_criteria": [], "predecessor_receipts": [], "parameters": {} },
   "contract": { "receipt_path": "...", "receipt_template": "..." },
@@ -63,14 +63,14 @@ This protocol establishes two operational invariants:
 - **Standardized slim prompt standard (~15 lines)**: When dispatching LLM subagents, the prompt contains only the assigned stage name, the absolute envelope path, directory binding instructions, and the compact JSON return requirement. Domain context, acceptance criteria, predecessor receipts, and budget limits are read directly from the envelope file, eliminating prompt drift.
 - **Atomic write and isolation**: Envelopes and state files are written atomically using temporary files, buffer flush, fsync, and atomic replace within `<receipt_root>`. `<receipt_root>` resides outside disposable git worktrees to prevent accidental deletion during branch switches or worktree pruning.
 
-## Skill kernel-wrapper pattern
+## Deterministic steps within skills
 
-Skills bifurcate deterministic mechanical operations from cognitive heuristic reasoning through the Kernel-Wrapper Pattern:
+Deterministic steps within a skill should use scripts in `skills/<skill>/scripts/` wherever practical, separating mechanical operations from work that requires agent judgment:
 
-- **Deterministic kernel (`scripts/`)**: Repetitive, invariant, and programmatic logic—such as Git worktree preparation, repository cleanliness checks, receipt generation, and envelope serialization—is encapsulated as self-contained CLI scripts under `skills/<skill>/scripts/`. The kernel consumes `--input-envelope <path>`, executes deterministically, writes the Markdown receipt, and emits the compact JSON report to standard output.
-- **Cognitive wrapper (`SKILL.md`)**: The skill document serves as a lean cognitive interface for LLM subagents. It instructs the subagent to run the internal kernel script with `--input-envelope`, inspect stdout, and apply domain heuristics or fallback recovery procedures only when non-deterministic judgments or environmental obstacles arise.
+- **Internal scripts (`scripts/`)**: Encapsulate repetitive, deterministic operations within the skill task, such as preparing Git worktrees or checking repository cleanliness. The skill defines their interfaces; not every helper must implement the complete workflow input and receipt contract.
+- **Skill instructions (`SKILL.md`)**: Guide the specialist agent to invoke internal scripts, interpret results, and perform domain judgment and recovery. The skill owns the external stage input and receipt contract.
 
-This pattern provides a single underlying implementation for both execution modes. LLM subagents achieve high leverage by delegating mechanical execution to internal scripts, while future automated runners can invoke the kernel scripts directly without rewriting core logic.
+Regardless of how many internal steps use scripts, the workflow still sees a skill call. Deterministic operations owned by the independent engine form a separate execution pathway; their code lives outside skills, and skill-internal scripts are not directly exposed as engine operations.
 
 ## Unified receipt contract
 
@@ -87,7 +87,7 @@ Every execution provider concludes by fulfilling the Unified Receipt Contract ac
 
 The contract enforces dual reporting:
 
-- **Compact execution report (stdout)**: A machine-parseable JSON object emitted to standard output. `execution_status` is strictly constrained to `"succeeded"`, `"blocked"`, or `"failed"`. Valid professional conclusions (including rework findings or `out_of_scope`) report `"succeeded"`, reserving `"blocked"` for unmet prerequisites and `"failed"` for unrecoverable crashes. The `result` object contains domain-specific routing outcomes.
+- **Compact execution report**: A machine-parseable JSON object returned by the skill agent or, in the future, by the engine operation. `execution_status` is strictly constrained to `"succeeded"`, `"blocked"`, or `"failed"`. Valid professional conclusions (including rework findings or `out_of_scope`) report `"succeeded"`, reserving `"blocked"` for unmet prerequisites and `"failed"` for unrecoverable crashes. The `result` object contains domain-specific routing outcomes.
 - **Durable disk receipt (Markdown)**: A comprehensive Markdown audit record written to `contract.receipt_path` conforming to `subagent-receipt.template.md`. It records complete verification logs, git revisions, modified artifacts, and predecessor receipt links outside disposable checkouts.
 
 The Orchestrator validates all four report fields and verifies physical existence of the receipt file. Any protocol violation, unparseable output, or missing receipt triggers fail-fast halting to the Decision Board without speculative repair.
@@ -110,4 +110,4 @@ its environments. Runtime state preserves assignments, preparation receipts, own
 
 ## Workflow decoupling
 
-Workflows are decoupled from both technical architecture and the core orchestrator engine. Specific execution sequences (such as issue delivery, hotfixes, or refactoring) live in dedicated workflow files under `skills/pc-orchestrator/workflows/`. The orchestrator core provides pure dispatch, receipt validation, and error recovery primitives without hardcoding any specific domain delivery stages.
+Workflow definitions are decoupled from technical architecture and execution providers. Specific execution sequences (such as issue delivery, hotfixes, or refactoring) live in dedicated workflow files under `skills/pc-orchestrator/workflows/`. The Orchestrator owns workflow policy and routing; the future independent engine encapsulates deterministic operations without hardcoding specific domain delivery stages. Keeping workflow files within a skill does not place the engine implementation within that skill.

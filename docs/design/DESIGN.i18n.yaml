@@ -5,23 +5,23 @@
   en: 7ac577d46746b118
   zh: a931b86c8e8dc48a
 /paper-craft-design-decisions/skill-and-execution-boundaries:
-  en: dd8ef6258b813914
-  zh: ffebd59230e9ef9b
+  en: 31f40372918bf56e
+  zh: ba1977b1a97e52ce
 /paper-craft-design-decisions/stage-provider-decoupling:
-  en: dd87da43cccdb017
-  zh: fd7ea8616cb29f6a
+  en: 6f68d1e720d90d0a
+  zh: 58464c4e49fe4e8f
 /paper-craft-design-decisions/task-input-envelope:
   en: 4bef6dc3135f883b
   zh: b62f0dc4a8f5b112
-/paper-craft-design-decisions/skill-kernel-wrapper-pattern:
-  en: bbec6b66430f42f0
-  zh: c8ee3b3608a22b04
+/paper-craft-design-decisions/deterministic-steps-within-skills:
+  en: af77feb69d2eeecf
+  zh: de69068947c3eefd
 /paper-craft-design-decisions/unified-receipt-contract:
-  en: 9f099fe5722c66ee
-  zh: cf4624e0c635dec8
+  en: b9038f49d8a96ed6
+  zh: de8600943fde4ac2
 /paper-craft-design-decisions/workspace-ownership:
   en: e1a2382ad5e44abc
   zh: 962bbd979ff5b8d7
 /paper-craft-design-decisions/workflow-decoupling:
-  en: 75f9336591c04b58
-  zh: a53fb93887564f52
+  en: 7082d03022d234c8
+  zh: 654923c2215f4a4d
