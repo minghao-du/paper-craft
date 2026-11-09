@@ -23,7 +23,7 @@ Record unresolved settings or unavailable skills as pending; skill installation 
 ## 2. Write project policy
 
 Read [templates/compute.md](templates/compute.md) for the execution policy and backend fields to generate in `.paper-craft/compute.md`.
-Preserve its execution boundary while adapting the fields to the selected platforms and project; remove template instructions and unused fields, and replace placeholders with established values or named pending items.
+Preserve its execution boundary, routing rules, and mixed-workload transfer requirements while adapting the fields to the selected platforms and project. Remove template instructions and unused fields, and replace placeholders with established values or named pending items.
 CPU and GPU may share a backend.
 Ask for a GPU model or resource default only when the platform requires it or the user specifies one.
 
@@ -41,7 +41,7 @@ Reconcile existing routing instructions into the canonical policy while retainin
 Report any incompatible project requirement instead of leaving contradictory instructions active.
 If Git ignores either generated file, report that it will not travel with the project; preserve the user's ignore rules.
 
-**Done:** The policy preserves the template's execution boundary and platform execution protocol, contains a definition for every selected backend, and identifies pending items by affected route; `AGENTS.md` has one compute-policy pointer covering every phase and subagent.
+**Done:** The policy preserves the template's execution boundary, routing rules, transfer requirements, and platform execution protocol, contains a definition for every selected backend, and identifies pending items by affected route. `AGENTS.md` has one compute-policy pointer covering every phase and subagent.
 
 ## 3. Verify and report
 
@@ -49,6 +49,7 @@ Check that the pointer resolves, each route resolves to a backend definition or 
 Check that required backend fields are filled, pending items block the affected routes, and no credentials or template placeholders remain.
 Check that every HPC backend's Git choice matches the user's answer and every backend's `Remote workspace` contains a nonempty project path; a missing or pending path leaves configuration incomplete.
 Verify that the policy routes tests and business code remotely even during check and review, permits local lint/typecheck/build only within that boundary, and requires an explicit exception for local execution of tests or business code.
+Verify that the generated policy preserves all template routing cases, including the one-hour boundary, consecutive CPU steps, unavailable CPU-only mode, and local relay when direct backend transfers are unavailable.
 Verify that the generated policy requires all remote operations to follow the selected platform procedure and its required references, prerequisites, fallbacks, and completion criteria; workload execution requires actual target verification, and procedure gaps block the affected operation.
 
 Use the selected platform skill's bounded, noninteractive, read-only connection/authentication checks where available.
