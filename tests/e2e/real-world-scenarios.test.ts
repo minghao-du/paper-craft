@@ -99,7 +99,7 @@ if __name__ == "__main__":
       'init',
       '--receipt-root', rootDir,
       '--root-issue', issueId,
-      '--workflow', 'default',
+      '--workflow', 'three-stage-fixture',
     ]);
     expect(initRes.status).toBe(0);
 

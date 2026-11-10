@@ -577,6 +577,23 @@ fi
             self.assertNotIn("branch.issue-73.", self.git(self.source, "config", "--local", "--list"))
             self.assertEqual(self.git(self.source, "ls-remote", "origin", "refs/heads/issue-73"), "")
 
+    def test_historical_branch_without_worktree_requires_ownership(self):
+        candidate = self.merged_candidate()
+        self.git(self.source, "worktree", "remove", candidate["worktree"])
+        candidate.update(worktree=None, created=False)
+        blocked = self.clean_candidate(candidate)
+        self.assertEqual(blocked["outcome"], "incomplete")
+        self.assertTrue(self.git(self.source, "branch", "--list", "issue-73"))
+        candidate["ownership_evidence"] = {"root_issue_id": "42", "issue": "73", "source": "PR #73"}
+        # Match the root assigned by the fixture envelope.
+        envelope = self.create_envelope_file(self.root / "ownership.json")
+        candidate["ownership_evidence"]["root_issue_id"] = json.loads(envelope.read_text())["task"]["root_issue_id"]
+        cleaned = self.clean_candidate(candidate)
+        self.assertEqual(cleaned["outcome"], "cleaned")
+        self.assertEqual(cleaned["removed_paths"], [])
+        self.assertEqual(self.git(self.source, "branch", "--list", "issue-73"), "")
+        self.assertEqual(self.git(self.source, "ls-remote", "origin", "refs/heads/issue-73"), "")
+
     def test_cleanup_retains_changed_or_unowned_resources(self):
         candidate = self.merged_candidate()
         target = Path(candidate["worktree"])

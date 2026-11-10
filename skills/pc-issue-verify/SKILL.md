@@ -8,10 +8,12 @@ allowed-tools: Bash, Read, Glob, Grep
 
 Authoritative instructions for evaluating the integrated delivery of an issue: verifying combined delivery evidence, scientific research artifacts, and the integrated Git HEAD against the original parent objectives and falsifiable acceptance criteria.
 
+When assigned acceptance-backed issue closure or final reconciliation, follow [the closure contract](references/closure.md) in the retained checkout and return its result instead of rerunning the verification protocol below.
+
 This skill is invoked directly by a human or agent with an issue reference or explicit verification parameters.
 
 > [!IMPORTANT]
-> **Crucial Boundary**: The verifier only evaluates and reports findings. It does NOT schedule repairs, edit code, or dispatch rework tasks itself; all findings return directly to the caller.
+> **Crucial Boundary**: During verification, the verifier evaluates and reports findings. Explicit closure assignments may update issue state and parent tasklists after acceptance. It does NOT schedule repairs, edit code, or dispatch rework tasks itself; all findings return directly to the caller.
 
 ## Working directory
 

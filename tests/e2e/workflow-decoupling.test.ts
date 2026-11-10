@@ -296,8 +296,8 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
     expect(manifest.workflow.name).toBe('default');
     expect(manifest.workflow.version).toBe('1.0.0');
     expect(manifest.workflow.initial_stage).toBe('stage_1_plan');
-    expect(manifest.workflow.stages.length).toBe(11);
-    expect(markdownStages.length).toBe(11);
+    expect(manifest.workflow.stages.length).toBe(12);
+    expect(markdownStages.length).toBe(12);
 
     // Verify 1:1 parity between declarative manifest and detailed markdown sections
     for (let i = 0; i < manifest.workflow.stages.length; i++) {

@@ -21,7 +21,7 @@ This skill can be invoked directly by a human or agent with an ordinary task pro
 ## Task Inputs
 
 1. **Branch & Base branch:** Feature branch name (`branch`) and base branch to merge into (`baseBranch`, defaults to the repository default branch).
-2. **Issue context:** Issue number and references to close on merge (e.g. `Closes #<issue>`).
+2. **Issue context:** Issue number and association references (e.g. `Refs #<issue>`). Issue closure follows acceptance verification.
 3. **Repository & working directory:** Target repository (`repository`, `owner/repo`), absolute `worktree`, feature/base branches, and delivered `commit` SHA. Read these from a supplied predecessor file. Direct invocation may supply them in the task prompt.
 4. **Approved evaluated commit SHA (optional):** Prior evaluated commit SHA if previously reviewed.
 
@@ -91,11 +91,11 @@ When review verdict is **`pass`**:
 Merge using explicit `--match-head-commit` to prevent race conditions:
 
 ```bash
-gh pr merge <PR> --repo "<repository>" --squash --match-head-commit "$LOCAL_HEAD" --body "Closes #<issue>"
+gh pr merge <PR> --repo "<repository>" --squash --match-head-commit "$LOCAL_HEAD" --body "Refs #<issue>"
 ```
 
 - Always use `--match-head-commit`. GitHub atomically rejects the merge if HEAD changed.
-- Include closing issue references so GitHub auto-closes the linked issue.
+- Use association references (`Refs #<issue>`) in the PR and merge body. Replace automatic closing keywords for the assigned issues before merging; acceptance verification owns closure.
 
 ### Step 5: Verify merge completion
 

@@ -136,13 +136,13 @@ If script execution is blocked by environment constraints (e.g., Python unavaila
 
 ## 5. Cleanup Protocol
 
-`--cleanup` authorizes removal of assigned, run-created worktrees and their merged local and remote task branches. Run the same helper with the cleanup envelope from the retained persistent checkout. The kernel also recognizes `task.logical_stage: workspace_cleanup` without the flag.
+`--cleanup` authorizes removal of assigned worktrees and merged local and remote task branches with verified issue-tree ownership. Run the same helper with the cleanup envelope from the retained persistent checkout. The kernel also recognizes `task.logical_stage: workspace_cleanup` without the flag.
 
 ```bash
 python3 <skill-dir>/scripts/prepare-worktree.py --cleanup --input-envelope "<envelope_path>"
 ```
 
-Before execution, reconcile creation receipts with final delivery/verification receipts and durable artifact locations. Confirm all consumers have finished. Supply only this run's explicitly owned candidates in `inputs.parameters.candidates`. Reused or manual environments remain outside automatic cleanup. Each candidate uses the following fields from its preparation result, updated with its final delivered HEAD and PR identity.
+Before execution, reconcile creation receipts with final delivery/verification receipts and durable artifact locations. Confirm all consumers have finished. Supply the reconciled issue-tree inventory in `inputs.parameters.candidates`, including historical resources with verified ownership. For historical candidates, supply `ownership_evidence: { root_issue_id, issue, source }`, where `source` points to the matching PR or durable delivery receipt; verify that issue belongs to the root tree. Use `worktree: null` for branches without worktrees. Supply ambiguous inventory items in `inputs.parameters.unresolved`; never silently omit them. Preserve default/base branches and active resources. Each candidate uses the following fields from its preparation result, updated with its final delivered HEAD and PR identity.
 
 ```json
 {
@@ -165,4 +165,4 @@ The kernel checks registered path, repository, branch and final HEAD, completed 
 
 Delete the remote branch with an exact-SHA lease, remove the worktree without force, then compare-and-delete the local ref at its delivered SHA. Retain changed, active, unmerged, or conflicting resources and report why. Already absent resources permit retry after partial cleanup.
 
-The compact result and durable cleanup receipt contain `removed_paths`, `retained_paths` (path and reason), `removed_branches` (branch, scope, and remote where applicable), and `retained_branches` (branch and reason). Partial progress remains visible in these lists. A safely retained candidate is a successful cleanup conclusion. Invalid cleanup inputs report `blocked`.
+The compact result and durable cleanup receipt contain `removed_paths`, `retained_paths` (path and reason), `removed_branches` (branch, scope, and remote where applicable), and `retained_branches` (branch and reason). Partial progress remains visible in these lists. The result `outcome` is `cleaned` only when both retained lists are empty; otherwise it is `incomplete`. Successful execution with retained resources does not mean workflow completion. Retry outstanding resources after rechecking live state. Invalid cleanup inputs report `blocked`.

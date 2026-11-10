@@ -208,7 +208,7 @@ For each stage defined in the loaded workflow:
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
    - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
    - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
-7. **Completion Gate**: After the workflow's required professional gates succeed, dispatch workspace cleanup and record removed or retained paths with reasons. Conclude with `resolve --decision finish`.
+7. **Completion Gate**: After the workflow's required professional gates succeed, finalize issue closure and reconcile the full issue-tree resource inventory, then dispatch workspace cleanup. Require a successful tree finalization receipt and cleanup with no retained targets before `resolve --decision finish`. Retained targets mean delivery complete / cleanup incomplete; retry only outstanding finalization work.
 
 ---
 

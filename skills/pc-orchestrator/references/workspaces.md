@@ -207,10 +207,9 @@ After required delivery, acceptance, and research recording succeed, execute the
 - **Skill Provider**: `provider: { type: "skill", target: "pc-workspace" }`
 - **Script Provider**: `provider: { type: "script", target: "<workspace-skill-dir>/scripts/prepare-worktree.py", args: ["--cleanup"] }`
 
-The Task Input Envelope supplies `inputs.parameters.candidates` using `pc-workspace` §5, reconciled from this run's creation and final delivery/verification receipts, durable artifact locations, and completed-consumer status.
-Cleanup includes merged local and remote task branches whose refs still match their delivered SHAs. Reused or manual environments require an explicit cleanup request.
-Accept cleanup only with removed and retained paths, branches, and retention reasons in `result`. Recorded retention can complete cleanup
-without deleting unsafe candidates. Failed or interrupted workflows retain their environments for diagnosis.
+The Task Input Envelope supplies `inputs.parameters.candidates` using `pc-workspace` §5, reconciled from the issue-tree inventory and current or historical delivery/verification receipts, durable artifact locations, and completed-consumer status.
+Cleanup includes merged local and remote task branches whose refs still match their delivered SHAs. Historical resources require explicit issue-tree ownership evidence. Supply unresolved inventory items as `inputs.parameters.unresolved`; they block successful cleanup.
+Accept cleanup only with removed and retained paths, branches, and retention reasons in `result`. Recorded retention means cleanup remains incomplete; preserve unsafe candidates and retry only outstanding work. Failed or interrupted workflows retain their environments for diagnosis.
 
 ### State Persistence & Crash Resumption ($O(1)$)
 Persist active environment assignments, preparation status and receipts, creation ownership, and cleanup results in

@@ -699,6 +699,47 @@ def resolve_decision(
                 "'rework_needed', which is not accepted as business pass. Rework must be routed."
             )
 
+    if decision == "finish" and state.get("workflow", "default") == "default":
+        stages = state.get("completed_stages", [])
+        finalizations = [entry for entry in stages if entry.get("stage") == "issue_finalize"
+                         and entry.get("execution_status") == "succeeded"
+                         and entry.get("result", {}).get("scope") == "tree"]
+        closure = finalizations[-1] if finalizations else {}
+        evidence = closure.get("result", {})
+        issues = evidence.get("issues", [])
+        root = str(state["root_issue_id"])
+        if (evidence.get("outcome") != "finalized" or str(evidence.get("root_issue_id")) != root
+                or not isinstance(issues, list) or not issues
+                or not all(isinstance(issue, dict) and issue.get("state") == "CLOSED"
+                           and issue.get("repository") and issue.get("acceptance_receipt") for issue in issues)
+                or not any(str(issue.get("number")) == root for issue in issues)):
+            raise RuntimeError("Cannot finish workflow: verified issue-tree closure evidence is missing.")
+        latest = stages[-1] if stages else {}
+        result = latest.get("result", {})
+        if (latest.get("stage") != "workspace_cleanup" or latest.get("execution_status") != "succeeded"
+                or result.get("outcome") != "cleaned" or result.get("retained_paths") != []
+                or result.get("retained_branches") != [] or evidence.get("unresolved") != []
+                or latest.get("step_index", -1) <= closure.get("step_index", -1)):
+            raise RuntimeError("Cannot finish workflow: delivery complete / cleanup incomplete.")
+        candidates = evidence.get("candidates")
+        if not isinstance(candidates, list):
+            raise RuntimeError("Cannot finish workflow: reconciled cleanup inventory is missing.")
+        cleanup_results = [entry.get("result", {}) for entry in stages[stages.index(closure) + 1:]
+                           if entry.get("stage") == "workspace_cleanup" and entry.get("execution_status") == "succeeded"]
+        paths = {path for item in cleanup_results for path in item.get("removed_paths", [])}
+        branches = {(item.get("branch"), item.get("scope"), item.get("remote"))
+                    for report in cleanup_results for item in report.get("removed_branches", [])}
+        for candidate in candidates:
+            branch = candidate.get("branch")
+            if ((candidate.get("worktree") and candidate["worktree"] not in paths)
+                    or (branch and ((branch, "local", None) not in branches
+                                    or (branch, "remote", candidate.get("push_remote")) not in branches))):
+                raise RuntimeError("Cannot finish workflow: reconciled resource lacks cleanup evidence.")
+        # Any delivery or verification after closure invalidates the final reconciliation.
+        if any(entry.get("stage") != "workspace_cleanup"
+               for entry in stages[stages.index(closure) + 1:]):
+            raise RuntimeError("Cannot finish workflow: repeat issue finalization after intervening work.")
+
     now = datetime.now(timezone.utc).isoformat()
     record = {
         "decision": decision,

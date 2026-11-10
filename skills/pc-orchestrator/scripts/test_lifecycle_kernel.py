@@ -511,6 +511,37 @@ class TestLifecycleKernel(unittest.TestCase):
         c2_res = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep2))
         self.assertEqual(c2_res.returncode, 0, c2_res.stderr)
 
+        # An implementation receipt cannot bypass issue closure or cleanup.
+        premature = self.run_cli("resolve", "--receipt-root", str(self.receipt_root),
+                                 "--decision", "finish", "--reason", "Premature")
+        self.assertNotEqual(premature.returncode, 0)
+        self.assertIn("closure evidence", premature.stderr)
+        results = [
+            ("issue_finalize", {"outcome": "finalized", "scope": "tree", "root_issue_id": "41",
+                                "issues": [{"repository": "test/repo", "number": 41, "state": "CLOSED",
+                                            "acceptance_receipt": str(receipt_2)}], "unresolved": [], "candidates": []}),
+            ("workspace_cleanup", {"outcome": "incomplete", "retained_paths": [],
+                                   "retained_branches": [{"branch": "issue-41", "reason": "New commit"}]}),
+            ("workspace_cleanup", {"outcome": "cleaned", "retained_paths": [], "retained_branches": []}),
+        ]
+        for stage, result in results:
+            prepared = self.prepare({"stage": stage, "objective": "Finalize accepted delivery",
+                                     "provider": {"type": "skill", "target": "pc-workspace"}})
+            self.assertEqual(prepared.returncode, 0, prepared.stderr)
+            dispatch = json.loads(prepared.stdout)
+            self.run_cli("handoff", "--receipt-root", str(self.receipt_root),
+                         "--dispatch-id", dispatch["dispatch_id"])
+            Path(dispatch["receipt_path"]).write_text("# Finalization evidence\n")
+            completed = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report",
+                                    json.dumps({"execution_status": "succeeded", "result": result,
+                                                "receipt_path": dispatch["receipt_path"], "summary": "Read back state"}))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            if result["outcome"] != "cleaned":
+                blocked = self.run_cli("resolve", "--receipt-root", str(self.receipt_root),
+                                       "--decision", "finish", "--reason", "Cleanup pending")
+                self.assertNotEqual(blocked.returncode, 0)
+                self.assertIn("cleanup incomplete", blocked.stderr)
+
         # 10. resolve finish
         r_res = self.run_cli(
             "resolve",
@@ -525,7 +556,7 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(i_res.returncode, 0, i_res.stderr)
         final_info = json.loads(i_res.stdout)
         self.assertIsNone(final_info["active_dispatch"])
-        self.assertEqual(final_info["completed_stages_count"], 2)
+        self.assertEqual(final_info["completed_stages_count"], 5)
         self.assertEqual(final_info["stage_status"], "succeeded")
         self.assertEqual(final_info["budgets"]["delivery_attempts_used"], 1)
         self.assertEqual(final_info["blocking_reasons"], [])

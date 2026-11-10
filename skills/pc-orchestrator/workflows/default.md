@@ -91,6 +91,14 @@ workflow:
         target: pc-research-state
         args: []
 
+    - id: issue_finalize
+      logical_task: issue_finalize
+      name: "Issue Closure and Scope Reconciliation"
+      provider:
+        type: skill
+        target: pc-issue-verify
+        args: []
+
     - id: workspace_cleanup
       logical_task: workspace_cleanup
       name: "Workspace Lifecycle Cleanup"
@@ -125,9 +133,10 @@ Environment preparation and cleanup are defined as decoupled logical tasks (`wor
 | `pipeline_refactor_execute` | Fresh refactor feature worktree | Prepared branch/worktree from current integrated base |
 | `pipeline_refactor_redeliver` | Same refactor worktree | Retain refactor worktree with latest delivered SHA |
 | `research_record` | Validated persistent checkout | Persistent checkout plus fixed shared research entry |
-| `workspace_cleanup` | Retained persistent checkout | Candidate worktrees from current run |
+| `issue_finalize` | Retained persistent checkout | Accepted verification and research receipts |
+| `workspace_cleanup` | Retained persistent checkout | Reconciled issue-tree resources, including evidenced historical resources |
 
-Carry explicit artifact locations into verification and research recording. After all professional stages succeed, dispatch `workspace_cleanup` for this run's eligible created environments and record retention reasons before declaring root completion.
+Carry explicit artifact locations into verification and research recording. After all professional stages succeed, dispatch `issue_finalize`, then `workspace_cleanup`. Finish only after verified issue closure and zero retained cleanup targets.
 
 ---
 
@@ -208,10 +217,10 @@ Deliver the `current_issue_id` through an implementation and landing loop.
   ```
 - **Objective**: Review, verify pre-merge checks, and land (merge) the implementation changes.
 - **Environment**: Same feature worktree with verified worktree and latest delivered SHA.
-- **Inputs**: Implementation receipt with verified worktree and SHA. For a child, include the parent issue and tasklist entry; assign the landing provider to mark that entry complete after verified landing and read it back, preserving other entries.
-- **Expected Result**: Native `result.outcome`, `merged`, and, for `landed`, `mergedCommit`. The provider validates and uses predecessor worktree and SHA, and records parent-tasklist synchronization evidence for child delivery.
+- **Inputs**: Implementation receipt with verified worktree and SHA. Pass issue association references without automatic closing keywords. Parent tasklists are updated after acceptance, not landing.
+- **Expected Result**: Native `result.outcome`, `merged`, and, for `landed`, `mergedCommit`. The provider validates and uses predecessor worktree and SHA.
 - **Routing**:
-  - `landed` with verified merge evidence: Delivery accepted. Record completion for `current_issue_id` and the provider's parent-tasklist synchronization evidence. If children remain, select the next child whose `blockedBy` prerequisites have accepted delivery evidence and repeat `stage_2_work`, passing predecessor receipts. If none is ready, report the dependency blocker. Once all child issues (or the direct root issue) are delivered, transition to `stage_3_verify` with the root objective and all delivery receipts.
+  - `landed` with verified merge evidence: Record merge evidence. For a child, dispatch `issue_verify` on the integrated commit for its own criteria. Only after `verified`, dispatch `issue_finalize` for that child and synchronize its parent tasklist. For a direct root, defer closure until Stage 6. Failed child acceptance routes repairs and reopens any prematurely closed issue. If children remain, select the next child whose `blockedBy` prerequisites have accepted delivery evidence and repeat `stage_2_work`, passing predecessor receipts. If none is ready, report the dependency blocker. Once all child issues (or the direct root issue) are delivered, transition to `stage_3_verify` with the root objective and all delivery receipts.
   - `rework_needed`: Routes to a fresh `stage_2_work` execution with the landing receipt. It reads findings, reconciles the recorded environment and SHA, and writes a new receipt. Pass that receipt to a fresh `stage_2_land` execution. Maximum of 3 delivery attempts per issue, including the initial attempt.
   - `blocked`: Execution status `blocked` when prerequisites prevent landing; halt to Blocker Decision Board.
 
@@ -238,7 +247,7 @@ Accept delivery only for `landed` with verified merge evidence.
 - **Expected Result**: Native `result.outcome` and `evaluatedHead`.
 - **Routing**:
   - `verified`: Every original parent acceptance criterion has passing evidence for that integrated HEAD; transition to `stage_4_refactor_audit`. Missing evidence or unmet criteria keep parent acceptance incomplete, even when all children are closed.
-  - `rework_needed`: Routes targeted repairs to `stage_2_work`, followed by another integrated verification. For gaps discovered after merge, assign a fresh repair branch and worktree based on the current base branch, retaining the original issue and delivery-attempt count. Dispatch `workspace_prepare` first, then supply the accepted environment assignment to the worker. Use the merged predecessor for findings and historical evidence. Create repair environment from current base branch. Keep issue delivery-attempt budget across repairs.
+  - `rework_needed`: Dispatch acceptance-backed reconciliation to reopen any prematurely closed failing root or child issue and read back its state. Routes targeted repairs to `stage_2_work`, followed by another integrated verification. For gaps discovered after merge, assign a fresh repair branch and worktree based on the current base branch, retaining the original issue and delivery-attempt count. Dispatch `workspace_prepare` first, then supply the accepted environment assignment to the worker. Use the merged predecessor for findings and historical evidence. Create repair environment from current base branch. Keep issue delivery-attempt budget across repairs.
 
 ---
 
@@ -305,7 +314,7 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Expected Result**: Native `result.outcome` of `landed` with `mergedCommit`.
 - **Routing**:
   - Apply Stage 2 landing gates and rework limit (max 3 delivery attempts). Use a fresh refactor specialist for structural repairs. Logic changes require replanning.
-  - `landed`: Transition to `stage_6_research_record`.
+  - `landed`: Reverify the root criteria against the new integrated HEAD before transitioning to `stage_6_research_record`.
 
 ---
 
@@ -325,8 +334,28 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Inputs**: Completed delivery and verification receipts, validated persistent checkout, fixed shared research entry, and durable artifact locations.
 - **Expected Result**: Updated record paths and pending decisions in `result`.
 - **Routing**:
-  - All gates satisfied: Dispatch `workspace_cleanup` for eligible created environments, record removed and retained paths with reasons, then declare root issue completion.
+  - All gates satisfied: Dispatch `issue_finalize` for the root and all descendants, then `workspace_cleanup` with its reconciled resource inventory.
   - Unresolved decisions affecting required acceptance: Return to planning or human steering.
+
+---
+
+## Auxiliary Stage — Issue Finalization (`issue_finalize`)
+
+- **Stage ID**: `issue_finalize`
+- **Logical Task**: `issue_finalize`
+- **Default Provider**:
+  ```yaml
+  provider:
+    type: skill
+    target: pc-issue-verify
+    args: []
+  ```
+- **Objective**: Execute the acceptance-backed closure task in its [closure contract](../../pc-issue-verify/references/closure.md).
+- **Environment**: Retained persistent checkout, with durable acceptance and research receipts.
+- **Inputs**: Root issue, current closure target, accepted integrated SHA, acceptance receipts and historical delivery records. For root finalization, include completed research recording.
+- **Gate**: Descendants close bottom-up after their own acceptance; root closes only after integrated acceptance and research recording. Reopen prematurely closed issues when their acceptance fails.
+- **Result**: `outcome: finalized`, `root_issue_id`, `scope: tree` for final root reconciliation (or `scope: issue` for child closure), nonempty `issues` containing repository, number, observed `state: CLOSED` and acceptance receipt, plus reconciled cleanup candidates and unresolved ownership items. Missing evidence or unresolved issue state blocks finalization.
+- **Routing**: Child finalization returns to the delivery loop. Root finalization proceeds to cleanup. Retry only unfinished closure/reconciliation operations, reading live states first.
 
 ---
 
@@ -342,11 +371,11 @@ Organize touched pipeline files under scientific invariance with a human steerin
     args: ["--cleanup"]
   ```
   *(Alternative script provider: `type: script`, `target: <workspace-skill-dir>/scripts/prepare-worktree.py`, `args: ["--cleanup"]`)*
-- **Objective**: Remove eligible worktrees and merged local and remote task branches created during this run, retaining changed or still-used resources with reasons.
-- **Inputs**: Supply `inputs.parameters.candidates` using the cleanup candidate contract in `pc-workspace` §5. Reconcile this run’s creation receipts with final SHAs, PR identities, delivery/verification receipts, durable artifact locations, and completed-consumer status. Carry the recorded delivery target, base remote, and push remote for each branch.
-- **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { removed_paths: [...], retained_paths: [...], removed_branches: [...], retained_branches: [...] }, receipt_path, summary }`.
+- **Objective**: Remove eligible worktrees and merged local and remote task branches belonging to the root issue tree, including evidenced historical resources; retain changed or still-used resources with reasons.
+- **Inputs**: Supply `inputs.parameters.candidates` using the cleanup candidate contract in `pc-workspace` §5. Reconcile the finalization inventory and historical ownership evidence with final SHAs, PR identities, delivery/verification receipts, durable artifact locations, and completed-consumer status. Carry the recorded delivery target, base remote, and push remote for each branch, and forward unresolved inventory items in `inputs.parameters.unresolved`.
+- **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { outcome: "cleaned" | "incomplete", removed_paths: [...], retained_paths: [...], removed_branches: [...], retained_branches: [...] }, receipt_path, summary }`.
 - **Routing**:
-  - Conclude workflow run and declare root issue completed.
+  - Finish only when `result.outcome` is `cleaned` and both retained lists are empty, with a preceding successful root `issue_finalize` receipt. Otherwise report delivery complete / cleanup incomplete and retry outstanding resources after rechecking live state. Preserve closed issues and accepted delivery; do not repeat implementation or merges.
 
 ---
 

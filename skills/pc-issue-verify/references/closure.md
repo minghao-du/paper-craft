@@ -1,0 +1,11 @@
+# Acceptance-backed issue closure
+
+When assigned issue finalization, use the supplied accepted verification receipts; rerun acceptance only if the integrated revision or requirements changed. Missing or failed acceptance blocks closure. If an issue was closed before failed acceptance, reopen it and read back its state.
+
+For a root finalization, enumerate the root and all descendants from GitHub native sub-issue relationships with pagination. Reconcile parent tasklists and planning/delivery records; resolve discrepancies rather than silently dropping issues. Include closed descendants. A child-only assignment closes only its accepted subtree. Close bottom-up after each issue's own criteria pass; parent acceptance additionally requires all descendants accepted and integrated verification. Root closure also requires research recording complete.
+
+Use explicit repository-qualified issue operations. Read current state, close accepted open issues as completed, then read back state and reason. Update only the corresponding parent tasklist entry and verify it. Already closed accepted issues are idempotent; a not-planned closure does not substitute for acceptance. Record observed repository, number, state and acceptance receipt for every issue.
+
+Reconcile associated PRs and delivery receipts, including previous runs, into the workspace cleanup candidate contract. Inspect local and remote refs and worktree registrations. Branch names alone do not establish ownership. Preserve default/base branches and resources still used by another task; report ambiguous associations as unresolved cleanup targets. Historical ownership evidence must identify an issue in the enumerated tree and a matching PR or durable delivery receipt. Branch-only resources use `worktree: null`. Include all discovered targets, even unsafe ones, so they cannot disappear from the completion report.
+
+Return `outcome: finalized` only after live issue readback confirms the full assigned scope closed with passing acceptance evidence. Include `root_issue_id`, `scope` (`tree` or `issue`), `issues`, `candidates`, and `unresolved` with reasons. Preserve this inventory outside disposable worktrees. Cleanup failures do not reopen accepted issues. On retry, reconcile live state and process only outstanding operations.

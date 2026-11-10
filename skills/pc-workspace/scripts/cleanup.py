@@ -15,20 +15,29 @@ def cleanup(args, envelope, git, run):
         raise ValueError("Each cleanup candidate must be an object.")
     source = Path(git(args.repo_dir, "rev-parse", "--show-toplevel")).resolve()
     result = dict(removed_paths=[], retained_paths=[], removed_branches=[], retained_branches=[])
+    unresolved = parameters.get("unresolved", [])
+    if not isinstance(unresolved, list):
+        raise ValueError("Unresolved cleanup inventory must be a list.")
+    result["retained_branches"].extend({"branch": None, "reason": str(item)} for item in unresolved)
     receipt = Path(args.receipt_path).resolve() if args.receipt_path else None
     common = git(source, "rev-parse", "--path-format=absolute", "--git-common-dir")
     for candidate in candidates:
         path = candidate.get("worktree", "")
         branch = candidate.get("branch")
         try:
-            target = Path(path).expanduser().resolve()
-            if not path or not Path(path).is_absolute():
+            target = Path(path).expanduser().resolve() if path else None
+            if path and not Path(path).is_absolute():
                 raise ValueError("Candidate requires an absolute worktree path.")
-            if candidate.get("created") is not True or candidate.get("consumers_finished") is not True:
-                raise ValueError("Creation ownership and completed consumers must be confirmed.")
-            if target == source or target in source.parents:
+            ownership = candidate.get("ownership_evidence")
+            historical = (isinstance(ownership, dict) and ownership.get("issue")
+                          and ownership.get("source") and ownership.get("root_issue_id") == envelope.get("task", {}).get("root_issue_id"))
+            if (candidate.get("created") is not True and not historical) or candidate.get("consumers_finished") is not True:
+                raise ValueError("Creation ownership or issue-tree evidence and completed consumers must be confirmed.")
+            if target is None and not branch:
+                raise ValueError("Branch-only cleanup requires a branch.")
+            if target and (target == source or target in source.parents):
                 raise ValueError("Candidate contains the retained checkout.")
-            if receipt and (receipt == target or target in receipt.parents):
+            if target and receipt and (receipt == target or target in receipt.parents):
                 raise ValueError("Cleanup receipt must be outside the candidate.")
             commit = candidate.get("commit", "")
             if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", commit):
@@ -51,7 +60,7 @@ def cleanup(args, envelope, git, run):
                     raise ValueError("Candidate belongs to a different repository.")
                 if git(target, "status", "--porcelain", "--untracked-files=all", "--ignored"):
                     raise ValueError("Candidate contains tracked, untracked, or ignored material.")
-            elif target.exists():
+            elif target and target.exists():
                 raise ValueError("Candidate directory is unregistered.")
 
             if branch:
@@ -78,14 +87,17 @@ def cleanup(args, envelope, git, run):
                     raise ValueError("PR merge commit is missing.")
                 base_remote = candidate["base_remote"]
                 base_url = git(source, "remote", "get-url", base_remote)
-                base_repo = json.loads(run("gh", "repo", "view", base_url, "--json", "nameWithOwner", cwd=source))
+                base_repo = json.loads(run("gh", "repo", "view", base_url, "--json", "nameWithOwner,defaultBranchRef", cwd=source))
                 if base_repo.get("nameWithOwner", "").lower() != repository.lower():
                     raise ValueError("Base remote differs from the delivery repository.")
                 git(source, "fetch", base_remote, f"+refs/heads/{base}:refs/remotes/{base_remote}/{base}")
                 git(source, "merge-base", "--is-ancestor", merged, f"refs/remotes/{base_remote}/{base}")
                 remote = candidate["push_remote"]
                 remote_url = git(source, "remote", "get-url", remote)
-                remote_repo = json.loads(run("gh", "repo", "view", remote_url, "--json", "nameWithOwner", cwd=source))
+                remote_repo = json.loads(run("gh", "repo", "view", remote_url, "--json", "nameWithOwner,defaultBranchRef", cwd=source))
+                if branch in {(base_repo.get("defaultBranchRef") or {}).get("name"),
+                               (remote_repo.get("defaultBranchRef") or {}).get("name")}:
+                    raise ValueError("Default branch must be retained.")
                 head_repo = pr.get("headRepository") or {}
                 head_owner = pr.get("headRepositoryOwner") or {}
                 expected_repo = f"{head_owner.get('login', '')}/{head_repo.get('name', '')}"
@@ -104,7 +116,8 @@ def cleanup(args, envelope, git, run):
                 if git(target, "rev-parse", "HEAD") != commit or git(target, "status", "--porcelain", "--untracked-files=all", "--ignored"):
                     raise ValueError("Worktree changed during cleanup.")
                 git(source, "worktree", "remove", str(target))
-            result["removed_paths"].append(str(target))
+            if target:
+                result["removed_paths"].append(str(target))
             if branch:
                 # Compare-and-delete also handles squash merges without ancestry heuristics.
                 registrations = git(source, "worktree", "list", "--porcelain", "-z")
@@ -118,8 +131,9 @@ def cleanup(args, envelope, git, run):
                 result["removed_branches"].append(dict(branch=branch, scope="local"))
         except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
             reason = str(error)
-            if str(path) not in result["removed_paths"]:
+            if (path or not branch) and str(path) not in result["removed_paths"]:
                 result["retained_paths"].append(dict(path=path, reason=reason))
             if branch:
                 result["retained_branches"].append(dict(branch=branch, reason=reason))
+    result["outcome"] = "incomplete" if result["retained_paths"] or result["retained_branches"] else "cleaned"
     return result
