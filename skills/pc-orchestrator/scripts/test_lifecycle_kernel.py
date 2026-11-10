@@ -1398,6 +1398,25 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertNotEqual(res_self.returncode, 0)
         self.assertIn("itself", res_self.stderr.lower())
 
+        # Unknown dependency: 101 depends on 999 which is not in the plan
+        rep_unknown = {
+            "execution_status": "succeeded",
+            "result": {
+                "outcome": "decomposed",
+                "plan": {
+                    "tasks": [
+                        {"number": 101, "blockedBy": [999]},
+                        {"number": 102, "blockedBy": []},
+                    ],
+                },
+            },
+            "receipt_path": p1["receipt_path"],
+            "summary": "Invalid plan",
+        }
+        res_unknown = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_unknown))
+        self.assertNotEqual(res_unknown.returncode, 0)
+        self.assertIn("unknown issue", res_unknown.stderr.lower())
+
     def test_retry_under_independent_budget_failure_stays_on_issue_and_exhaustion_blocks(self):
         # 1. Initialize with 2 child issues: 101, 102; delivery-attempts-max = 2
         self.run_cli(
@@ -1704,6 +1723,150 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertNotEqual(res_replan3.returncode, 0)
         self.assertIn("budget exceeded", res_replan3.stderr.lower())
         self.assertIn("replan", res_replan3.stderr.lower())
+
+    def test_init_with_plan_file_path(self):
+        plan_file = self.receipt_root / "plan-snapshot.json"
+        plan_file.write_text(json.dumps({
+            "tasks": [
+                {"number": 201, "blockedBy": []},
+                {"number": 202, "blockedBy": [201]},
+            ],
+        }), encoding="utf-8")
+        res = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "44",
+            "--plan", str(plan_file),
+        )
+        self.assertEqual(res.returncode, 0)
+        state = json.loads(res.stdout)
+        self.assertIn("delivery_sequence", state)
+        self.assertEqual(state["current_issue_id"], "201")
+        self.assertEqual(state["current_stage"], "stage_2_work")
+        items = state["delivery_sequence"]["items"]
+        self.assertEqual([it["issue_id"] for it in items], ["201", "202"])
+
+    def test_targeted_rework_during_delivery_resumes_pending_child_issue(self):
+        # 1. Initialize with 2 child issues: 101, 102; delivery-attempts-max = 3
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "44",
+            "--child-issue", "101",
+            "--child-issue", "102",
+            "--delivery-attempts-max", "3",
+        )
+
+        # Work 101 succeeds
+        p_w101 = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Work 101",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_w101["receipt_path"]).write_text("# Work 101", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "implemented", "commit": "c101"},
+            "receipt_path": p_w101["receipt_path"],
+            "summary": "Implemented 101",
+        }))
+
+        # Land 101 fails with rework_needed
+        p_l101 = json.loads(self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land 101",
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        }).stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_l101["receipt_path"]).write_text("# Land 101 review requested fixes", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed"},
+            "receipt_path": p_l101["receipt_path"],
+            "summary": "Needs rework before landing",
+        }))
+
+        # 2. Targeted rework on 101
+        p_rw_w = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Rework 101",
+            "rework_issue": "101",
+            "attempt_intent": "new",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.assertEqual(p_rw_w["attempt"], 2)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_rw_w["receipt_path"]).write_text("# Rework 101", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "implemented", "commit": "c101-rw"},
+            "receipt_path": p_rw_w["receipt_path"],
+            "summary": "Reworked 101",
+        }))
+
+        # Land rework for 101 succeeds
+        p_rw_l = json.loads(self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land rework 101",
+            "rework_issue": "101",
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        }).stdout)
+        self.assertEqual(p_rw_l["attempt"], 2)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_rw_l["receipt_path"]).write_text("# Land rework 101", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "landed", "mergedCommit": "m101-rw"},
+            "receipt_path": p_rw_l["receipt_path"],
+            "summary": "Landed rework 101",
+        }))
+
+        # Inspect state: subsequent issue 102 is still pending! Sequence is NOT completed.
+        insp = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        del_seq = insp["delivery_sequence"]
+        self.assertIsNone(del_seq.get("active_rework_issue_id"))
+        self.assertFalse(del_seq["completed"])
+        self.assertEqual(del_seq["current_index"], 1)
+        self.assertEqual(insp["current_issue_id"], "102")
+        self.assertEqual(insp["current_stage"], "stage_2_work")
+
+        # Now deliver remaining issue 102
+        p_w102 = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Work 102",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.assertEqual(p_w102["attempt"], 1)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_w102["receipt_path"]).write_text("# Work 102", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "implemented", "commit": "c102"},
+            "receipt_path": p_w102["receipt_path"],
+            "summary": "Implemented 102",
+        }))
+
+        p_l102 = json.loads(self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land 102",
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        }).stdout)
+        self.assertEqual(p_l102["attempt"], 1)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_l102["receipt_path"]).write_text("# Land 102", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "landed", "mergedCommit": "m102"},
+            "receipt_path": p_l102["receipt_path"],
+            "summary": "Landed 102",
+        }))
+
+        # Now all child issues are delivered! Sequence is completed, routes to stage_3_verify
+        insp_done = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertTrue(insp_done["delivery_sequence"]["completed"])
+        self.assertEqual(insp_done["current_issue_id"], "44")
+        self.assertEqual(insp_done["current_stage"], "stage_3_verify")
 
 
 
