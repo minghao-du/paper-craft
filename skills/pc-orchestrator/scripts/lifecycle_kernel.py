@@ -569,13 +569,13 @@ def init_workflow(
         resolved_current_stage = "stage_1_plan"
 
     delivery_sequence: Optional[Dict[str, Any]] = None
-    dam = resolved_config["delivery_attempts_max"]
-    rm = resolved_config["replans_max"]
+    delivery_attempts_max = resolved_config["delivery_attempts_max"]
+    replans_max = resolved_config["replans_max"]
     if child_ids:
-        delivery_sequence = _make_delivery_sequence(child_ids, dam)
+        delivery_sequence = _make_delivery_sequence(child_ids, delivery_attempts_max)
     elif initial_stage in ("stage_2_work", "issue_work") or (current_issue and str(current_issue) != str(root_issue)):
         curr = str(current_issue or root_issue)
-        delivery_sequence = _make_delivery_sequence([curr], dam)
+        delivery_sequence = _make_delivery_sequence([curr], delivery_attempts_max)
 
     state = {
         "schema_version": "1.0",
@@ -584,7 +584,6 @@ def init_workflow(
         "workflow": snapshot_name,
         "workflow_snapshot": workflow_snapshot,
         "current_stage": resolved_current_stage,
-        "current_stage": resolved_current_stage,
         "stage_status": "pending",
         "next_step_index": 1,
         "active_dispatch": None,
@@ -592,9 +591,9 @@ def init_workflow(
         "decisions": [],
         "budgets": {
             "delivery_attempts_used": 0,
-            "delivery_attempts_max": dam,
+            "delivery_attempts_max": delivery_attempts_max,
             "replans_used": 0,
-            "replans_max": rm,
+            "replans_max": replans_max,
         },
         "context": context,
         "config_snapshot": resolved_config,
@@ -694,7 +693,7 @@ def prepare_task(
     is_replan = stage_def.get("replan", False) or stage == "scope_replan"
 
     resolved_predecessors = list(predecessor_receipts or [])
-    receipts_dir = (receipt_root_path / "receipts").resolve()
+    receipt_root_resolved = receipt_root_path.resolve()
     for p_str in resolved_predecessors:
         if not isinstance(p_str, str) or not p_str.strip():
             raise ValueError("Predecessor receipt path must be a non-empty string.")
@@ -704,7 +703,7 @@ def prepare_task(
         if p.stat().st_size == 0:
             raise ValueError(f"Predecessor receipt at {p} is empty.")
         try:
-            p.relative_to(receipts_dir)
+            p.relative_to(receipt_root_resolved)
             is_internal = True
         except ValueError:
             is_internal = False
@@ -926,23 +925,23 @@ def prepare_task(
     envelope_filename = f"{step_index:02d}-input.json"
     envelope_path = receipt_root_path / envelope_filename
 
-    # Resolve environment and parameters from config_snapshot (falling back to context)
+    # Resolve environment and parameters from config_snapshot directly without guesswork fallbacks
     repo = (
         config_snapshot.get("delivery_target")
         or context.get("delivery_target")
-        or context.get("repository", "local/repo")
+        or context.get("repository")
     )
     base_branch = (
         config_snapshot.get("base_branch")
-        or context.get("base_branch", "main")
+        or context.get("base_branch")
     )
     base_remote = (
         config_snapshot.get("base_remote")
-        or context.get("base_remote", "origin")
+        or context.get("base_remote")
     )
     push_remote = (
         config_snapshot.get("push_remote")
-        or context.get("push_remote", "origin")
+        or context.get("push_remote")
     )
     worktree_container = (
         config_snapshot.get("worktree_container")
@@ -953,7 +952,7 @@ def prepare_task(
     params.update(stage_def.get("configs", {}))
     if parameters:
         params.update(parameters)
-    if "delivery_target" not in params and repo != "local/repo":
+    if "delivery_target" not in params and repo:
         params["delivery_target"] = repo
     if "base_remote" not in params and base_remote:
         params["base_remote"] = base_remote
@@ -1687,8 +1686,8 @@ def main() -> None:
     p_res.add_argument("--decision", required=True, help="Orchestrator decision (wait_user, continue, halt, finish, or next stage name).")
     p_res.add_argument("--reason", required=True, help="Reason for decision.")
     p_res.add_argument("--option", dest="options", action="append", default=[], help="Options presented (for Decision Board).")
-    p_res.add_argument("--next-stage", "--stage", dest="next_stage", help="Next logical stage name to advance to.")
-    p_res.add_argument("--current-issue", "--issue-id", dest="current_issue", help="Current issue ID to advance delivery sequence.")
+    p_res.add_argument("--next-stage", dest="next_stage", help="Next logical stage name to advance to.")
+    p_res.add_argument("--current-issue", dest="current_issue", help="Current issue ID to advance delivery sequence.")
     p_res.add_argument("--plan", help="JSON string or file path containing plan snapshot to register child issues.")
     p_res.add_argument("--child-issue", dest="child_issues", action="append", default=[], help="Child issue number in planned order.")
     p_res.add_argument("--mark-landed", help="Issue ID to mark as landed in delivery sequence.")

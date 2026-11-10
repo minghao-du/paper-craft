@@ -215,12 +215,12 @@ def validate_workspace_config(
         if not isinstance(dwf, str) or not dwf.strip():
             errors.append("Field 'default_workflow' must be a non-empty string")
     if "delivery_attempts_max" in data:
-        dam = data.get("delivery_attempts_max")
-        if not isinstance(dam, int) or isinstance(dam, bool) or dam < 0:
+        delivery_attempts_max = data.get("delivery_attempts_max")
+        if not isinstance(delivery_attempts_max, int) or isinstance(delivery_attempts_max, bool) or delivery_attempts_max < 0:
             errors.append("Field 'delivery_attempts_max' must be an integer >= 0")
     if "replans_max" in data:
-        rm = data.get("replans_max")
-        if not isinstance(rm, int) or isinstance(rm, bool) or rm < 0:
+        replans_max = data.get("replans_max")
+        if not isinstance(replans_max, int) or isinstance(replans_max, bool) or replans_max < 0:
             errors.append("Field 'replans_max' must be an integer >= 0")
 
     # 4. Check git remotes if repo_root provided and valid git repo
@@ -379,15 +379,15 @@ def resolve_workspace_config(
         config_data.get("workflow") or config_data.get("default_workflow") or DEFAULT_WORKFLOW
     )
 
-    explicit_dam = overrides.get("delivery_attempts_max")
-    if explicit_dam is not None:
-        delivery_attempts_max = int(explicit_dam)
+    explicit_delivery_attempts_max = overrides.get("delivery_attempts_max")
+    if explicit_delivery_attempts_max is not None:
+        delivery_attempts_max = int(explicit_delivery_attempts_max)
     else:
         delivery_attempts_max = int(config_data.get("delivery_attempts_max", DEFAULT_DELIVERY_ATTEMPTS_MAX))
 
-    explicit_rm = overrides.get("replans_max")
-    if explicit_rm is not None:
-        replans_max = int(explicit_rm)
+    explicit_replans_max = overrides.get("replans_max")
+    if explicit_replans_max is not None:
+        replans_max = int(explicit_replans_max)
     else:
         replans_max = int(config_data.get("replans_max", DEFAULT_REPLANS_MAX))
 

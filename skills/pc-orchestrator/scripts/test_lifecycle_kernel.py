@@ -2346,6 +2346,44 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertNotEqual(res_bad.returncode, 0)
         self.assertFalse((receipt_root / "state.json").exists())
 
+        # Invalid schema in config
+        schema_dir = Path(self.temp_dir.name) / "bad-schema-dir"
+        schema_cfg_dir = schema_dir / ".paper-craft"
+        schema_cfg_dir.mkdir(parents=True)
+        (schema_cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "delivery_attempts_max": -1,  # Invalid
+        }), encoding="utf-8")
+
+        res_schema = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(schema_dir),
+        )
+        self.assertNotEqual(res_schema.returncode, 0)
+        self.assertIn("delivery_attempts_max", res_schema.stderr)
+        self.assertFalse((receipt_root / "state.json").exists())
+
+        # Git repo with no remotes and no config fails without guessing main or local/repo
+        no_remote_repo = Path(self.temp_dir.name) / "no-remote-repo"
+        no_remote_repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=no_remote_repo, check=True, capture_output=True)
+        res_no_remote = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(no_remote_repo),
+        )
+        self.assertNotEqual(res_no_remote.returncode, 0)
+        self.assertIn("Cannot determine base_remote", res_no_remote.stderr)
+        self.assertFalse((receipt_root / "state.json").exists())
+
     def test_run_identity_conflicts(self):
         """Run identity conflicts (different root issue, workflow, or repo checkout) fail explicitly."""
         repo_dir = Path(self.temp_dir.name) / "repo-a"
@@ -2943,8 +2981,7 @@ stages:
         self.assertIn("empty", res_empty.stderr.lower())
 
         # 4. Reject predecessor inside managed receipts that does NOT belong to completed stages
-        rogue_receipt = (self.receipt_root / "receipts") / "fabricated-receipt.md"
-        rogue_receipt.parent.mkdir(parents=True, exist_ok=True)
+        rogue_receipt = self.receipt_root / "fabricated-receipt.md"
         rogue_receipt.write_text("# Fabricated", encoding="utf-8")
         res_rogue = self.prepare({
             "stage": "stage_2_land",

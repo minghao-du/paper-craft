@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import sys
-import sys
 from typing import Any, Dict, List, Optional, Union
 
 # Import workspace config resolver
