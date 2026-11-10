@@ -82,6 +82,50 @@ class TestLifecycleKernel(unittest.TestCase):
             state = json.load(f)
         self.assertEqual(state["root_issue_id"], "99")
 
+    def test_init_with_require_config(self):
+        repo_dir = self.receipt_root / "repo"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        receipts = self.receipt_root / "receipts"
+        receipts.mkdir(parents=True, exist_ok=True)
+
+        # Without config, init with --require-config fails and provides clear guidance
+        res_fail = self.run_cli(
+            "init",
+            "--receipt-root", str(receipts),
+            "--root-issue", "42",
+            "--require-config",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_fail.returncode, 1)
+        self.assertIn("pc-workspace-config", res_fail.stderr)
+
+        # With valid config, init with --require-config succeeds and populates context
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "owner/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+
+        res_ok = self.run_cli(
+            "init",
+            "--receipt-root", str(receipts),
+            "--root-issue", "42",
+            "--require-config",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+        state_file = receipts / "state.json"
+        self.assertTrue(state_file.exists())
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertEqual(state["context"].get("delivery_target"), "owner/repo")
+        self.assertEqual(state["context"].get("base_remote"), "origin")
+
     def test_prepare_allocates_step_and_generates_envelope_and_receipt_path(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "41")
 
@@ -418,6 +462,45 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertIsNotNone(info2["active_dispatch"])
         self.assertTrue(len(info2["blocking_reasons"]) > 0)
         self.assertIn("not yet handed off", info2["blocking_reasons"][0].lower())
+
+    def test_inspect_reports_budget_exhaustion(self):
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "41",
+            "--delivery-attempts-max", "3",
+            "--replans-max", "2",
+        )
+
+        # Initially 0/3 delivery attempts, 0/2 replans: no budget blocking reasons
+        res0 = self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json")
+        self.assertEqual(res0.returncode, 0)
+        info0 = json.loads(res0.stdout)
+        self.assertFalse(any("budget exhausted" in r.lower() for r in info0["blocking_reasons"]))
+
+        # Exhaust delivery attempt budget in state
+        state_file = self.receipt_root / "state.json"
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        state["budgets"]["delivery_attempts_used"] = 3
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+
+        res1 = self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json")
+        self.assertEqual(res1.returncode, 0)
+        info1 = json.loads(res1.stdout)
+        self.assertTrue(any("delivery attempt budget exhausted" in r.lower() for r in info1["blocking_reasons"]))
+
+        # Also exhaust replan budget
+        state["budgets"]["replans_used"] = 2
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+
+        res2 = self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json")
+        self.assertEqual(res2.returncode, 0)
+        info2 = json.loads(res2.stdout)
+        self.assertTrue(any("delivery attempt budget exhausted" in r.lower() for r in info2["blocking_reasons"]))
+        self.assertTrue(any("replan budget exhausted" in r.lower() for r in info2["blocking_reasons"]))
 
     def test_normal_closed_loop_multiple_dispatches_single_delivery_attempt(self):
         # 1. init
