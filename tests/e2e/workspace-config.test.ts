@@ -18,7 +18,6 @@ import {
   runLifecycleKernelCli,
   runPrepareTaskCli,
   runPrepareWorktreeCli,
-  runStateMachineCli,
   runWorkspaceConfigCli,
   type CompactReceiptReport,
   type TaskInputEnvelope,
@@ -197,19 +196,14 @@ describe('Issue #38: Workspace Config E2E', () => {
     const receiptRoot = path.join(testEnv.dir, 'receipts', 'issue-99');
     fs.mkdirSync(receiptRoot, { recursive: true });
 
-    // 1. Missing config check via state_machine check-config
-    const checkMissing = runStateMachineCli(['check-config', '--repo-dir', repoDir]);
+    // 1. Missing config check via config.py validate
+    const checkMissing = runWorkspaceConfigCli(['validate', '--repo-dir', repoDir]);
     expect(checkMissing.status).not.toBe(0);
     expect(checkMissing.stderr).toContain('pc-workspace-config');
     expect(checkMissing.stderr.toLowerCase()).toContain('missing');
 
-    // Missing config via config.py validate
-    const validateMissing = runWorkspaceConfigCli(['validate', '--repo-dir', repoDir]);
-    expect(validateMissing.status).not.toBe(0);
-    expect(validateMissing.stderr).toContain('pc-workspace-config');
-
-    // State machine initialization with --require-config must fail when config is missing
-    const initFail = runStateMachineCli([
+    // Lifecycle kernel initialization with --require-config must fail when config is missing
+    const initFail = runLifecycleKernelCli([
       'init',
       '--receipt-root', receiptRoot,
       '--root-issue', '99',
@@ -228,9 +222,9 @@ describe('Issue #38: Workspace Config E2E', () => {
     fs.mkdirSync(cfgDir, { recursive: true });
     fs.writeFileSync(path.join(cfgDir, 'workspace-config.json'), '{corrupt-json', 'utf-8');
 
-    const checkCorrupted = runStateMachineCli(['check-config', '--repo-dir', repoDir]);
+    const checkCorrupted = runWorkspaceConfigCli(['validate', '--repo-dir', repoDir]);
     expect(checkCorrupted.status).not.toBe(0);
-    expect(checkCorrupted.stderr.toLowerCase()).toContain('corrupted');
+    expect(checkCorrupted.stderr.toLowerCase()).toContain('invalid');
 
     // 3. Incomplete config (missing required fields)
     fs.writeFileSync(
@@ -238,7 +232,7 @@ describe('Issue #38: Workspace Config E2E', () => {
       JSON.stringify({ schema_version: '1.0', delivery_target: 'foo/bar' }),
       'utf-8',
     );
-    const checkIncomplete = runStateMachineCli(['check-config', '--repo-dir', repoDir]);
+    const checkIncomplete = runWorkspaceConfigCli(['validate', '--repo-dir', repoDir]);
     expect(checkIncomplete.status).not.toBe(0);
     expect(checkIncomplete.stderr).toContain('base_remote');
 

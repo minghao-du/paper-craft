@@ -183,7 +183,7 @@ provider targets to absolute paths in their owning skill directories before prep
 
 ### 2. Workflow Entry & Configuration Gate
 Before creating task worktrees or initializing workflow runtime state:
-1. **Workspace Configuration Check**: Verify that `.paper-craft/workspace-config.json` exists and is valid (run `python3 "<config-skill-dir>/scripts/config.py" validate --repo-dir <repo_dir>` or `python3 "<skill-dir>/scripts/state_machine.py" check-config --repo-dir <repo_dir>`).
+1. **Workspace Configuration Check**: Verify that `.paper-craft/workspace-config.json` exists and is valid (run `python3 "<config-skill-dir>/scripts/config.py" validate --repo-dir <repo_dir>`).
 2. **Missing / Invalid Configuration Handling**: If the configuration is missing or invalid, halt immediately to the Decision Board. Clearly explain the missing configuration and guide the user to run `pc-workspace-config`. Do NOT dispatch task worktrees on the error path.
 
 ### 3. Execution Loop

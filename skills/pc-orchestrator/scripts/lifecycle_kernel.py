@@ -373,18 +373,27 @@ def check_workspace_config(repo_dir: Path) -> Tuple[bool, str, Optional[Dict[str
     """Check workspace configuration existence and validity."""
     config_file = repo_dir / ".paper-craft" / "workspace-config.json"
     if not config_file.exists():
-        return False, f"Workspace configuration missing at {config_file}", None
+        return False, (
+            f"Workspace configuration missing at {config_file}. "
+            f"Please run 'pc-workspace-config' to initialize the workspace before starting pc-orchestrator."
+        ), None
 
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        return False, f"Workspace configuration corrupted at {config_file}: {e}", None
+        return False, (
+            f"Workspace configuration corrupted at {config_file}: {e}. "
+            f"Please run 'pc-workspace-config' to reconfigure."
+        ), None
 
     if validate_workspace_config:
         errors = validate_workspace_config(data, repo_dir)
         if errors:
-            return False, f"Invalid workspace configuration:\n  - " + "\n  - ".join(errors), None
+            return False, (
+                f"Invalid workspace configuration:\n  - " + "\n  - ".join(errors)
+                + "\nPlease run 'pc-workspace-config' to reconfigure."
+            ), None
 
     return True, "Workspace configuration valid", data
 

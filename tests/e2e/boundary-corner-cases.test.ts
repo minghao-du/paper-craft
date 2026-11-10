@@ -13,7 +13,6 @@ import {
   runEnvelopeCli,
   runLifecycleKernelCli,
   runPrepareTaskCli,
-  runStateMachineCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
 
@@ -218,14 +217,19 @@ describe('Tier 2: Boundary & Corner Cases', () => {
     ]);
 
     // Budget starts at 0/3
-    const checkOk = runStateMachineCli([
-      'check-budget',
+    const checkOk = runLifecycleKernelCli([
+      'inspect',
       '--receipt-root', testEnv.dir,
-      '--type', 'delivery',
-      '--limit', '3',
+      '--json',
     ]);
     expect(checkOk.status).toBe(0);
-    expect(checkOk.stdout).toContain('Budget OK: delivery_attempts_used is 0/3');
+    const checkOkData = JSON.parse(checkOk.stdout);
+    expect(checkOkData.budgets.delivery_attempts_used).toBe(0);
+    expect(checkOkData.blocking_reasons).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/delivery attempt budget exhausted/i),
+      ]),
+    );
 
     // Attempt 1
     const p1 = runPrepareTaskCli(testEnv.dir, {
@@ -299,13 +303,18 @@ describe('Tier 2: Boundary & Corner Cases', () => {
     ]);
 
     // Now budget is 3/3, which reaches limit
-    const checkExceeded = runStateMachineCli([
-      'check-budget',
+    const checkExceeded = runLifecycleKernelCli([
+      'inspect',
       '--receipt-root', testEnv.dir,
-      '--type', 'delivery',
-      '--limit', '3',
+      '--json',
     ]);
-    expect(checkExceeded.status).toBe(1);
-    expect(checkExceeded.stderr).toContain('Budget exceeded: delivery_attempts_used is 3, limit is 3');
+    expect(checkExceeded.status).toBe(0);
+    const checkExceededData = JSON.parse(checkExceeded.stdout);
+    expect(checkExceededData.budgets.delivery_attempts_used).toBe(3);
+    expect(checkExceededData.blocking_reasons).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/delivery attempt budget exhausted/i),
+      ]),
+    );
   });
 });

@@ -15,7 +15,6 @@ import {
   createTestDir,
   runLifecycleKernelCli,
   runPrepareTaskCli,
-  runStateMachineCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
 
@@ -268,14 +267,19 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       }),
     ]);
 
-    // Check budget with max 3: now 3/3 => budget exceeded
-    const budgetCheck = runStateMachineCli([
-      'check-budget',
+    // Inspect state: now 3/3 attempts used => delivery attempt budget exhausted in blocking_reasons
+    const inspectCheck = runLifecycleKernelCli([
+      'inspect',
       '--receipt-root', testEnv.dir,
-      '--type', 'delivery',
-      '--limit', '3',
+      '--json',
     ]);
-    expect(budgetCheck.status).toBe(1);
-    expect(budgetCheck.stderr).toContain('Budget exceeded: delivery_attempts_used is 3, limit is 3');
+    expect(inspectCheck.status).toBe(0);
+    const inspectData = JSON.parse(inspectCheck.stdout);
+    expect(inspectData.budgets.delivery_attempts_used).toBe(3);
+    expect(inspectData.blocking_reasons).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/delivery attempt budget exhausted/i),
+      ]),
+    );
   });
 });
