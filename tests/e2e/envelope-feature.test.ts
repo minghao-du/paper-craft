@@ -211,10 +211,8 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
     expect(env.budgets.delivery_attempts_used).toBe(1);
     expect(env.budgets.delivery_attempts_max).toBe(5);
-    expect(env.budgets.delivery_attempts_limit).toBe(5);
     expect(env.budgets.replans_used).toBe(0);
     expect(env.budgets.replans_max).toBe(3);
-    expect(env.budgets.replans_limit).toBe(3);
   });
 
   it('F1.6: populates context and predecessor receipts across stages', () => {
@@ -266,6 +264,7 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       workdir: testEnv.dir,
       branch: 'issue-301',
       commit: '1234567890123456789012345678901234567890',
+      predecessor_receipts: [prepData1.receipt_path],
     });
 
     expect(result.status).toBe(0);

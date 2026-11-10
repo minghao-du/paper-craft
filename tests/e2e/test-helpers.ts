@@ -86,10 +86,8 @@ export interface TaskInputEnvelope {
   budgets: {
     delivery_attempts_used: number;
     delivery_attempts_max: number;
-    delivery_attempts_limit?: number;
     replans_used: number;
     replans_max: number;
-    replans_limit?: number;
   };
 }
 

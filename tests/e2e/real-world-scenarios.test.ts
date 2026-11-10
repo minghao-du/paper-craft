@@ -160,6 +160,7 @@ if __name__ == "__main__":
       },
       workdir: worktreeDir,
       acceptance_criteria: ['All unit tests pass', 'Linting passes'],
+      predecessor_receipts: [step1ReceiptPath],
     });
     expect(env2Res.status).toBe(0);
     const p2 = JSON.parse(env2Res.stdout);
@@ -207,6 +208,7 @@ if __name__ == "__main__":
         target: 'pc-issue-verify',
       },
       workdir: worktreeDir,
+      predecessor_receipts: [step2ReceiptPath],
     });
     expect(env3Res.status).toBe(0);
     const p3 = JSON.parse(env3Res.stdout);

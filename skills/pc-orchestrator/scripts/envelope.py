@@ -216,16 +216,14 @@ def validate_envelope(data: Any) -> List[str]:
                 if not isinstance(val, int) or isinstance(val, bool) or val < 0:
                     errors.append(f"[budgets.replans_used] Expected integer >= 0, got {val}")
 
-            for k in ("delivery_attempts_limit", "delivery_attempts_max"):
-                if k in budgets:
-                    val = budgets[k]
-                    if not isinstance(val, int) or isinstance(val, bool) or val < 1:
-                        errors.append(f"[budgets.{k}] Expected integer >= 1, got {val}")
-            for k in ("replans_limit", "replans_max"):
-                if k in budgets:
-                    val = budgets[k]
-                    if not isinstance(val, int) or isinstance(val, bool) or val < 1:
-                        errors.append(f"[budgets.{k}] Expected integer >= 1, got {val}")
+            if "delivery_attempts_max" in budgets:
+                val = budgets["delivery_attempts_max"]
+                if not isinstance(val, int) or isinstance(val, bool) or val < 1:
+                    errors.append(f"[budgets.delivery_attempts_max] Expected integer >= 1, got {val}")
+            if "replans_max" in budgets:
+                val = budgets["replans_max"]
+                if not isinstance(val, int) or isinstance(val, bool) or val < 1:
+                    errors.append(f"[budgets.replans_max] Expected integer >= 1, got {val}")
 
     return errors
 
@@ -296,10 +294,8 @@ def create_envelope(
     receipt_template: str = DEFAULT_RECEIPT_TEMPLATE,
     delivery_attempts_used: int = 0,
     delivery_attempts_max: int = 3,
-    delivery_attempts_limit: Optional[int] = None,
     replans_used: int = 0,
     replans_max: int = 2,
-    replans_limit: Optional[int] = None,
     schema_version: str = "1.0",
     validate: bool = True,
     config_snapshot: Optional[Dict[str, Any]] = None,
@@ -307,8 +303,8 @@ def create_envelope(
     """Assemble a standard TaskInputEnvelope dictionary."""
     root_str = str(root_issue_id)
     curr_str = str(current_issue_id) if current_issue_id is not None else root_str
-    attempts_max = delivery_attempts_limit if delivery_attempts_limit is not None else delivery_attempts_max
-    replan_max = replans_limit if replans_limit is not None else replans_max
+    attempts_max = delivery_attempts_max
+    replan_max = replans_max
 
     workdir_str = str(Path(working_directory).resolve()) if working_directory else ""
     receipt_str = str(Path(receipt_path).resolve()) if receipt_path else ""
@@ -393,10 +389,8 @@ def create_envelope(
         "budgets": {
             "delivery_attempts_used": int(delivery_attempts_used),
             "delivery_attempts_max": int(attempts_max),
-            "delivery_attempts_limit": int(attempts_max),
             "replans_used": int(replans_used),
             "replans_max": int(replan_max),
-            "replans_limit": int(replan_max),
         },
     }
 
@@ -524,9 +518,9 @@ def cmd_show(args: argparse.Namespace) -> None:
     criteria = inputs.get("acceptance_criteria", [])
     budgets = data.get("budgets", {})
     del_used = budgets.get("delivery_attempts_used", 0)
-    del_max = budgets.get("delivery_attempts_limit", budgets.get("delivery_attempts_max", 3))
+    del_max = budgets.get("delivery_attempts_max", 3)
     rep_used = budgets.get("replans_used", 0)
-    rep_max = budgets.get("replans_limit", budgets.get("replans_max", 2))
+    rep_max = budgets.get("replans_max", 2)
 
     print(f"Envelope: {path} (v{data.get('schema_version', '1.0')})")
     print(f"Task: {stage} (step {step}, attempt {attempt}) | Root: #{root_id}, Current: #{curr_id}")

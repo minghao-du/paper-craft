@@ -195,7 +195,7 @@ For each stage defined in the loaded workflow:
    - The kernel validates report integrity (the 4 required fields) and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
 6. **Evaluate Routing & Resolve Decision**:
    - Match the returned native `result` against the stage's routing table.
-   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>"`.
+   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish|<next_stage>> --reason "<reason>" [--next-stage <stage>]`. Orchestrator explicitly selects the next stage or records steering decisions; `complete` solely records receipt verification and never auto-advances stages.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
@@ -289,8 +289,8 @@ Wait for the human user's prompt instruction before proceeding.
     Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Subsequent calls or queries do NOT grant new launch permission.
   - **`complete`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py complete --receipt-root "<receipt_root>" --report '<compact_json>'`
     Registers compact execution report (validating `execution_status`, `result`, `receipt_path`, `summary`) and verifies physical non-empty receipt existence on disk.
-  - **`resolve`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish> --reason "<reason>" [--option "<option>"]`
-    Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately.
+  - **`resolve`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish|<next_stage>> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id>] [--complete-sequence]`
+    Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately. Explicitly resolves stage transitions, sequence progression, or blocking actions.
   - **`inspect`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py inspect --receipt-root "<receipt_root>" [--json] [--field <path>]`
     Queries current state, active dispatch, orchestrator decisions, budgets, and reasons blocking progression.
 - **Task Input Envelope Engine (`scripts/envelope.py`)** — Low-level validation and inspection:
@@ -318,4 +318,4 @@ Write a JSON object to an absolute file path using a JSON serializer. Required f
 }
 ```
 
-Optional string arrays `provider.args`, `acceptance_criteria`, and `predecessor_receipts` default to empty lists. Each provider argument occupies one array element and retains its exact contents. Empty predecessor lists inherit the latest completed receipt. Optional `scope` is a string defaulting to `""`. Optional `workdir`, `branch`, `commit`, and `receipt_template` are non-empty strings, with workspace fields inherited from runtime context and the bundled receipt template used by default. `attempt_intent` accepts `same` (default) or `new`. Optional `rework_issue` designates an existing issue ID for targeted rework after parent acceptance or during delivery. Unknown fields and invalid values fail validation before workflow state is loaded. The kernel supplies issue context and allocates the step index, attempts, budgets and output paths.
+Optional string arrays `provider.args`, `acceptance_criteria`, and `predecessor_receipts` default to empty lists. Each provider argument occupies one array element and retains its exact contents. Predecessor receipts must be explicitly specified; an empty predecessor list remains empty (`[]`). Explicitly referenced predecessor receipts must exist on disk and be non-empty. Optional `scope` is a string defaulting to `""`. Optional `workdir`, `branch`, `commit`, and `receipt_template` are non-empty strings, with workspace fields inherited from runtime context and the bundled receipt template used by default. `attempt_intent` accepts `same` (default) or `new`. Optional `rework_issue` designates an existing issue ID for targeted rework after parent acceptance or during delivery. Unknown fields and invalid values fail validation before workflow state is loaded. The kernel supplies issue context and allocates the step index, attempts, budgets and output paths.
