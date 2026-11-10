@@ -148,8 +148,8 @@ def validate_envelope(data: Any) -> List[str]:
             errors.append("[provider] Expected JSON object (dict)")
         else:
             p_type = provider.get("type")
-            if p_type not in ("skill", "script"):
-                errors.append(f"[provider.type] Expected 'skill' | 'script', got '{p_type}'")
+            if p_type != "skill":
+                errors.append(f"[provider.type] Expected 'skill', got '{p_type}'")
 
             if "target" not in provider:
                 errors.append("[provider.target] Expected non-empty string")
@@ -275,7 +275,7 @@ def create_envelope(
     root_issue_id: Union[str, int],
     current_issue_id: Optional[Union[str, int]] = None,
     attempt: int = 1,
-    provider_type: str,
+    provider_type: str = "skill",
     provider_target: str,
     provider_args: Optional[List[str]] = None,
     working_directory: Union[str, Path],

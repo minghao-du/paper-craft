@@ -104,15 +104,15 @@ if __name__ == "__main__":
     expect(initRes.status).toBe(0);
 
     // ==========================================
-    // Phase 1: Workspace Preparation (Script Provider)
+    // Phase 1: Workspace Preparation (Skill Provider)
     // ==========================================
     const kernelScript = createWorkspaceKernelScript();
     const env1Res = runPrepareTaskCli(rootDir, {
       stage: 'workspace_prepare',
       objective: 'Prepare isolated worktree environment',
       provider: {
-        type: 'script',
-        target: kernelScript,
+        type: 'skill',
+        target: 'pc-workspace',
       },
       workdir: worktreeDir,
       branch: `issue-${issueId}`,
@@ -278,8 +278,8 @@ sys.exit(1)
       stage: 'stage_2_work',
       objective: 'Run failing kernel script',
       provider: {
-        type: 'script',
-        target: failingScriptPath,
+        type: 'skill',
+        target: 'pc-issue-work',
       },
       workdir: testEnv.dir,
     });

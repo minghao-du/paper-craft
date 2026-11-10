@@ -61,7 +61,7 @@ export interface TaskInputEnvelope {
     current_issue_id: string;
   };
   provider: {
-    type: 'skill' | 'script';
+    type: 'skill';
     target: string;
     args: string[];
   };

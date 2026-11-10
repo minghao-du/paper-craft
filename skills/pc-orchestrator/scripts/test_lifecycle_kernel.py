@@ -2225,6 +2225,182 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(state_data["budgets"]["replans_max"], 6)
         self.assertEqual(state_data["config_snapshot"]["delivery_target"], "org/custom-target")
 
+    def test_arbitrary_named_stages_with_minimal_yaml_generates_skill_envelope(self):
+        """Minimal YAML with arbitrary stage names generates correct skill envelope via prepare."""
+        custom_yaml = self.receipt_root / "custom_workflow.yaml"
+        custom_yaml.write_text(
+            """name: custom-workflow
+version: "1.0"
+stages:
+  - id: custom_evaluate
+    skill: pc-issue-verify
+    description: Run custom verification
+    parameters:
+      eval_mode: strict
+""",
+            encoding="utf-8",
+        )
+
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "50",
+            "--workflow", str(custom_yaml),
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        res_prep = self.prepare({
+            "stage": "custom_evaluate",
+            "workdir": str(self.receipt_root),
+            "objective": "Verify custom stage execution",
+        })
+        self.assertEqual(res_prep.returncode, 0, res_prep.stderr)
+        prep_data = json.loads(res_prep.stdout)
+        self.assertEqual(prep_data["stage"], "custom_evaluate")
+        self.assertEqual(prep_data["stage_context"]["skill"], "pc-issue-verify")
+
+        envelope_path = Path(prep_data["envelope_path"])
+        self.assertTrue(envelope_path.exists())
+        env = json.loads(envelope_path.read_text(encoding="utf-8"))
+        self.assertEqual(env["task"]["logical_stage"], "custom_evaluate")
+        self.assertEqual(env["provider"]["type"], "skill")
+        self.assertEqual(env["provider"]["target"], "pc-issue-verify")
+        self.assertEqual(env["inputs"]["parameters"]["eval_mode"], "strict")
+
+    def test_invalid_stage_id_fails_fast(self):
+        """Prepare with a stage ID not defined in workflow snapshot fails fast with clear error."""
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "50",
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        res_prep = self.prepare({
+            "stage": "nonexistent_stage_id",
+            "workdir": str(self.receipt_root),
+            "objective": "Should fail",
+        })
+        self.assertNotEqual(res_prep.returncode, 0)
+        self.assertIn("not defined in workflow snapshot", res_prep.stderr.lower())
+
+    def test_corrupted_workflow_yaml_fails_fast_on_init(self):
+        """Corrupted or invalid workflow YAML fails fast during init."""
+        # Case 1: Bad YAML syntax
+        bad_syntax_yaml = self.receipt_root / "bad_syntax.yaml"
+        bad_syntax_yaml.write_text("name: broken\nstages: [unclosed", encoding="utf-8")
+        res1 = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root / "r1"),
+            "--root-issue", "50",
+            "--workflow", str(bad_syntax_yaml),
+        )
+        self.assertNotEqual(res1.returncode, 0)
+        self.assertIn("failed to parse workflow", res1.stderr.lower())
+
+        # Case 2: Missing stages field
+        missing_stages_yaml = self.receipt_root / "missing_stages.yaml"
+        missing_stages_yaml.write_text("name: missing_stages\n", encoding="utf-8")
+        res2 = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root / "r2"),
+            "--root-issue", "50",
+            "--workflow", str(missing_stages_yaml),
+        )
+        self.assertNotEqual(res2.returncode, 0)
+        self.assertIn("missing required non-empty list field: 'stages'", res2.stderr.lower())
+
+        # Case 3: Duplicate stage IDs
+        duplicate_stage_yaml = self.receipt_root / "dup_stage.yaml"
+        duplicate_stage_yaml.write_text(
+            """name: dup_test
+stages:
+  - id: step_a
+    skill: pc-issue-plan
+  - id: step_a
+    skill: pc-issue-work
+""",
+            encoding="utf-8",
+        )
+        res3 = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root / "r3"),
+            "--root-issue", "50",
+            "--workflow", str(duplicate_stage_yaml),
+        )
+        self.assertNotEqual(res3.returncode, 0)
+        self.assertIn("duplicate stage id", res3.stderr.lower())
+
+    def test_workflow_snapshot_immutability_on_recovery(self):
+        """Recovery always uses state['workflow_snapshot']; editing/deleting source YAML does not break tasks."""
+        source_yaml = self.receipt_root / "volatile_workflow.yaml"
+        source_yaml.write_text(
+            """name: volatile-flow
+stages:
+  - id: init_step
+    skill: pc-workspace
+  - id: execute_step
+    skill: pc-issue-work
+""",
+            encoding="utf-8",
+        )
+
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "50",
+            "--workflow", str(source_yaml),
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        # Delete the source YAML file from disk completely
+        source_yaml.unlink()
+        self.assertFalse(source_yaml.exists())
+
+        # Prepare first stage succeeds using snapshot
+        res_prep1 = self.prepare({
+            "stage": "init_step",
+            "workdir": str(self.receipt_root),
+            "objective": "Init worktree from deleted yaml snapshot",
+        })
+        self.assertEqual(res_prep1.returncode, 0, res_prep1.stderr)
+        prep1_data = json.loads(res_prep1.stdout)
+        receipt_1 = Path(prep1_data["receipt_path"])
+        receipt_1.parent.mkdir(parents=True, exist_ok=True)
+        receipt_1.write_text("# Step 1 Receipt\nOutcome: success\n", encoding="utf-8")
+
+        # Handoff first before complete
+        res_handoff = self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        self.assertEqual(res_handoff.returncode, 0, res_handoff.stderr)
+
+        # Complete first stage
+        rep1 = {
+            "execution_status": "succeeded",
+            "result": {"outcome": "completed"},
+            "receipt_path": str(receipt_1),
+            "summary": "Init step completed",
+        }
+        res_comp1 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep1))
+        self.assertEqual(res_comp1.returncode, 0, res_comp1.stderr)
+
+        # Prepare second stage also succeeds using snapshot
+        res_prep2 = self.prepare({
+            "stage": "execute_step",
+            "workdir": str(self.receipt_root),
+            "objective": "Execute work from deleted yaml snapshot",
+            "attempt_intent": "same",
+        })
+        self.assertEqual(res_prep2.returncode, 0, res_prep2.stderr)
+        prep2_data = json.loads(res_prep2.stdout)
+        self.assertEqual(prep2_data["stage_context"]["skill"], "pc-issue-work")
+        self.assertEqual(res_prep2.returncode, 0, res_prep2.stderr)
+        prep2_data = json.loads(res_prep2.stdout)
+        self.assertEqual(prep2_data["stage_context"]["skill"], "pc-issue-work")
+        self.assertEqual(res_prep2.returncode, 0, res_prep2.stderr)
+        prep2_data = json.loads(res_prep2.stdout)
+        self.assertEqual(prep2_data["stage_context"]["skill"], "pc-issue-work")
+
+
 
 
 if __name__ == "__main__":

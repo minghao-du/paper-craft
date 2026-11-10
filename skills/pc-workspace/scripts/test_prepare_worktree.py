@@ -72,8 +72,8 @@ class WorkspaceTests(unittest.TestCase):
                 "current_issue_id": str(overrides.get("current_issue_id", overrides.get("issue", "42"))),
             },
             "provider": {
-                "type": "script",
-                "target": "skills/pc-workspace/scripts/prepare-worktree.py",
+                "type": "skill",
+                "target": "pc-workspace",
                 "args": [],
             },
             "environment": {
@@ -459,8 +459,8 @@ class WorkspaceTests(unittest.TestCase):
                 "current_issue_id": "39",
             },
             "provider": {
-                "type": "script",
-                "target": str(HELPER),
+                "type": "skill",
+                "target": "pc-workspace",
                 "args": [],
             },
             "environment": {

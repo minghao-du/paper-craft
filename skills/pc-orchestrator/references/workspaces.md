@@ -3,13 +3,13 @@
 Apply this contract to every workflow, including custom stages, replanning, repairs, and nested agents.
 Each stage in the workflow defines an abstract logical stage (e.g., `workspace_prepare`, `issue_plan`,
 `issue_work`, `issue_verify`, `pipeline_refactor`, `workspace_cleanup`), completely decoupled from its
-execution provider (`type: "skill"` vs `type: "script"`).
+execution provider (`type: "skill"`).
 Every stage's execution context is explicitly materialized as a Task Input Envelope file
 (`<receipt_root>/<step_index>-input.json`) before dispatch, and every provider adheres to the unified
 Receipt Contract (`{ execution_status, result, receipt_path, summary }` + Markdown receipt).
 
 Resolve `<workspace-skill-dir>` and `<orchestrator-skill-dir>` to the absolute installed directories
-of `pc-workspace` and `pc-orchestrator`. Substitute these paths before preparing script providers.
+of `pc-workspace` and `pc-orchestrator`.
 
 ---
 
@@ -57,8 +57,8 @@ and durable execution receipts:
 Before executing any professional stage that requires codebase access, execute the `workspace_prepare` stage
 in the supplied source checkout to validate the source and prepare the target environment.
 
-### Decoupled Provider Resolution
-The `workspace_prepare` stage is agnostic to execution provider:
+### Execution Provider Resolution
+The `workspace_prepare` stage is executed via a specialized skill subagent:
 - **Skill Provider**:
   ```yaml
   provider:
@@ -69,16 +69,6 @@ The `workspace_prepare` stage is agnostic to execution provider:
   The Orchestrator writes `<receipt_root>/<step_index>-input.json` and dispatches `pc-workspace` with the
   Standardized Slim Prompt (~15 lines). The subagent validates source checkout, creates or reuses the target
   worktree, writes the receipt, and returns the compact JSON report.
-- **Script Provider**:
-  ```yaml
-  provider:
-    type: "script"
-    target: "<workspace-skill-dir>/scripts/prepare-worktree.py"
-    args: []
-  ```
-  The Orchestrator (or platform execution runner) executes the kernel script directly:
-  `python3 "<workspace-skill-dir>/scripts/prepare-worktree.py" --input-envelope <receipt_root>/<step_index>-input.json`
-  The kernel deterministically prepares the worktree, writes the receipt, and prints the compact JSON report.
 
 ### State Persistence & Acceptance Gate
 Before preparation, record the requested path, branch or integrated revision, source checkout,
@@ -119,7 +109,7 @@ Instead, the Orchestrator generates a Task Input Envelope file (`<receipt_root>/
 ### Task Input Envelope Schema (v1.0)
 The envelope encapsulates 7 mandatory sections:
 1. `task`: `{ logical_stage, step_index, attempt, root_issue_id, current_issue_id }`
-2. `provider`: `{ type: "skill" | "script", target, args }`
+2. `provider`: `{ type: "skill", target, args }`
 3. `environment`: `{ working_directory, repository, base_branch, branch, commit }`
 4. `inputs`: `{ objective, scope, acceptance_criteria, predecessor_receipts, parameters }`
 5. `contract`: `{ receipt_path, receipt_template }`
@@ -148,9 +138,6 @@ The envelope encapsulates 7 mandatory sections:
   }
   ```
   ```
-- **Script Providers (Automated Kernels)**:
-  Invoked via command line:
-  `<provider.target> --input-envelope "<receipt_root>/<step_index>-input.json" [provider.args...]`
 
 ### Directory Binding Contract
 Supply `environment.working_directory` as an explicit absolute directory. Bind the native launch directory when
@@ -165,7 +152,7 @@ state blocks professional execution and follows the fail-fast halt protocol.
 
 ## Unified Receipt Contract
 
-Every execution provider (skill subagent or script kernel) MUST adhere to the Unified Receipt Contract upon completing execution.
+Every execution provider (Specialist Subagent) MUST adhere to the Unified Receipt Contract upon completing execution.
 
 ### Compact Execution Report (stdout)
 Return only this compact JSON object on standard output:
@@ -203,9 +190,8 @@ immediately records the defect in `state.json` and halts to the Blocker Decision
 
 After required delivery, acceptance, and research recording succeed, execute the `workspace_cleanup` stage.
 
-### Decoupled Cleanup Resolution
-- **Skill Provider**: `provider: { type: "skill", target: "pc-workspace" }`
-- **Script Provider**: `provider: { type: "script", target: "<workspace-skill-dir>/scripts/prepare-worktree.py", args: ["--cleanup"] }`
+### Cleanup Resolution
+- **Skill Provider**: `provider: { type: "skill", target: "pc-workspace", args: ["--cleanup"] }`
 
 The Task Input Envelope supplies `inputs.parameters.candidates` using `pc-workspace` §5, reconciled from the issue-tree inventory and current or historical delivery/verification receipts, durable artifact locations, and completed-consumer status.
 Cleanup includes merged local and remote task branches whose refs still match their delivered SHAs. Historical resources require explicit issue-tree ownership evidence. Supply unresolved inventory items as `inputs.parameters.unresolved`; they block successful cleanup.

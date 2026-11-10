@@ -103,8 +103,8 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       stage: 'stage_2_work',
       objective: 'Execute work for issue 888',
       provider: {
-        type: 'script',
-        target: 'skills/pc-workspace/scripts/prepare-worktree.py',
+        type: 'skill',
+        target: 'pc-issue-work',
       },
       workdir: testEnv.dir,
     });
@@ -117,14 +117,14 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     expect(env.inputs.predecessor_receipts).toContain(p1Data.receipt_path);
   });
 
-  it('C3.3: seamless provider type switching ("skill" -> "script") across stages', () => {
+  it('C3.3: seamless provider target switching across stages', () => {
     runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
       '--root-issue', '555',
     ]);
 
-    // Stage 1: Skill provider
+    // Stage 1: Skill provider targeting pc-issue-plan
     const p1 = runPrepareTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       objective: 'Plan with skill',
@@ -148,13 +148,13 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       }),
     ]);
 
-    // Stage 2: Script provider (zero perception by state machine)
+    // Stage 2: Skill provider targeting pc-issue-work with args
     const p2 = runPrepareTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
-      objective: 'Work with script',
+      objective: 'Work with skill',
       provider: {
-        type: 'script',
-        target: 'scripts/automated_worker.py',
+        type: 'skill',
+        target: 'pc-issue-work',
         args: ['--fast'],
       },
       workdir: testEnv.dir,
@@ -168,8 +168,8 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     expect(env1.provider.type).toBe('skill');
     expect(env1.provider.target).toBe('pc-issue-plan');
 
-    expect(env2.provider.type).toBe('script');
-    expect(env2.provider.target).toBe('scripts/automated_worker.py');
+    expect(env2.provider.type).toBe('skill');
+    expect(env2.provider.target).toBe('pc-issue-work');
     expect(env2.provider.args).toEqual(['--fast']);
 
     // State machine is completely oblivious to provider differences

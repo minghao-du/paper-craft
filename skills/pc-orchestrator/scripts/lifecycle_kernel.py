@@ -19,7 +19,8 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+import yaml
 
 # Import workspace config validator
 _CONFIG_DIR = str(Path(__file__).resolve().parent.parent.parent / "pc-workspace-config" / "scripts")
@@ -38,6 +39,164 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from envelope import DEFAULT_RECEIPT_TEMPLATE, validate_envelope, atomic_write_json
+
+DEFAULT_WORKFLOW_PATH = str(Path(__file__).resolve().parent.parent / "workflows" / "default.yaml")
+
+
+def load_and_validate_workflow(
+    workflow_source: Optional[Union[str, Dict[str, Any], Path]] = None,
+    repo_dir: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Load workflow from YAML file, string, or dictionary, and validate required schema.
+
+    Args:
+        workflow_source: None (uses default.yaml), path to YAML, YAML content string, or dict.
+        repo_dir: Optional repository directory to resolve relative paths.
+
+    Returns:
+        Validated workflow snapshot dictionary.
+
+    Raises:
+        ValueError: if workflow is invalid, missing required fields, contains duplicate
+            stage IDs, invalid references, or non-skill provider types.
+        FileNotFoundError: if a specified workflow file does not exist.
+    """
+    if workflow_source is None or workflow_source == "" or workflow_source == "default":
+        p = Path(DEFAULT_WORKFLOW_PATH)
+        if not p.exists():
+            raise FileNotFoundError(f"Default workflow YAML file not found at: {p}")
+        with open(p, "r", encoding="utf-8") as f:
+            content = f.read()
+        try:
+            data = yaml.safe_load(content)
+        except Exception as e:
+            raise ValueError(f"Failed to parse default workflow YAML: {e}")
+    elif isinstance(workflow_source, dict):
+        data = workflow_source
+    elif isinstance(workflow_source, (str, Path)):
+        src_str = str(workflow_source).strip()
+        # Check if it's an inline YAML string
+        if "\n" in src_str or src_str.startswith("{") or (":" in src_str and not src_str.endswith((".yaml", ".yml")) and "/" not in src_str and "\\" not in src_str and not Path(src_str).exists()):
+            try:
+                data = yaml.safe_load(src_str)
+            except Exception as e:
+                raise ValueError(f"Failed to parse workflow YAML content: {e}")
+        else:
+            is_explicit_path = (
+                src_str.endswith(".yaml")
+                or src_str.endswith(".yml")
+                or "/" in src_str
+                or "\\" in src_str
+            )
+            p = Path(src_str)
+            if not p.is_absolute():
+                if repo_dir and (Path(repo_dir) / p).exists():
+                    p = Path(repo_dir) / p
+                elif not p.exists():
+                    wf_dir = Path(__file__).resolve().parent.parent / "workflows"
+                    if (wf_dir / f"{src_str}.yaml").exists():
+                        p = wf_dir / f"{src_str}.yaml"
+                    elif (wf_dir / f"{src_str}").exists():
+                        p = wf_dir / f"{src_str}"
+            if not p.exists():
+                if is_explicit_path:
+                    raise FileNotFoundError(f"Workflow file not found: {workflow_source}")
+                # Bare name without explicit path: fallback to default workflow with custom name
+                def_p = Path(DEFAULT_WORKFLOW_PATH)
+                if not def_p.exists():
+                    raise FileNotFoundError(f"Default workflow YAML file not found at: {def_p}")
+                with open(def_p, "r", encoding="utf-8") as f:
+                    content = f.read()
+                try:
+                    data = yaml.safe_load(content)
+                    if isinstance(data, dict):
+                        if "workflow" in data and isinstance(data["workflow"], dict):
+                            data["workflow"]["name"] = src_str
+                        else:
+                            data["name"] = src_str
+                except Exception as e:
+                    raise ValueError(f"Failed to parse default workflow YAML: {e}")
+            else:
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    data = yaml.safe_load(content)
+                except Exception as e:
+                    raise ValueError(f"Failed to parse workflow file at {p}: {e}")
+    else:
+        raise TypeError(f"Invalid workflow source type: {type(workflow_source).__name__}")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Workflow definition must be a mapping/object, got {type(data).__name__}")
+
+    # Support both root keys and root 'workflow' block
+    wf = data.get("workflow", data) if isinstance(data.get("workflow"), dict) else data
+
+    if "name" not in wf or not isinstance(wf["name"], str) or not wf["name"].strip():
+        raise ValueError("Workflow definition missing required non-empty string field: 'name'")
+
+    if "stages" not in wf or not isinstance(wf["stages"], list) or len(wf["stages"]) == 0:
+        raise ValueError("Workflow definition missing required non-empty list field: 'stages'")
+
+    seen_stage_ids: set[str] = set()
+    for idx, stage in enumerate(wf["stages"]):
+        if not isinstance(stage, dict):
+            raise ValueError(f"Workflow stage at index {idx} must be a mapping/object")
+        stage_id = stage.get("id")
+        if not stage_id or not isinstance(stage_id, str) or not stage_id.strip():
+            raise ValueError(f"Workflow stage at index {idx} missing required non-empty string field: 'id'")
+        stage_id = stage_id.strip()
+        if stage_id in seen_stage_ids:
+            raise ValueError(f"Duplicate stage ID '{stage_id}' in workflow")
+        seen_stage_ids.add(stage_id)
+
+        # Validate provider: strictly skill
+        if "skill" in stage and "provider" not in stage:
+            stage["provider"] = {"type": "skill", "target": str(stage["skill"]).strip()}
+
+        provider = stage.get("provider")
+        if not isinstance(provider, dict):
+            raise ValueError(f"Workflow stage '{stage_id}' missing required mapping: 'provider'")
+        p_type = provider.get("type")
+        if p_type != "skill":
+            raise ValueError(
+                f"Workflow stage '{stage_id}' has invalid provider type '{p_type}'. Only 'skill' provider is supported."
+            )
+        p_target = provider.get("target")
+        if not p_target or not isinstance(p_target, str) or not p_target.strip():
+            raise ValueError(f"Workflow stage '{stage_id}' has missing or empty provider 'target'")
+        p_args = provider.get("args")
+        if p_args is not None and (not isinstance(p_args, list) or any(not isinstance(a, str) for a in p_args)):
+            raise ValueError(f"Workflow stage '{stage_id}' provider 'args' must be a list of strings")
+
+    # Validate references
+    initial_stage = wf.get("initial_stage")
+    if initial_stage and str(initial_stage).strip() not in seen_stage_ids:
+        raise ValueError(
+            f"Workflow 'initial_stage' references unknown stage '{initial_stage}'. Defined stages: {sorted(seen_stage_ids)}"
+        )
+
+    for stage in wf["stages"]:
+        for ref_key in ("next", "on_success", "on_failure", "next_stage"):
+            ref_val = stage.get(ref_key)
+            if ref_val and str(ref_val).strip() not in seen_stage_ids:
+                raise ValueError(
+                    f"Stage '{stage['id']}' {ref_key} references unknown stage '{ref_val}'"
+                )
+        depends_on = stage.get("depends_on") or stage.get("dependencies")
+        if depends_on:
+            if isinstance(depends_on, list):
+                for dep in depends_on:
+                    if str(dep).strip() not in seen_stage_ids:
+                        raise ValueError(
+                            f"Stage '{stage['id']}' dependency references unknown stage '{dep}'"
+                        )
+            elif isinstance(depends_on, str) and depends_on.strip() not in seen_stage_ids:
+                raise ValueError(
+                    f"Stage '{stage['id']}' dependency references unknown stage '{depends_on}'"
+                )
+
+    return wf
 
 
 def _is_plan_stage(stage: str) -> bool:
@@ -456,6 +615,11 @@ def init_workflow(
     target_workflow = resolved_config["workflow"]
     target_repo = resolved_config["repo_checkout"]
 
+    # Load and validate workflow snapshot
+    workflow_to_load = workflow or target_workflow
+    workflow_snapshot = load_and_validate_workflow(workflow_to_load, repo_dir=repo_path)
+    snapshot_name = workflow_snapshot.get("name", target_workflow)
+
     # Re-entrance / rerun identity check: check repository checkout and workflow identity, not just issue number
     if state_file.exists() and not force:
         with open(state_file, "r", encoding="utf-8") as f:
@@ -470,7 +634,7 @@ def init_workflow(
                 f"Run identity conflict: State file at {state_file} already exists for root issue {existing_root}, "
                 f"cannot re-initialize with root issue {root_issue}. Use --force to overwrite."
             )
-        if existing_wf != target_workflow:
+        if existing_wf != target_workflow and existing_wf != snapshot_name:
             raise ValueError(
                 f"Run identity conflict: Existing run at {state_file} has workflow '{existing_wf}', "
                 f"but rerun specified workflow '{target_workflow}'. Use --force to overwrite."
@@ -523,7 +687,25 @@ def init_workflow(
         child_ids = validate_plan_order(tasks)
 
     resolved_current_issue = str(current_issue or (child_ids[0] if child_ids else root_issue))
-    resolved_current_stage = initial_stage or ("stage_2_work" if child_ids else "stage_1_plan")
+
+    snapshot_initial = workflow_snapshot.get("initial_stage")
+    stage_ids = {s["id"] for s in workflow_snapshot.get("stages", [])}
+    if initial_stage:
+        if stage_ids and initial_stage not in stage_ids:
+            raise ValueError(f"Requested initial_stage '{initial_stage}' not found in workflow snapshot.")
+        resolved_current_stage = initial_stage
+    elif child_ids:
+        resolved_current_stage = (
+            "stage_2_work"
+            if "stage_2_work" in stage_ids
+            else (workflow_snapshot["stages"][0]["id"] if workflow_snapshot.get("stages") else "stage_2_work")
+        )
+    elif snapshot_initial and snapshot_initial in stage_ids:
+        resolved_current_stage = snapshot_initial
+    elif workflow_snapshot.get("stages"):
+        resolved_current_stage = workflow_snapshot["stages"][0]["id"]
+    else:
+        resolved_current_stage = "stage_1_plan"
 
     delivery_sequence: Optional[Dict[str, Any]] = None
     dam = resolved_config["delivery_attempts_max"]
@@ -538,7 +720,9 @@ def init_workflow(
         "schema_version": "1.0",
         "root_issue_id": str(root_issue),
         "current_issue_id": resolved_current_issue,
-        "workflow": target_workflow,
+        "workflow": snapshot_name,
+        "workflow_snapshot": workflow_snapshot,
+        "current_stage": resolved_current_stage,
         "current_stage": resolved_current_stage,
         "stage_status": "pending",
         "next_step_index": 1,
@@ -567,8 +751,8 @@ def prepare_task(
     receipt_root: Path | str,
     stage: str,
     objective: str,
-    provider_type: str,
-    provider_target: str,
+    provider_type: Optional[str] = None,
+    provider_target: Optional[str] = None,
     provider_args: Optional[List[str]] = None,
     acceptance_criteria: Optional[List[str]] = None,
     predecessor_receipts: Optional[List[str]] = None,
@@ -578,7 +762,7 @@ def prepare_task(
     attempt_intent: str = "same",
     branch: Optional[str] = None,
     commit: Optional[str] = None,
-    receipt_template: str = DEFAULT_RECEIPT_TEMPLATE,
+    receipt_template: Optional[str] = None,
     rework_issue: Optional[str | int] = None,
 ) -> Dict[str, Any]:
     """Prepare a fixed task dispatch, generate envelope, and assign receipt path."""
@@ -602,6 +786,41 @@ def prepare_task(
     resolved_branch = branch or context.get("branch")
     resolved_commit = commit or context.get("commit")
 
+    # Workflow snapshot stage lookup and extraction
+    workflow_snapshot = state.get("workflow_snapshot")
+    stage_def: Optional[Dict[str, Any]] = None
+    if workflow_snapshot and "stages" in workflow_snapshot:
+        for s in workflow_snapshot["stages"]:
+            if s.get("id") == stage or s.get("logical_task") == stage:
+                stage_def = s
+                break
+
+    if stage_def is None:
+        raise ValueError(
+            f"Cannot prepare task: Stage '{stage}' is not defined in workflow snapshot."
+        )
+
+    stage_provider = stage_def.get("provider", {})
+    resolved_provider_type = provider_type or stage_provider.get("type", "skill")
+    if resolved_provider_type != "skill":
+        raise ValueError(f"Provider 'type' must be 'skill', received '{resolved_provider_type}'")
+
+    resolved_provider_target = provider_target or stage_provider.get("target")
+    if not resolved_provider_target:
+        raise ValueError(f"Provider 'target' must be defined in stage '{stage}' or provided in prepare request.")
+
+    resolved_provider_args = provider_args if provider_args is not None else list(stage_provider.get("args", []))
+
+    resolved_receipt_template = (
+        receipt_template
+        or stage_def.get("receipt_template")
+        or stage_def.get("template")
+        or DEFAULT_RECEIPT_TEMPLATE
+    )
+
+    resolved_scope = scope or stage_def.get("scope", "")
+    is_auxiliary = stage_def.get("auxiliary", False) or _is_auxiliary_stage(stage)
+
     # Validate active dispatch
     active = state.get("active_dispatch")
     if active:
@@ -615,9 +834,9 @@ def prepare_task(
         if (
             active.get("task_name") == stage
             and req.get("objective") == objective
-            and req.get("provider", {}).get("type") == provider_type
-            and req.get("provider", {}).get("target") == provider_target
-            and req.get("provider", {}).get("args", []) == (provider_args or [])
+            and req.get("provider", {}).get("type") == resolved_provider_type
+            and req.get("provider", {}).get("target") == resolved_provider_target
+            and req.get("provider", {}).get("args", []) == (resolved_provider_args or [])
             and req.get("acceptance_criteria", []) == (acceptance_criteria or [])
             and req.get("predecessors", []) == (predecessor_receipts or [])
             and req.get("working_directory") == resolved_workdir
@@ -631,6 +850,8 @@ def prepare_task(
                 "receipt_path": active["receipt_path"],
                 "attempt": active["attempt"],
                 "status": active["status"],
+                "stage": stage,
+                "stage_context": stage_def,
             }
         raise RuntimeError(
             f"Cannot prepare task: Active dispatch '{active.get('dispatch_id')}' is already pending. "
@@ -737,7 +958,7 @@ def prepare_task(
         if max_attempts <= 0:
             raise RuntimeError(f"Budget exceeded: delivery attempts max ({max_attempts}) is exhausted for issue {curr_issue}.")
 
-        if _is_auxiliary_stage(stage):
+        if is_auxiliary:
             new_attempt = max(1, used_attempts)
         elif used_attempts == 0:
             if used_attempts >= max_attempts:
@@ -756,7 +977,7 @@ def prepare_task(
         budgets["delivery_attempts_max"] = max_attempts
         state["budgets"] = budgets
 
-        if not _is_auxiliary_stage(stage):
+        if not is_auxiliary:
             curr_item["stage"] = stage
             curr_item["status"] = "pending"
 
@@ -773,7 +994,7 @@ def prepare_task(
                 f"Budget exceeded: delivery attempts max ({max_attempts}) is exhausted."
             )
 
-        if _is_auxiliary_stage(stage):
+        if is_auxiliary:
             new_attempt = max(1, used_attempts)
         elif used_attempts == 0:
             if used_attempts >= max_attempts:
@@ -840,7 +1061,10 @@ def prepare_task(
         if rec:
             resolved_predecessors.append(rec)
 
-    params = dict(parameters or {})
+    params = dict(stage_def.get("parameters", {}))
+    params.update(stage_def.get("configs", {}))
+    if parameters:
+        params.update(parameters)
     if "delivery_target" not in params and repo != "local/repo":
         params["delivery_target"] = repo
     if "base_remote" not in params and base_remote:
@@ -860,9 +1084,9 @@ def prepare_task(
             "current_issue_id": str(curr_issue),
         },
         "provider": {
-            "type": provider_type,
-            "target": provider_target,
-            "args": provider_args or [],
+            "type": resolved_provider_type,
+            "target": resolved_provider_target,
+            "args": resolved_provider_args,
         },
         "environment": {
             "working_directory": str(resolved_workdir),
@@ -873,14 +1097,14 @@ def prepare_task(
         },
         "inputs": {
             "objective": objective,
-            "scope": scope,
+            "scope": resolved_scope,
             "acceptance_criteria": acceptance_criteria or [],
             "predecessor_receipts": resolved_predecessors,
             "parameters": params,
         },
         "contract": {
             "receipt_path": str(receipt_path),
-            "receipt_template": receipt_template,
+            "receipt_template": resolved_receipt_template,
         },
         "budgets": {
             "delivery_attempts_used": envelope_delivery_used,
@@ -910,12 +1134,13 @@ def prepare_task(
         "authorized": False,
         "envelope_path": str(envelope_path),
         "receipt_path": str(receipt_path),
+        "stage_context": stage_def,
         "request": {
             "objective": objective,
             "provider": {
-                "type": provider_type,
-                "target": provider_target,
-                "args": provider_args or [],
+                "type": resolved_provider_type,
+                "target": resolved_provider_target,
+                "args": resolved_provider_args,
             },
             "logical_stage": stage,
             "acceptance_criteria": acceptance_criteria or [],
@@ -935,6 +1160,8 @@ def prepare_task(
         "receipt_path": str(receipt_path),
         "attempt": new_attempt,
         "status": "prepared",
+        "stage": stage,
+        "stage_context": stage_def,
     }
 
 
@@ -1517,7 +1744,7 @@ def load_prepare_request(request_path: str) -> Dict[str, Any]:
     unknown = request.keys() - allowed_fields
     if unknown:
         raise ValueError(f"Unknown prepare request fields: {', '.join(sorted(unknown))}")
-    for field in ("stage", "objective", "provider"):
+    for field in ("stage", "objective"):
         if field not in request:
             raise ValueError(f"Prepare request missing required field {field!r}")
     for field in ("stage", "objective", "workdir", "scope", "branch", "commit", "receipt_template"):
@@ -1535,28 +1762,34 @@ def load_prepare_request(request_path: str) -> Dict[str, Any]:
             if not isinstance(value, (str, int)) or (isinstance(value, str) and not value.strip()):
                 raise ValueError(f"Request 'rework_issue' must be a non-empty string or integer, received {value!r}")
 
-    provider = request["provider"]
-    if not isinstance(provider, dict):
-        raise ValueError(f"Request 'provider' must be an object, received {provider!r}")
-    unknown = provider.keys() - {"type", "target", "args"}
-    if unknown:
-        raise ValueError(f"Unknown provider fields: {', '.join(sorted(unknown))}")
-    if provider.get("type") not in ("skill", "script"):
-        raise ValueError(f"Provider 'type' must be 'skill' or 'script', received {provider.get('type')!r}")
-    target = provider.get("target")
-    if not isinstance(target, str) or not target.strip():
-        raise ValueError(f"Provider 'target' must be a non-empty string, received {target!r}")
+    payload = dict(request)
+    if "provider" in request and request["provider"] is not None:
+        provider = request["provider"]
+        if not isinstance(provider, dict):
+            raise ValueError(f"Request 'provider' must be an object, received {provider!r}")
+        unknown = provider.keys() - {"type", "target", "args"}
+        if unknown:
+            raise ValueError(f"Unknown provider fields: {', '.join(sorted(unknown))}")
+        if provider.get("type") != "skill":
+            raise ValueError(f"Provider 'type' must be 'skill', received {provider.get('type')!r}")
+        target = provider.get("target")
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError(f"Provider 'target' must be a non-empty string, received {target!r}")
+        del payload["provider"]
+        payload.update(
+            provider_type=provider["type"],
+            provider_target=target,
+            provider_args=provider.get("args", []),
+        )
+
     for field, value in (
-        ("provider.args", provider.get("args", [])),
+        ("provider.args", payload.get("provider_args", [])),
         ("acceptance_criteria", request.get("acceptance_criteria", [])),
         ("predecessor_receipts", request.get("predecessor_receipts", [])),
     ):
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
             raise ValueError(f"Request {field!r} must be an array of strings, received {value!r}")
 
-    payload = dict(request)
-    del payload["provider"]
-    payload.update(provider_type=provider["type"], provider_target=target, provider_args=provider.get("args", []))
     if "rework_issue" in payload and payload["rework_issue"] is not None:
         payload["rework_issue"] = str(payload["rework_issue"]).strip()
     return payload

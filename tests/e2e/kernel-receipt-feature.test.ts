@@ -96,8 +96,8 @@ if __name__ == "__main__":
       stage: 'workspace_prepare',
       objective: 'Prepare workspace tree',
       provider: {
-        type: 'script',
-        target: kernelScript,
+        type: 'skill',
+        target: 'pc-workspace',
       },
       workdir: testEnv.dir,
     });
@@ -126,8 +126,8 @@ if __name__ == "__main__":
       stage: 'issue_work',
       objective: 'Run parameter-driven task',
       provider: {
-        type: 'script',
-        target: kernelScript,
+        type: 'skill',
+        target: 'pc-issue-work',
       },
       workdir: testEnv.dir,
       scope: 'Scope details here',
@@ -153,11 +153,11 @@ if __name__ == "__main__":
       '--root-issue', '25',
     ]);
     const prepRes = runPrepareTaskCli(testEnv.dir, {
-      stage: 'pipeline_audit',
+      stage: 'stage_4_refactor_audit',
       objective: 'Audit pipeline rules',
       provider: {
-        type: 'script',
-        target: kernelScript,
+        type: 'skill',
+        target: 'pc-pipeline-snakemake',
       },
       workdir: testEnv.dir,
     });

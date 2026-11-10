@@ -135,14 +135,13 @@ class TestEnvelopeSchemaValidation(unittest.TestCase):
             )
 
     def test_validation_fails_on_invalid_provider_types(self) -> None:
-        # Valid provider types: 'skill' and 'script'
-        for valid_type in ("skill", "script"):
-            data = build_valid_envelope_data(provider={"type": valid_type, "target": "target"})
-            errors = envelope.validate_envelope(data)
-            self.assertEqual(errors, [], f"Expected provider.type '{valid_type}' to be valid")
+        # Valid provider type: strictly 'skill'
+        data = build_valid_envelope_data(provider={"type": "skill", "target": "pc-issue-plan"})
+        errors = envelope.validate_envelope(data)
+        self.assertEqual(errors, [], "Expected provider.type 'skill' to be valid")
 
-        # Invalid provider types
-        for invalid_type in ("docker", "container", "plugin", "", None, 123):
+        # Invalid provider types (including deprecated/removed 'script')
+        for invalid_type in ("script", "docker", "container", "plugin", "", None, 123):
             data = build_valid_envelope_data(provider={"type": invalid_type, "target": "target"})
             errors = envelope.validate_envelope(data)
             self.assertTrue(
@@ -390,8 +389,8 @@ class TestEnvelopeCLI(unittest.TestCase):
             logical_stage="workspace_prepare",
             step_index=1,
             root_issue_id="38",
-            provider_type="script",
-            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            provider_type="skill",
+            provider_target="pc-workspace",
             working_directory=str(self.root),
             objective="Prepare workspace with auto config",
             receipt_path=str(self.root / "receipts" / "01.md"),
@@ -416,8 +415,8 @@ class TestEnvelopeCLI(unittest.TestCase):
             logical_stage="workspace_prepare",
             step_index=1,
             root_issue_id="39",
-            provider_type="script",
-            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            provider_type="skill",
+            provider_target="pc-workspace",
             working_directory=str(self.root),
             objective="Prepare workspace with fork roles",
             receipt_path=str(self.root / "receipts" / "01.md"),
@@ -441,8 +440,8 @@ class TestEnvelopeCLI(unittest.TestCase):
             logical_stage="workspace_prepare",
             step_index=1,
             root_issue_id="39",
-            provider_type="script",
-            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            provider_type="skill",
+            provider_target="pc-workspace",
             working_directory=str(self.root),
             delivery_target="explicit-upstream/repo",
             base_remote="upstream",
@@ -477,8 +476,8 @@ class TestEnvelopeCLI(unittest.TestCase):
                 logical_stage="workspace_prepare",
                 step_index=1,
                 root_issue_id="38",
-                provider_type="script",
-                provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+                provider_type="skill",
+                provider_target="pc-workspace",
                 working_directory=str(self.root),
                 objective="Prepare workspace with broken config",
                 receipt_path=str(self.root / "receipts" / "01.md"),
@@ -503,8 +502,8 @@ class TestEnvelopeCLI(unittest.TestCase):
             logical_stage="workspace_prepare",
             step_index=1,
             root_issue_id="38",
-            provider_type="script",
-            provider_target="skills/pc-workspace/scripts/prepare-worktree.py",
+            provider_type="skill",
+            provider_target="pc-workspace",
             working_directory=str(self.root),
             base_branch="main",
             objective="Prepare workspace with explicit main",

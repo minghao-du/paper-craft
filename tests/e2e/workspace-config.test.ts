@@ -14,7 +14,6 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createTestDir,
-  PREPARE_WORKTREE_SCRIPT,
   runLifecycleKernelCli,
   runPrepareTaskCli,
   runPrepareWorktreeCli,
@@ -156,8 +155,8 @@ describe('Issue #38: Workspace Config E2E', () => {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace for Issue #38',
       provider: {
-        type: 'script',
-        target: PREPARE_WORKTREE_SCRIPT,
+        type: 'skill',
+        target: 'pc-workspace',
       },
       workdir: repoDir,
     });
@@ -263,8 +262,8 @@ describe('Issue #38: Workspace Config E2E', () => {
       stage: 'workspace_prepare',
       objective: 'Custom container test',
       provider: {
-        type: 'script',
-        target: PREPARE_WORKTREE_SCRIPT,
+        type: 'skill',
+        target: 'pc-workspace',
       },
       workdir: repoDir,
     });
@@ -319,8 +318,8 @@ describe('Issue #38: Workspace Config E2E', () => {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace for fork issue #39',
       provider: {
-        type: 'script',
-        target: PREPARE_WORKTREE_SCRIPT,
+        type: 'skill',
+        target: 'pc-workspace',
       },
       workdir: repoDir,
     });

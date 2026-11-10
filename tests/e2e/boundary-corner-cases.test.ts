@@ -233,7 +233,7 @@ describe('Tier 2: Boundary & Corner Cases', () => {
 
     // Attempt 1
     const p1 = runPrepareTaskCli(testEnv.dir, {
-      stage: 'stage_1_work',
+      stage: 'stage_2_work',
       objective: 'Task 1',
       provider: {
         type: 'skill',
@@ -256,7 +256,7 @@ describe('Tier 2: Boundary & Corner Cases', () => {
 
     // Attempt 2
     const p2 = runPrepareTaskCli(testEnv.dir, {
-      stage: 'stage_1_work',
+      stage: 'stage_2_work',
       objective: 'Task 1',
       provider: {
         type: 'skill',
@@ -280,7 +280,7 @@ describe('Tier 2: Boundary & Corner Cases', () => {
 
     // Attempt 3
     const p3 = runPrepareTaskCli(testEnv.dir, {
-      stage: 'stage_1_work',
+      stage: 'stage_2_work',
       objective: 'Task 1',
       provider: {
         type: 'skill',
