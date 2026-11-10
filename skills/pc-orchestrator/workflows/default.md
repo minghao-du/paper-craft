@@ -203,7 +203,9 @@ Deliver the `current_issue_id` through an implementation and landing loop.
 - **Environment**: Prepared isolated feature worktree for `current_issue_id` validated by `workspace_prepare`.
 - **Inputs**: Current issue ID, acceptance criteria, predecessor receipts, and accepted workspace preparation with an explicit execution directory.
 - **Expected Result**: Verified implementation `commit` and verification conclusion in `result`. Accept only with the required checks and recorded environment.
-- **Routing**: Transition to `stage_2_land`, passing the implementation receipt to the landing provider.
+- **Routing**:
+  - `succeeded`: Transition to `stage_2_land`, passing the implementation receipt to the landing provider. A single delivery attempt covers the paired `stage_2_work` and `stage_2_land`.
+  - `failed` or `rework_needed`: Execution stops and stays on `current_issue_id`. The orchestrator may explicitly initiate the next attempt for this issue via `prepare` with `attempt_intent="new"`, which consumes only that issue's independent delivery budget. Other issues in the delivery sequence are unaffected, and previous attempt history is preserved without zeroing.
 
 ### Stage 2.2 — Landing and Merge (`stage_2_land`)
 - **Stage ID**: `stage_2_land`
@@ -221,7 +223,7 @@ Deliver the `current_issue_id` through an implementation and landing loop.
 - **Expected Result**: Native `result.outcome`, `merged`, and, for `landed`, `mergedCommit`. The provider validates and uses predecessor worktree and SHA.
 - **Routing**:
   - `landed` with verified merge evidence: Record merge evidence. For a child issue, advance directly to the next child issue in the ordered delivery sequence (`stage_2_work`), without child-level independent verification or finalization. Child issues rely on merge evidence for sequence progression; final closure verification is unified at root finalization. If children remain in the delivery sequence, execute the next child sequentially through `stage_2_work` and `stage_2_land`, passing predecessor receipts. Once all child issues (or the direct root issue) in the delivery sequence are landed, transition to `stage_3_verify` with the parent root objective and all delivery receipts.
-  - `rework_needed`: Routes to a fresh `stage_2_work` execution with the landing receipt. It reads findings, reconciles the recorded environment and SHA, and writes a new receipt. Pass that receipt to a fresh `stage_2_land` execution. Maximum of 3 delivery attempts per issue, including the initial attempt.
+  - `rework_needed` or `failed`: Execution stays on `current_issue_id`. Routes to a fresh `stage_2_work` execution with `attempt_intent="new"`, consuming one delivery attempt from that issue's independent budget (maximum 3 delivery attempts per issue). Switching targets, run recovery, and post-merge repairs never zero consumed attempts. When budget is exhausted, further attempts are blocked.
   - `blocked`: Execution status `blocked` when prerequisites prevent landing; halt to Blocker Decision Board.
 
 Accept delivery only for `landed` with verified merge evidence.
@@ -247,7 +249,7 @@ Accept delivery only for `landed` with verified merge evidence.
 - **Expected Result**: Native `result.outcome` and `evaluatedHead`.
 - **Routing**:
   - `verified`: Every original parent acceptance criterion has passing evidence for that integrated HEAD; transition to `stage_4_refactor_audit`. Missing evidence or unmet criteria keep parent acceptance incomplete, even when all children are closed.
-  - `rework_needed`: Dispatch acceptance-backed reconciliation to reopen any prematurely closed failing root or child issue and read back its state. Routes targeted repairs to `stage_2_work`, followed by another integrated verification. For gaps discovered after merge, assign a fresh repair branch and worktree based on the current base branch, retaining the original issue and delivery-attempt count. Dispatch `workspace_prepare` first, then supply the accepted environment assignment to the worker. Use the merged predecessor for findings and historical evidence. Create repair environment from current base branch. Keep issue delivery-attempt budget across repairs.
+  - `rework_needed`: When parent acceptance identifies defects attributable to an existing issue, the orchestrator designates that issue for targeted rework via `prepare` with `--rework-issue <issue_id>` (or in the prepare request) and `attempt_intent="new"`. Targeted rework reuses the target issue's work/land loop and its own independent delivery budget, retaining previous attempt history without zeroing. When the targeted rework issue lands, the delivery sequence routes directly back to `stage_3_verify` for the root issue; other already landed issues are not re-executed, their budgets and records remain untouched, and sequence order is preserved. Gaps that cannot be attributed to an existing issue must be routed to replanning (`scope_replan`); the kernel rejects unattributable rework targets rather than guessing attribution or replacing the plan.
 
 ---
 

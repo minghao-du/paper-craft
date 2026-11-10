@@ -1398,6 +1398,314 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertNotEqual(res_self.returncode, 0)
         self.assertIn("itself", res_self.stderr.lower())
 
+    def test_retry_under_independent_budget_failure_stays_on_issue_and_exhaustion_blocks(self):
+        # 1. Initialize with 2 child issues: 101, 102; delivery-attempts-max = 2
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "44",
+            "--child-issue", "101",
+            "--child-issue", "102",
+            "--delivery-attempts-max", "2",
+        )
+
+        # 2. Issue 101 attempt 1: prepare work, handoff, complete with failure
+        p1 = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Implement issue 101 attempt 1",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.assertEqual(p1["attempt"], 1)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p1["receipt_path"]).write_text("# Work receipt 101 try 1\nFailed", encoding="utf-8")
+
+        res_fail1 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "failed",
+            "result": {"outcome": "failed", "error": "Build failed"},
+            "receipt_path": p1["receipt_path"],
+            "summary": "101 failed attempt 1",
+        }))
+        self.assertEqual(res_fail1.returncode, 0)
+
+        # Verify A failure does NOT advance sequence to B (102); stays on 101
+        insp1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp1["current_issue_id"], "101")
+        self.assertEqual(insp1["current_stage"], "stage_2_work")
+        self.assertEqual(insp1["stage_status"], "failed")
+
+        items1 = insp1["delivery_sequence"]["items"]
+        self.assertEqual(items1[0]["budgets"]["delivery_attempts_used"], 1)
+        self.assertEqual(items1[1]["budgets"]["delivery_attempts_used"], 0)
+
+        # 3. Explicit retry on 101: prepare with attempt_intent="new"
+        p2 = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Implement issue 101 attempt 2",
+            "attempt_intent": "new",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.assertEqual(p2["attempt"], 2)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p2["receipt_path"]).write_text("# Work receipt 101 try 2\nRework needed", encoding="utf-8")
+
+        res_fail2 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed", "error": "Tests still failing"},
+            "receipt_path": p2["receipt_path"],
+            "summary": "101 needs rework on attempt 2",
+        }))
+        self.assertEqual(res_fail2.returncode, 0)
+
+        # 4. Check state: 101 consumed 2 attempts; 102 still has 0 consumed
+        insp2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp2["current_issue_id"], "101")
+        items2 = insp2["delivery_sequence"]["items"]
+        self.assertEqual(items2[0]["budgets"]["delivery_attempts_used"], 2)
+        self.assertEqual(items2[1]["budgets"]["delivery_attempts_used"], 0)
+
+        # 5. Switching target / reload / recovery does not reset 101's budget
+        reopen = self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "44")
+        self.assertEqual(reopen.returncode, 0)
+        insp_reload = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_reload["current_issue_id"], "101")
+        self.assertEqual(insp_reload["delivery_sequence"]["items"][0]["budgets"]["delivery_attempts_used"], 2)
+        self.assertEqual(insp_reload["delivery_sequence"]["items"][1]["budgets"]["delivery_attempts_used"], 0)
+
+        # 6. Budget exhaustion: attempt 3 with attempt_intent="new" must be rejected
+        res_exhaust = self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Implement issue 101 attempt 3",
+            "attempt_intent": "new",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        })
+        self.assertNotEqual(res_exhaust.returncode, 0)
+        self.assertIn("budget exceeded", res_exhaust.stderr.lower())
+
+        insp_blocked = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertTrue(any("budget exhausted" in b.lower() for b in insp_blocked["blocking_reasons"]))
+
+    def test_targeted_rework_after_delivery_routes_back_to_parent_verify_without_rerunning_others(self):
+        # 1. Initialize with 2 child issues: 101, 102; delivery-attempts-max = 3
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "44",
+            "--child-issue", "101",
+            "--child-issue", "102",
+            "--delivery-attempts-max", "3",
+        )
+
+        # Deliver 101 (work -> land)
+        p_w101 = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Work 101",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.assertEqual(p_w101["attempt"], 1)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_w101["receipt_path"]).write_text("# Work 101", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "implemented", "commit": "c101"},
+            "receipt_path": p_w101["receipt_path"],
+            "summary": "Implemented 101",
+        }))
+
+        p_l101 = json.loads(self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land 101",
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        }).stdout)
+        self.assertEqual(p_l101["attempt"], 1)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_l101["receipt_path"]).write_text("# Land 101", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "landed", "mergedCommit": "m101"},
+            "receipt_path": p_l101["receipt_path"],
+            "summary": "Landed 101",
+        }))
+
+        # Deliver 102 (work -> land)
+        p_w102 = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Work 102",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.assertEqual(p_w102["attempt"], 1)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_w102["receipt_path"]).write_text("# Work 102", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "implemented", "commit": "c102"},
+            "receipt_path": p_w102["receipt_path"],
+            "summary": "Implemented 102",
+        }))
+
+        p_l102 = json.loads(self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land 102",
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        }).stdout)
+        self.assertEqual(p_l102["attempt"], 1)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_l102["receipt_path"]).write_text("# Land 102", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "landed", "mergedCommit": "m102"},
+            "receipt_path": p_l102["receipt_path"],
+            "summary": "Landed 102",
+        }))
+
+        # Both landed! State is now at stage_3_verify for root issue 44
+        insp_verify = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_verify["current_issue_id"], "44")
+        self.assertEqual(insp_verify["current_stage"], "stage_3_verify")
+        self.assertTrue(insp_verify["delivery_sequence"]["completed"])
+
+        # 2. Stage 3 Verify completes with rework_needed
+        p_v = json.loads(self.prepare({
+            "stage": "stage_3_verify",
+            "objective": "Verify integrated root 44",
+            "provider": {"type": "skill", "target": "pc-issue-verify"},
+        }).stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_v["receipt_path"]).write_text("# Verify receipt\nIssue 101 needs fix", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed", "rework_target": "101"},
+            "receipt_path": p_v["receipt_path"],
+            "summary": "Integrated test reveals defect in 101",
+        }))
+
+        # 3. Targeted rework on Issue 101: prepare stage_2_work with rework_issue="101" and attempt_intent="new"
+        p_rw_work = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Rework issue 101 defect",
+            "rework_issue": "101",
+            "attempt_intent": "new",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        # Attempt must be 2, retaining previous attempt history
+        self.assertEqual(p_rw_work["attempt"], 2)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_rw_work["receipt_path"]).write_text("# Rework 101", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "implemented", "commit": "c101-fix"},
+            "receipt_path": p_rw_work["receipt_path"],
+            "summary": "Fixed 101 defect",
+        }))
+
+        # Next stage is stage_2_land for 101; paired work/land attempt remains 2
+        p_rw_land = json.loads(self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land reworked issue 101",
+            "attempt_intent": "same",
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        }).stdout)
+        self.assertEqual(p_rw_land["attempt"], 2)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_rw_land["receipt_path"]).write_text("# Rework Land 101", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "landed", "mergedCommit": "m101-fix"},
+            "receipt_path": p_rw_land["receipt_path"],
+            "summary": "Landed 101 fix",
+        }))
+
+        # 4. After 101 rework lands:
+        # Must return directly to stage_3_verify for root issue 44!
+        insp_post_rework = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_post_rework["current_issue_id"], "44")
+        self.assertEqual(insp_post_rework["current_stage"], "stage_3_verify")
+        self.assertEqual(insp_post_rework["stage_status"], "succeeded")
+
+        # 5. Issue 102 (B) must NOT have re-run; its budget and records are intact
+        items_post = insp_post_rework["delivery_sequence"]["items"]
+        self.assertEqual(items_post[0]["issue_id"], "101")
+        self.assertEqual(items_post[0]["budgets"]["delivery_attempts_used"], 2)
+        self.assertEqual(items_post[0]["landed"], True)
+        self.assertEqual(items_post[0]["land_receipt_path"], str(Path(p_rw_land["receipt_path"]).resolve()))
+
+        self.assertEqual(items_post[1]["issue_id"], "102")
+        self.assertEqual(items_post[1]["budgets"]["delivery_attempts_used"], 1)
+        self.assertEqual(items_post[1]["landed"], True)
+        self.assertEqual(items_post[1]["land_receipt_path"], str(Path(p_l102["receipt_path"]).resolve()))
+
+    def test_unattributable_rework_rejected_and_routes_to_independent_replan(self):
+        # 1. Initialize with 2 child issues: 101, 102; delivery-attempts-max = 3, replans-max = 2
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "44",
+            "--child-issue", "101",
+            "--child-issue", "102",
+            "--delivery-attempts-max", "3",
+            "--replans-max", "2",
+        )
+
+        # 2. Attempt to attribute rework to non-existent issue 999 must be rejected
+        res_unknown = self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Rework non-existent issue 999",
+            "rework_issue": "999",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        })
+        self.assertNotEqual(res_unknown.returncode, 0)
+        self.assertIn("cannot attribute rework", res_unknown.stderr.lower())
+        self.assertIn("replanning", res_unknown.stderr.lower())
+
+        # 3. Route unattributable gap to scope_replan: uses replan budget, not delivery budget
+        p_replan1 = json.loads(self.prepare({
+            "stage": "scope_replan",
+            "objective": "Replan scope boundaries for unaccounted gap",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }).stdout)
+        self.assertEqual(p_replan1["attempt"], 1)
+
+        insp_replan1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        # Replan used is 1, delivery attempts used is still 0!
+        self.assertEqual(insp_replan1["budgets"]["replans_used"], 1)
+        self.assertEqual(insp_replan1["budgets"]["delivery_attempts_used"], 0)
+        self.assertEqual(insp_replan1["delivery_sequence"]["items"][0]["budgets"]["delivery_attempts_used"], 0)
+
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_replan1["receipt_path"]).write_text("# Scope replan 1", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "revised_plan"},
+            "receipt_path": p_replan1["receipt_path"],
+            "summary": "Revised plan",
+        }))
+
+        # Replan 2
+        p_replan2 = json.loads(self.prepare({
+            "stage": "scope_replan",
+            "objective": "Replan scope boundaries again",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }).stdout)
+        self.assertEqual(p_replan2["attempt"], 2)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_replan2["receipt_path"]).write_text("# Scope replan 2", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "decision_required"},
+            "receipt_path": p_replan2["receipt_path"],
+            "summary": "Decision required",
+        }))
+
+        # Replan 3 exceeds max (2) and is rejected
+        res_replan3 = self.prepare({
+            "stage": "scope_replan",
+            "objective": "Replan scope boundaries 3rd time",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        })
+        self.assertNotEqual(res_replan3.returncode, 0)
+        self.assertIn("budget exceeded", res_replan3.stderr.lower())
+        self.assertIn("replan", res_replan3.stderr.lower())
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,6 +55,10 @@ def is_verify_stage(stage: str) -> bool:
     return stage in ("stage_3_verify", "issue_verify")
 
 
+def is_replan_stage(stage: str) -> bool:
+    return stage in ("scope_replan",)
+
+
 def is_auxiliary_stage(stage: str) -> bool:
     return stage in ("workspace_prepare", "workspace_cleanup")
 
@@ -386,6 +390,8 @@ def prepare_task(
     branch: Optional[str] = None,
     commit: Optional[str] = None,
     receipt_template: str = DEFAULT_RECEIPT_TEMPLATE,
+    rework_issue: Optional[str | int] = None,
+    target_issue: Optional[str | int] = None,
 ) -> Dict[str, Any]:
     """Prepare a fixed task dispatch, generate envelope, and assign receipt path."""
     receipt_root_path = Path(receipt_root).resolve()
@@ -439,7 +445,48 @@ def prepare_task(
     # Determine attempt and budget
     delivery_seq = state.get("delivery_sequence")
     curr_item = None
-    if delivery_seq and not delivery_seq.get("completed", False) and not is_plan_stage(stage):
+    active_rework = delivery_seq.get("active_rework_issue_id") if delivery_seq else None
+
+    designated_rework = None
+    if rework_issue is not None or target_issue is not None:
+        designated_rework = str(rework_issue if rework_issue is not None else target_issue).strip()
+
+    if designated_rework is not None:
+        if delivery_seq:
+            for it in delivery_seq.get("items", []):
+                if str(it.get("issue_id")) == designated_rework:
+                    curr_item = it
+                    break
+            if not curr_item and str(state.get("root_issue_id")) != designated_rework:
+                raise ValueError(
+                    f"Cannot attribute rework to issue '{designated_rework}': issue not found in delivery sequence. "
+                    "Gaps that cannot be attributed to an existing issue must be routed to replanning; "
+                    "do not guess attribution or replace plan."
+                )
+            if curr_item:
+                delivery_seq["active_rework_issue_id"] = designated_rework
+                curr_issue = designated_rework
+                state["current_issue_id"] = designated_rework
+            else:
+                curr_issue = designated_rework
+                state["current_issue_id"] = designated_rework
+        elif str(state.get("root_issue_id")) == designated_rework:
+            curr_issue = designated_rework
+            state["current_issue_id"] = designated_rework
+        else:
+            raise ValueError(
+                f"Cannot attribute rework to issue '{designated_rework}': issue not found in delivery sequence. "
+                "Gaps that cannot be attributed to an existing issue must be routed to replanning; "
+                "do not guess attribution or replace plan."
+            )
+    elif active_rework and delivery_seq and not is_plan_stage(stage) and not is_verify_stage(stage) and not is_replan_stage(stage):
+        for it in delivery_seq.get("items", []):
+            if str(it.get("issue_id")) == str(active_rework):
+                curr_item = it
+                break
+        curr_issue = str(active_rework)
+        state["current_issue_id"] = curr_issue
+    elif delivery_seq and not delivery_seq.get("completed", False) and not is_plan_stage(stage) and not is_verify_stage(stage):
         curr_idx = delivery_seq.get("current_index", 0)
         items = delivery_seq.get("items", [])
         if curr_idx < len(items):
@@ -448,13 +495,46 @@ def prepare_task(
             state["current_issue_id"] = curr_issue
         else:
             curr_issue = state.get("current_issue_id", state.get("root_issue_id", "0"))
-    elif is_plan_stage(stage):
+    elif is_plan_stage(stage) or is_verify_stage(stage):
         curr_issue = state.get("root_issue_id", "0")
+        state["current_issue_id"] = curr_issue
     else:
         curr_issue = state.get("current_issue_id", state.get("root_issue_id", "0"))
 
     budgets = state.get("budgets", {})
-    if curr_item is not None:
+    if is_replan_stage(stage):
+        origin_stage = (parameters or {}).get("originating_stage")
+        if not origin_stage:
+            curr_st = state.get("current_stage", "stage_1_plan")
+            if is_replan_stage(curr_st):
+                origin_stage = state.get("originating_stage_for_replan", "stage_1_plan")
+            else:
+                origin_stage = curr_st
+                state["originating_stage_for_replan"] = origin_stage
+
+        target_budgets = curr_item.setdefault("budgets", {}) if curr_item is not None else state.setdefault("budgets", {})
+        stage_replans = target_budgets.setdefault("replans_by_stage", {})
+        used_replans_stage = stage_replans.get(origin_stage, 0)
+        max_replans = target_budgets.get("replans_max", budgets.get("replans_max", 2))
+
+        if max_replans <= 0 or used_replans_stage >= max_replans:
+            raise RuntimeError(
+                f"Budget exceeded: replans used ({used_replans_stage}) reached maximum ({max_replans}) for issue {curr_issue} and stage {origin_stage}."
+            )
+
+        new_replans = used_replans_stage + 1
+        stage_replans[origin_stage] = new_replans
+        target_budgets["replans_used"] = target_budgets.get("replans_used", 0) + 1
+        budgets["replans_used"] = budgets.get("replans_used", 0) + 1
+        state["budgets"] = budgets
+
+        new_attempt = new_replans
+        envelope_delivery_used = target_budgets.get("delivery_attempts_used", budgets.get("delivery_attempts_used", 0))
+        envelope_delivery_max = target_budgets.get("delivery_attempts_max", budgets.get("delivery_attempts_max", 3))
+        envelope_replan_used = new_replans
+        envelope_replan_max = max_replans
+    elif curr_item is not None:
+        state["originating_stage_for_replan"] = None
         item_budgets = curr_item.setdefault("budgets", {})
         used_attempts = item_budgets.get("delivery_attempts_used", 0)
         max_attempts = item_budgets.get("delivery_attempts_max", budgets.get("delivery_attempts_max", 3))
@@ -480,6 +560,15 @@ def prepare_task(
         budgets["delivery_attempts_used"] = item_budgets["delivery_attempts_used"]
         budgets["delivery_attempts_max"] = max_attempts
         state["budgets"] = budgets
+
+        if not is_auxiliary_stage(stage):
+            curr_item["stage"] = stage
+            curr_item["status"] = "pending"
+
+        envelope_delivery_used = item_budgets["delivery_attempts_used"]
+        envelope_delivery_max = max_attempts
+        envelope_replan_used = item_budgets.get("replans_used", budgets.get("replans_used", 0))
+        envelope_replan_max = item_budgets.get("replans_max", budgets.get("replans_max", 2))
     else:
         used_attempts = budgets.get("delivery_attempts_used", 0)
         max_attempts = budgets.get("delivery_attempts_max", 3)
@@ -508,6 +597,11 @@ def prepare_task(
         else:
             new_attempt = used_attempts
         state["budgets"] = budgets
+
+        envelope_delivery_used = budgets["delivery_attempts_used"]
+        envelope_delivery_max = max_attempts
+        envelope_replan_used = budgets.get("replans_used", 0)
+        envelope_replan_max = budgets.get("replans_max", 2)
 
     # Step index
     step_index = state.get("next_step_index", 1)
@@ -591,12 +685,12 @@ def prepare_task(
             "receipt_template": receipt_template,
         },
         "budgets": {
-            "delivery_attempts_used": budgets["delivery_attempts_used"],
-            "delivery_attempts_max": max_attempts,
-            "delivery_attempts_limit": max_attempts,
-            "replans_used": budgets.get("replans_used", 0),
-            "replans_max": budgets.get("replans_max", 2),
-            "replans_limit": budgets.get("replans_max", 2),
+            "delivery_attempts_used": envelope_delivery_used,
+            "delivery_attempts_max": envelope_delivery_max,
+            "delivery_attempts_limit": envelope_delivery_max,
+            "replans_used": envelope_replan_used,
+            "replans_max": envelope_replan_max,
+            "replans_limit": envelope_replan_max,
         },
     }
 
@@ -931,13 +1025,22 @@ def complete_dispatch(
         else:
             state["stage_status"] = status
 
-    elif state.get("delivery_sequence") and not state["delivery_sequence"].get("completed", False):
+    elif state.get("delivery_sequence") and (not state["delivery_sequence"].get("completed", False) or state["delivery_sequence"].get("active_rework_issue_id")):
         del_seq = state["delivery_sequence"]
-        curr_idx = del_seq.get("current_index", 0)
-        items = del_seq.get("items", [])
-        if curr_idx < len(items):
-            curr_item = items[curr_idx]
+        active_rework = del_seq.get("active_rework_issue_id")
+        curr_item = None
+        if active_rework:
+            for it in del_seq.get("items", []):
+                if str(it.get("issue_id")) == str(active_rework):
+                    curr_item = it
+                    break
+        else:
+            curr_idx = del_seq.get("current_index", 0)
+            items = del_seq.get("items", [])
+            if curr_idx < len(items):
+                curr_item = items[curr_idx]
 
+        if curr_item is not None:
             if is_auxiliary_stage(stage_name):
                 # Auxiliary preparation does NOT advance sequence!
                 state["current_stage"] = curr_item["stage"]
@@ -965,7 +1068,14 @@ def complete_dispatch(
                     curr_item["land_dispatch_id"] = active["dispatch_id"]
                     curr_item["land_receipt_path"] = str(assigned_receipt)
 
-                    if curr_idx + 1 < len(items):
+                    if active_rework:
+                        del_seq["active_rework_issue_id"] = None
+                        del_seq["completed"] = True
+                        state["current_issue_id"] = str(state.get("root_issue_id", "0"))
+                        state["current_stage"] = "stage_3_verify"
+                        state["stage_status"] = "succeeded"
+                        state["budgets"]["delivery_attempts_used"] = 0
+                    elif curr_idx + 1 < len(items):
                         del_seq["current_index"] = curr_idx + 1
                         next_item = items[curr_idx + 1]
                         state["current_issue_id"] = next_item["issue_id"]
@@ -990,6 +1100,11 @@ def complete_dispatch(
                     state["stage_status"] = "needs_rework"
                 else:
                     state["stage_status"] = status
+        else:
+            if outcome == "rework_needed":
+                state["stage_status"] = "needs_rework"
+            else:
+                state["stage_status"] = status
     else:
         if outcome == "rework_needed":
             state["stage_status"] = "needs_rework"
@@ -1217,6 +1332,7 @@ def load_prepare_request(request_path: str) -> Dict[str, Any]:
     allowed_fields = {
         "stage", "objective", "provider", "acceptance_criteria", "predecessor_receipts",
         "workdir", "scope", "attempt_intent", "branch", "commit", "receipt_template",
+        "rework_issue", "target_issue",
     }
     unknown = request.keys() - allowed_fields
     if unknown:
@@ -1232,6 +1348,13 @@ def load_prepare_request(request_path: str) -> Dict[str, Any]:
                 raise ValueError(f"Request {field!r} must be {expected}, received {value!r}")
     if "attempt_intent" in request and request["attempt_intent"] not in ("same", "new"):
         raise ValueError(f"Request 'attempt_intent' must be 'same' or 'new', received {request['attempt_intent']!r}")
+
+    for field in ("rework_issue", "target_issue"):
+        if field in request:
+            value = request[field]
+            if value is not None:
+                if not isinstance(value, (str, int)) or (isinstance(value, str) and not value.strip()):
+                    raise ValueError(f"Request {field!r} must be a non-empty string or integer, received {value!r}")
 
     provider = request["provider"]
     if not isinstance(provider, dict):
@@ -1255,6 +1378,9 @@ def load_prepare_request(request_path: str) -> Dict[str, Any]:
     payload = dict(request)
     del payload["provider"]
     payload.update(provider_type=provider["type"], provider_target=target, provider_args=provider.get("args", []))
+    for field in ("rework_issue", "target_issue"):
+        if field in payload and payload[field] is not None:
+            payload[field] = str(payload[field]).strip()
     return payload
 
 
@@ -1283,6 +1409,8 @@ def main() -> None:
     p_prep = subparsers.add_parser("prepare", help="Prepare a fixed task dispatch and envelope.")
     p_prep.add_argument("--receipt-root", required=True, help="Absolute path to receipts root directory.")
     p_prep.add_argument("--request", required=True, help="Absolute path to the prepare request JSON file.")
+    p_prep.add_argument("--rework-issue", help="Target issue ID for targeted rework.")
+    p_prep.add_argument("--target-issue", help="Target issue ID for targeted rework (alias for --rework-issue).")
 
     # handoff
     p_hand = subparsers.add_parser("handoff", help="Record execution handoff boundary.")
@@ -1332,6 +1460,10 @@ def main() -> None:
             if not Path(args.receipt_root).is_absolute():
                 raise ValueError(f"Receipt root must be absolute, received {args.receipt_root!r}")
             request = load_prepare_request(args.request)
+            if args.rework_issue:
+                request["rework_issue"] = args.rework_issue
+            elif args.target_issue:
+                request["target_issue"] = args.target_issue
             disp = prepare_task(receipt_root=args.receipt_root, **request)
             print(json.dumps(disp, indent=2, ensure_ascii=False))
         elif args.command == "handoff":
