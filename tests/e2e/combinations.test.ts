@@ -15,7 +15,6 @@ import {
   createTestDir,
   runLifecycleKernelCli,
   runPrepareTaskCli,
-  runStateMachineCli,
   type TaskInputEnvelope,
 } from './test-helpers.js';
 
@@ -67,7 +66,7 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     expect(env.environment.commit).toBe('9999999999999999999999999999999999999999');
   });
 
-  it('C3.2: predecessor receipt automatically chains from completed stage into successor envelope', () => {
+  it('C3.2: predecessor receipt requires explicit specification without implicit inheritance', () => {
     // 1. Init lifecycle kernel
     runLifecycleKernelCli([
       'init',
@@ -99,33 +98,75 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       }),
     ]);
 
-    // 3. Generate envelope for stage 2
-    const p2 = runPrepareTaskCli(testEnv.dir, {
+    // 3. Generate envelope for stage 2 without predecessor receipts: strictly empty []
+    const p2NoPre = runPrepareTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
-      objective: 'Execute work for issue 888',
+      objective: 'Execute work for issue 888 without predecessors',
       provider: {
-        type: 'script',
-        target: 'skills/pc-workspace/scripts/prepare-worktree.py',
+        type: 'skill',
+        target: 'pc-issue-work',
       },
       workdir: testEnv.dir,
     });
-    expect(p2.status).toBe(0);
+    expect(p2NoPre.status).toBe(0);
+    const p2NoPreData = JSON.parse(p2NoPre.stdout);
+    const envNoPre: TaskInputEnvelope = JSON.parse(fs.readFileSync(p2NoPreData.envelope_path, 'utf-8'));
+    expect(envNoPre.inputs.predecessor_receipts).toEqual([]);
 
-    const p2Data = JSON.parse(p2.stdout);
-    const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(p2Data.envelope_path, 'utf-8'));
-    expect(env.task.logical_stage).toBe('stage_2_work');
-    // Predecessor receipt automatically extracted from latest completed stage
-    expect(env.inputs.predecessor_receipts).toContain(p1Data.receipt_path);
+    // Complete stage 2
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    fs.writeFileSync(p2NoPreData.receipt_path, '# Stage 2 Work Receipt\nOutcome: implemented');
+    runLifecycleKernelCli([
+      'complete',
+      '--receipt-root', testEnv.dir,
+      '--report', JSON.stringify({
+        execution_status: 'succeeded',
+        result: { outcome: 'implemented' },
+        receipt_path: p2NoPreData.receipt_path,
+        summary: 'Stage 2 work completed',
+      }),
+    ]);
+
+    // 4. Reject invalid non-existent predecessor
+    const pBad = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_land',
+      objective: 'Land with invalid predecessor',
+      provider: {
+        type: 'skill',
+        target: 'pc-pr-land',
+      },
+      workdir: testEnv.dir,
+      predecessor_receipts: [path.join(testEnv.dir, 'non-existent.md')],
+    });
+    expect(pBad.status).not.toBe(0);
+
+    // 5. Explicit predecessor receipts accepted and passed into envelope
+    const p3 = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_2_land',
+      objective: 'Land with explicit predecessors',
+      provider: {
+        type: 'skill',
+        target: 'pc-pr-land',
+      },
+      workdir: testEnv.dir,
+      predecessor_receipts: [p1Data.receipt_path, p2NoPreData.receipt_path],
+    });
+    expect(p3.status).toBe(0);
+
+    const p3Data = JSON.parse(p3.stdout);
+    const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(p3Data.envelope_path, 'utf-8'));
+    expect(env.task.logical_stage).toBe('stage_2_land');
+    expect(env.inputs.predecessor_receipts).toEqual([p1Data.receipt_path, p2NoPreData.receipt_path]);
   });
 
-  it('C3.3: seamless provider type switching ("skill" -> "script") across stages', () => {
+  it('C3.3: seamless provider target switching across stages', () => {
     runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
       '--root-issue', '555',
     ]);
 
-    // Stage 1: Skill provider
+    // Stage 1: Skill provider targeting pc-issue-plan
     const p1 = runPrepareTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       objective: 'Plan with skill',
@@ -149,13 +190,13 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       }),
     ]);
 
-    // Stage 2: Script provider (zero perception by state machine)
+    // Stage 2: Skill provider targeting pc-issue-work with args
     const p2 = runPrepareTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
-      objective: 'Work with script',
+      objective: 'Work with skill',
       provider: {
-        type: 'script',
-        target: 'scripts/automated_worker.py',
+        type: 'skill',
+        target: 'pc-issue-work',
         args: ['--fast'],
       },
       workdir: testEnv.dir,
@@ -169,8 +210,8 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     expect(env1.provider.type).toBe('skill');
     expect(env1.provider.target).toBe('pc-issue-plan');
 
-    expect(env2.provider.type).toBe('script');
-    expect(env2.provider.target).toBe('scripts/automated_worker.py');
+    expect(env2.provider.type).toBe('skill');
+    expect(env2.provider.target).toBe('pc-issue-work');
     expect(env2.provider.args).toEqual(['--fast']);
 
     // State machine is completely oblivious to provider differences
@@ -268,14 +309,19 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       }),
     ]);
 
-    // Check budget with max 3: now 3/3 => budget exceeded
-    const budgetCheck = runStateMachineCli([
-      'check-budget',
+    // Inspect state: now 3/3 attempts used => delivery attempt budget exhausted in blocking_reasons
+    const inspectCheck = runLifecycleKernelCli([
+      'inspect',
       '--receipt-root', testEnv.dir,
-      '--type', 'delivery',
-      '--limit', '3',
+      '--json',
     ]);
-    expect(budgetCheck.status).toBe(1);
-    expect(budgetCheck.stderr).toContain('Budget exceeded: delivery_attempts_used is 3, limit is 3');
+    expect(inspectCheck.status).toBe(0);
+    const inspectData = JSON.parse(inspectCheck.stdout);
+    expect(inspectData.budgets.delivery_attempts_used).toBe(3);
+    expect(inspectData.blocking_reasons).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/delivery attempt budget exhausted/i),
+      ]),
+    );
   });
 });

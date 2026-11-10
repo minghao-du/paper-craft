@@ -4,124 +4,18 @@
 - **Version**: 1.0.0
 - **Initial Stage**: stage_1_plan
 - **Target**: Coordinate end-to-end issue delivery from planning through implementation, landing, verification, refactoring, and state recording.
+- **Workflow Definition**: Defined in [default.yaml](default.yaml).
 
-Resolve `<workspace-skill-dir>` to the absolute installed `pc-workspace` directory before
-using the script-provider alternatives.
+This document provides natural-language documentation for the lifecycle stages, environment bindings, routing rules, and acceptance gates declared in `default.yaml`.
 
-```yaml
-workflow:
-  name: default
-  version: "1.0.0"
-  initial_stage: stage_1_plan
-  target: "End-to-end issue delivery lifecycle"
-  stages:
-    - id: workspace_prepare
-      logical_task: workspace_prepare
-      name: "Workspace Lifecycle Preparation"
-      provider:
-        type: skill
-        target: pc-workspace
-        args: []
-      # Script substitution alternative:
-      # provider:
-      #   type: script
-      #   target: <workspace-skill-dir>/scripts/prepare-worktree.py
-
-    - id: stage_1_plan
-      logical_task: issue_plan
-      name: "Stage 1 — Planning and Decomposition"
-      provider:
-        type: skill
-        target: pc-issue-plan
-        args: []
-
-    - id: stage_2_work
-      logical_task: issue_work
-      name: "Stage 2.1 — Issue Implementation"
-      provider:
-        type: skill
-        target: pc-issue-work
-        args: []
-
-    - id: stage_2_land
-      logical_task: issue_land
-      name: "Stage 2.2 — Landing and Merge"
-      provider:
-        type: skill
-        target: pc-pr-land
-        args: []
-
-    - id: stage_3_verify
-      logical_task: issue_verify
-      name: "Stage 3 — Integrated Acceptance Verification"
-      provider:
-        type: skill
-        target: pc-issue-verify
-        args: []
-
-    - id: stage_4_refactor_audit
-      logical_task: pipeline_refactor_audit
-      name: "Stage 4.1 — Pipeline Refactoring Audit & Plan"
-      provider:
-        type: skill
-        target: pc-pipeline-refactor
-        args: ["--audit"]
-
-    - id: stage_4_refactor_execute
-      logical_task: pipeline_refactor_execute
-      name: "Stage 4.2 — Pipeline Refactoring Execution"
-      provider:
-        type: skill
-        target: pc-pipeline-refactor
-        args: ["--execute"]
-
-    - id: stage_5_redeliver
-      logical_task: pipeline_refactor_redeliver
-      name: "Stage 5 — Re-delivery of Pipeline Changes"
-      provider:
-        type: skill
-        target: pc-pr-land
-        args: []
-
-    - id: stage_6_research_record
-      logical_task: research_record
-      name: "Stage 6 — Research Records and State Finalization"
-      provider:
-        type: skill
-        target: pc-research-state
-        args: []
-
-    - id: issue_finalize
-      logical_task: issue_finalize
-      name: "Issue Closure and Scope Reconciliation"
-      provider:
-        type: skill
-        target: pc-issue-verify
-        args: []
-
-    - id: workspace_cleanup
-      logical_task: workspace_cleanup
-      name: "Workspace Lifecycle Cleanup"
-      provider:
-        type: skill
-        target: pc-workspace
-        args: ["--cleanup"]
-
-    - id: scope_replan
-      logical_task: scope_replan
-      name: "Replanning for Scope Boundaries"
-      provider:
-        type: skill
-        target: pc-issue-plan
-        args: ["--replan"]
-```
+---
 
 ---
 
 ## Environment assignments & lifecycle
 
 Apply [workspace lifecycle and dispatch](../references/workspaces.md) before every professional task.
-Environment preparation and cleanup are defined as decoupled logical tasks (`workspace_prepare` and `workspace_cleanup`), executable via skill or script provider.
+Environment preparation and cleanup are defined as decoupled logical tasks (`workspace_prepare` and `workspace_cleanup`), executable via dedicated skill subagents.
 
 | Logical Task | Assigned environment | Preparation Requirement |
 | --- | --- | --- |
@@ -151,7 +45,6 @@ Carry explicit artifact locations into verification and research recording. Afte
     target: pc-workspace
     args: []
   ```
-  *(Alternative script provider: `type: script`, `target: <workspace-skill-dir>/scripts/prepare-worktree.py`)*
 - **Objective**: Prepare and validate the Git execution directory (persistent checkout, isolated feature worktree, or pinned detached worktree) required for the target logical stage.
 - **Inputs**: Target repository, base branch, requested feature branch or commit SHA, and workspace configuration.
 - **Contract**: Writes Markdown receipt to `contract.receipt_path` and emits `{ execution_status, result: { repository, working_directory, worktree, branch, baseBranch, commit, created }, receipt_path, summary }`.
@@ -198,7 +91,6 @@ Deliver the `current_issue_id` through an implementation and landing loop.
     target: pc-issue-work
     args: []
   ```
-  *(Alternative script provider: `type: script`, `target: scripts/automated-worker.py`)*
 - **Objective**: Implement required code/tests for `current_issue_id` satisfying all acceptance criteria.
 - **Environment**: Prepared isolated feature worktree for `current_issue_id` validated by `workspace_prepare`.
 - **Inputs**: Current issue ID, acceptance criteria, predecessor receipts, and accepted workspace preparation with an explicit execution directory.
@@ -241,7 +133,6 @@ Accept delivery only for `landed` with verified merge evidence.
     target: pc-issue-verify
     args: []
   ```
-  *(Alternative script provider: `type: script`, `target: scripts/acceptance-runner.py`)*
 - **Entry Gate**: All planned children have accepted delivery evidence, or the root was delivered directly. Individual child completion does not establish parent acceptance.
 - **Objective**: Verify every original parent requirement and acceptance threshold against the integrated HEAD and combined artifacts. Check that the delivered children collectively fulfill the parent, including cross-child integration; child receipts support this verification but do not replace it.
 - **Environment**: Isolated detached worktree pinned to the integrated base commit prepared by `workspace_prepare`.
@@ -372,7 +263,6 @@ Organize touched pipeline files under scientific invariance with a human steerin
     target: pc-workspace
     args: ["--cleanup"]
   ```
-  *(Alternative script provider: `type: script`, `target: <workspace-skill-dir>/scripts/prepare-worktree.py`, `args: ["--cleanup"]`)*
 - **Objective**: Remove eligible worktrees and merged local and remote task branches belonging to the root issue tree, including evidenced historical resources; retain changed or still-used resources with reasons.
 - **Inputs**: Supply `inputs.parameters.candidates` using the cleanup candidate contract in `pc-workspace` §5. Reconcile the finalization inventory and historical ownership evidence with final SHAs, PR identities, delivery/verification receipts, durable artifact locations, and completed-consumer status. Carry the recorded delivery target, base remote, and push remote for each branch, and forward unresolved inventory items in `inputs.parameters.unresolved`.
 - **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { outcome: "cleaned" | "incomplete", removed_paths: [...], retained_paths: [...], removed_branches: [...], retained_branches: [...] }, receipt_path, summary }`.

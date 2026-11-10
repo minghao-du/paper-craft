@@ -96,8 +96,8 @@ if __name__ == "__main__":
       stage: 'workspace_prepare',
       objective: 'Prepare workspace tree',
       provider: {
-        type: 'script',
-        target: kernelScript,
+        type: 'skill',
+        target: 'pc-workspace',
       },
       workdir: testEnv.dir,
     });
@@ -126,8 +126,8 @@ if __name__ == "__main__":
       stage: 'issue_work',
       objective: 'Run parameter-driven task',
       provider: {
-        type: 'script',
-        target: kernelScript,
+        type: 'skill',
+        target: 'pc-issue-work',
       },
       workdir: testEnv.dir,
       scope: 'Scope details here',
@@ -153,11 +153,11 @@ if __name__ == "__main__":
       '--root-issue', '25',
     ]);
     const prepRes = runPrepareTaskCli(testEnv.dir, {
-      stage: 'pipeline_audit',
+      stage: 'stage_4_refactor_audit',
       objective: 'Audit pipeline rules',
       provider: {
-        type: 'script',
-        target: kernelScript,
+        type: 'skill',
+        target: 'pc-pipeline-snakemake',
       },
       workdir: testEnv.dir,
     });
@@ -268,30 +268,51 @@ describe('Tier 1: Unified Receipt Contract Core Features', () => {
   });
 
   it('F4.4: predecessor receipt chaining in multi-step workflows', () => {
-    const step1Receipt = path.join(testEnv.dir, 'step-1-receipt.md');
-    fs.writeFileSync(step1Receipt, '# Step 1 Plan Receipt\nOutcome: direct');
-
     runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
       '--root-issue', '100',
     ]);
+    const step1Prep = runPrepareTaskCli(testEnv.dir, {
+      stage: 'stage_1_plan',
+      objective: 'Plan issue 100',
+      provider: {
+        type: 'skill',
+        target: 'pc-issue-plan',
+      },
+      workdir: testEnv.dir,
+    });
+    expect(step1Prep.status).toBe(0);
+    const step1Data = JSON.parse(step1Prep.stdout);
+    fs.writeFileSync(step1Data.receipt_path, '# Step 1 Plan Receipt\nOutcome: direct');
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli([
+      'complete',
+      '--receipt-root', testEnv.dir,
+      '--report', JSON.stringify({
+        execution_status: 'succeeded',
+        result: { outcome: 'planned' },
+        receipt_path: step1Data.receipt_path,
+        summary: 'Step 1 plan completed',
+      }),
+    ]);
+
     const prepRes = runPrepareTaskCli(testEnv.dir, {
-      stage: 'issue_work',
+      stage: 'stage_2_work',
       objective: 'Implement from step 1 plan',
       provider: {
         type: 'skill',
         target: 'pc-issue-work',
       },
       workdir: testEnv.dir,
-      predecessor_receipts: [step1Receipt],
+      predecessor_receipts: [step1Data.receipt_path],
     });
     expect(prepRes.status).toBe(0);
     const prepData = JSON.parse(prepRes.stdout);
     const step2EnvelopePath = prepData.envelope_path;
 
     const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(step2EnvelopePath, 'utf-8'));
-    expect(env.inputs.predecessor_receipts).toContain(step1Receipt);
+    expect(env.inputs.predecessor_receipts).toContain(step1Data.receipt_path);
   });
 
   it('F4.5: validates compact report result structure and schema', () => {

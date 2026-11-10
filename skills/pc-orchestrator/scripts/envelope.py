@@ -14,6 +14,17 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional, Union
 
+# Import workspace config resolver
+_CONFIG_DIR = str(Path(__file__).resolve().parent.parent.parent / "pc-workspace-config" / "scripts")
+if _CONFIG_DIR not in sys.path:
+    sys.path.insert(0, _CONFIG_DIR)
+
+try:
+    from config import resolve_workspace_config, load_workspace_config
+except ImportError:
+    resolve_workspace_config = None
+    load_workspace_config = None
+
 
 # Absolute path to the receipt template bundled with this skill.
 DEFAULT_RECEIPT_TEMPLATE = str(
@@ -136,8 +147,8 @@ def validate_envelope(data: Any) -> List[str]:
             errors.append("[provider] Expected JSON object (dict)")
         else:
             p_type = provider.get("type")
-            if p_type not in ("skill", "script"):
-                errors.append(f"[provider.type] Expected 'skill' | 'script', got '{p_type}'")
+            if p_type != "skill":
+                errors.append(f"[provider.type] Expected 'skill', got '{p_type}'")
 
             if "target" not in provider:
                 errors.append("[provider.target] Expected non-empty string")
@@ -204,16 +215,14 @@ def validate_envelope(data: Any) -> List[str]:
                 if not isinstance(val, int) or isinstance(val, bool) or val < 0:
                     errors.append(f"[budgets.replans_used] Expected integer >= 0, got {val}")
 
-            for k in ("delivery_attempts_limit", "delivery_attempts_max"):
-                if k in budgets:
-                    val = budgets[k]
-                    if not isinstance(val, int) or isinstance(val, bool) or val < 1:
-                        errors.append(f"[budgets.{k}] Expected integer >= 1, got {val}")
-            for k in ("replans_limit", "replans_max"):
-                if k in budgets:
-                    val = budgets[k]
-                    if not isinstance(val, int) or isinstance(val, bool) or val < 1:
-                        errors.append(f"[budgets.{k}] Expected integer >= 1, got {val}")
+            if "delivery_attempts_max" in budgets:
+                val = budgets["delivery_attempts_max"]
+                if not isinstance(val, int) or isinstance(val, bool) or val < 1:
+                    errors.append(f"[budgets.delivery_attempts_max] Expected integer >= 1, got {val}")
+            if "replans_max" in budgets:
+                val = budgets["replans_max"]
+                if not isinstance(val, int) or isinstance(val, bool) or val < 1:
+                    errors.append(f"[budgets.replans_max] Expected integer >= 1, got {val}")
 
     return errors
 
@@ -263,7 +272,7 @@ def create_envelope(
     root_issue_id: Union[str, int],
     current_issue_id: Optional[Union[str, int]] = None,
     attempt: int = 1,
-    provider_type: str,
+    provider_type: str = "skill",
     provider_target: str,
     provider_args: Optional[List[str]] = None,
     working_directory: Union[str, Path],
@@ -284,35 +293,40 @@ def create_envelope(
     receipt_template: str = DEFAULT_RECEIPT_TEMPLATE,
     delivery_attempts_used: int = 0,
     delivery_attempts_max: int = 3,
-    delivery_attempts_limit: Optional[int] = None,
     replans_used: int = 0,
     replans_max: int = 2,
-    replans_limit: Optional[int] = None,
     schema_version: str = "1.0",
     validate: bool = True,
+    config_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble a standard TaskInputEnvelope dictionary."""
     root_str = str(root_issue_id)
     curr_str = str(current_issue_id) if current_issue_id is not None else root_str
-    attempts_max = delivery_attempts_limit if delivery_attempts_limit is not None else delivery_attempts_max
-    replan_max = replans_limit if replans_limit is not None else replans_max
+    attempts_max = delivery_attempts_max
+    replan_max = replans_max
 
     workdir_str = str(Path(working_directory).resolve()) if working_directory else ""
     receipt_str = str(Path(receipt_path).resolve()) if receipt_path else ""
 
-    config_delivery_target = None
-    config_base_remote = None
-    config_push_remote = None
-    config_base_branch = None
-    config_worktree_container = None
-    if workdir_str:
-        config = load_workspace_config_from_dir(Path(workdir_str))
-        if config:
-            config_delivery_target = config.get("delivery_target")
-            config_base_remote = config.get("base_remote")
-            config_push_remote = config.get("push_remote")
-            config_base_branch = config.get("base_branch")
-            config_worktree_container = config.get("worktree_container")
+    config = None
+    if config_snapshot:
+        config = config_snapshot
+    elif workdir_str:
+        cfg_file = Path(workdir_str) / ".paper-craft" / "workspace-config.json"
+        if cfg_file.exists():
+            if resolve_workspace_config:
+                try:
+                    config = resolve_workspace_config(workdir_str)
+                except ValueError as e:
+                    raise EnvelopeCorruptedError(str(e)) from e
+            else:
+                config = load_workspace_config_from_dir(Path(workdir_str))
+
+    config_delivery_target = config.get("delivery_target") if config else None
+    config_base_remote = config.get("base_remote") if config else None
+    config_push_remote = config.get("push_remote") if config else None
+    config_base_branch = config.get("base_branch") if config else None
+    config_worktree_container = config.get("worktree_container") if config else None
 
     resolved_delivery_target = (
         delivery_target
@@ -374,10 +388,8 @@ def create_envelope(
         "budgets": {
             "delivery_attempts_used": int(delivery_attempts_used),
             "delivery_attempts_max": int(attempts_max),
-            "delivery_attempts_limit": int(attempts_max),
             "replans_used": int(replans_used),
             "replans_max": int(replan_max),
-            "replans_limit": int(replan_max),
         },
     }
 
@@ -505,9 +517,9 @@ def cmd_show(args: argparse.Namespace) -> None:
     criteria = inputs.get("acceptance_criteria", [])
     budgets = data.get("budgets", {})
     del_used = budgets.get("delivery_attempts_used", 0)
-    del_max = budgets.get("delivery_attempts_limit", budgets.get("delivery_attempts_max", 3))
+    del_max = budgets.get("delivery_attempts_max", 3)
     rep_used = budgets.get("replans_used", 0)
-    rep_max = budgets.get("replans_limit", budgets.get("replans_max", 2))
+    rep_max = budgets.get("replans_max", 2)
 
     print(f"Envelope: {path} (v{data.get('schema_version', '1.0')})")
     print(f"Task: {stage} (step {step}, attempt {attempt}) | Root: #{root_id}, Current: #{curr_id}")

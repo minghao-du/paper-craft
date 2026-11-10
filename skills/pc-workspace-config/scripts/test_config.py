@@ -10,6 +10,8 @@ import tempfile
 import unittest
 
 CONFIG_SCRIPT = Path(__file__).resolve().parent / "config.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config import resolve_workspace_config, validate_workspace_config, SCHEMA_VERSION
 
 
 class WorkspaceConfigTests(unittest.TestCase):
@@ -71,12 +73,58 @@ class WorkspaceConfigTests(unittest.TestCase):
         self.assertEqual(data.get("push_remote"), "origin")
         self.assertEqual(data.get("base_branch"), "main")
         self.assertEqual(data.get("worktree_container"), "../project-worktrees")
+        self.assertEqual(data.get("workflow"), "default")
+        self.assertEqual(data.get("delivery_attempts_max"), 3)
+        self.assertEqual(data.get("replans_max"), 2)
 
-        # Also test via --init flag format
-        res_flag = self.run_config("--show")
-        self.assertEqual(res_flag.returncode, 0)
-        show_data = json.loads(res_flag.stdout)
+        res_show = self.run_config("show")
+        self.assertEqual(res_show.returncode, 0)
+        show_data = json.loads(res_show.stdout)
         self.assertEqual(show_data, data)
+
+    def test_init_supports_workflow_and_budgets(self):
+        """Init supports project settings including workflow, delivery_attempts_max, replans_max."""
+        res = self.run_config(
+            "init",
+            "--workflow", "custom-workflow",
+            "--delivery-attempts-max", "5",
+            "--replans-max", "4",
+            "--defaults",
+        )
+        self.assertEqual(res.returncode, 0)
+
+        config_file = self.repo / ".paper-craft" / "workspace-config.json"
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertEqual(data.get("workflow"), "custom-workflow")
+        self.assertEqual(data.get("delivery_attempts_max"), 5)
+        self.assertEqual(data.get("replans_max"), 4)
+
+    def test_obsolete_aliases_rejected(self):
+        """Obsolete top-level flag aliases (--show, --init, --validate) are removed and rejected."""
+        res_show = self.run_config("--show", check=False)
+        self.assertNotEqual(res_show.returncode, 0)
+
+        res_init = self.run_config("--init", check=False)
+        self.assertNotEqual(res_init.returncode, 0)
+
+        res_validate = self.run_config("--validate", check=False)
+        self.assertNotEqual(res_validate.returncode, 0)
+
+    def test_init_fails_when_remote_undetectable(self):
+        """When repo has no remotes and no explicit base_remote, init stops immediately without guessing."""
+        no_remote_repo = self.root / "no-remote-repo"
+        no_remote_repo.mkdir()
+        self.git(no_remote_repo, "init", "--initial-branch=main")
+
+        res = subprocess.run(
+            [sys.executable, str(CONFIG_SCRIPT), "--repo-dir", str(no_remote_repo), "init", "--defaults"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("No git remotes configured", res.stderr)
 
     def test_init_with_explicit_overrides(self):
         """Allows overriding delivery target, remotes, base branch, and worktree container."""
@@ -139,18 +187,6 @@ class WorkspaceConfigTests(unittest.TestCase):
         self.assertEqual(data.get("push_remote"), "origin")
         self.assertEqual(data.get("worktree_container"), "../custom-fork-worktrees")
 
-    def test_show_subcommand_and_flag(self):
-        """Show subcommand outputs JSON configuration."""
-        self.run_config("init", "--defaults")
-
-        res1 = self.run_config("show")
-        data1 = json.loads(res1.stdout)
-        self.assertEqual(data1.get("delivery_target"), "test-owner/my-project")
-
-        res2 = self.run_config("--show")
-        data2 = json.loads(res2.stdout)
-        self.assertEqual(data2, data1)
-
     def test_validate_success(self):
         """Validate passes when configuration matches schema and repo remotes."""
         self.run_config("init", "--defaults")
@@ -205,6 +241,40 @@ class WorkspaceConfigTests(unittest.TestCase):
         res = self.run_config("validate", check=False)
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("nonexistent_remote", res.stderr)
+
+    def test_resolve_workspace_config_api(self):
+        """resolve_workspace_config parses, validates, and merges overrides deterministically."""
+        # 1. Missing with require_file=True raises ValueError with guidance
+        with self.assertRaises(ValueError) as ctx:
+            resolve_workspace_config(self.repo, require_file=True)
+        self.assertIn("pc-workspace-config", str(ctx.exception))
+
+        # 2. Initialize valid config
+        self.run_config("init", "--defaults")
+
+        resolved = resolve_workspace_config(self.repo)
+        self.assertEqual(resolved["delivery_target"], "test-owner/my-project")
+        self.assertEqual(resolved["base_remote"], "origin")
+        self.assertEqual(resolved["push_remote"], "origin")
+        self.assertEqual(resolved["base_branch"], "main")
+        self.assertEqual(resolved["workflow"], "default")
+        self.assertEqual(resolved["delivery_attempts_max"], 3)
+        self.assertEqual(resolved["replans_max"], 2)
+        self.assertEqual(resolved["repo_checkout"], str(self.repo.resolve()))
+
+        # 3. Explicit overrides take precedence
+        overridden = resolve_workspace_config(
+            self.repo,
+            overrides={
+                "workflow": "custom-wf",
+                "delivery_attempts_max": 9,
+                "replans_max": 7,
+            },
+        )
+        self.assertEqual(overridden["workflow"], "custom-wf")
+        self.assertEqual(overridden["delivery_attempts_max"], 9)
+        self.assertEqual(overridden["replans_max"], 7)
+        self.assertEqual(overridden["delivery_target"], "test-owner/my-project")
 
 
 if __name__ == "__main__":

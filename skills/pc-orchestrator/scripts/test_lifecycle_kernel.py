@@ -82,6 +82,50 @@ class TestLifecycleKernel(unittest.TestCase):
             state = json.load(f)
         self.assertEqual(state["root_issue_id"], "99")
 
+    def test_init_with_require_config(self):
+        repo_dir = self.receipt_root / "repo"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        receipts = self.receipt_root / "receipts"
+        receipts.mkdir(parents=True, exist_ok=True)
+
+        # Without config, init with --require-config fails and provides clear guidance
+        res_fail = self.run_cli(
+            "init",
+            "--receipt-root", str(receipts),
+            "--root-issue", "42",
+            "--require-config",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_fail.returncode, 1)
+        self.assertIn("pc-workspace-config", res_fail.stderr)
+
+        # With valid config, init with --require-config succeeds and populates context
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "owner/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../project-worktrees",
+        }), encoding="utf-8")
+
+        res_ok = self.run_cli(
+            "init",
+            "--receipt-root", str(receipts),
+            "--root-issue", "42",
+            "--require-config",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+        state_file = receipts / "state.json"
+        self.assertTrue(state_file.exists())
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertEqual(state["context"].get("delivery_target"), "owner/repo")
+        self.assertEqual(state["context"].get("base_remote"), "origin")
+
     def test_prepare_allocates_step_and_generates_envelope_and_receipt_path(self):
         self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "41")
 
@@ -418,6 +462,45 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertIsNotNone(info2["active_dispatch"])
         self.assertTrue(len(info2["blocking_reasons"]) > 0)
         self.assertIn("not yet handed off", info2["blocking_reasons"][0].lower())
+
+    def test_inspect_reports_budget_exhaustion(self):
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "41",
+            "--delivery-attempts-max", "3",
+            "--replans-max", "2",
+        )
+
+        # Initially 0/3 delivery attempts, 0/2 replans: no budget blocking reasons
+        res0 = self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json")
+        self.assertEqual(res0.returncode, 0)
+        info0 = json.loads(res0.stdout)
+        self.assertFalse(any("budget exhausted" in r.lower() for r in info0["blocking_reasons"]))
+
+        # Exhaust delivery attempt budget in state
+        state_file = self.receipt_root / "state.json"
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        state["budgets"]["delivery_attempts_used"] = 3
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+
+        res1 = self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json")
+        self.assertEqual(res1.returncode, 0)
+        info1 = json.loads(res1.stdout)
+        self.assertTrue(any("delivery attempt budget exhausted" in r.lower() for r in info1["blocking_reasons"]))
+
+        # Also exhaust replan budget
+        state["budgets"]["replans_used"] = 2
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+
+        res2 = self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json")
+        self.assertEqual(res2.returncode, 0)
+        info2 = json.loads(res2.stdout)
+        self.assertTrue(any("delivery attempt budget exhausted" in r.lower() for r in info2["blocking_reasons"]))
+        self.assertTrue(any("replan budget exhausted" in r.lower() for r in info2["blocking_reasons"]))
 
     def test_normal_closed_loop_multiple_dispatches_single_delivery_attempt(self):
         # 1. init
@@ -1032,7 +1115,21 @@ class TestLifecycleKernel(unittest.TestCase):
         c_plan = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_plan))
         self.assertEqual(c_plan.returncode, 0, c_plan.stderr)
 
-        # Verify state after plan: current_issue_id is 101, current_stage is stage_2_work, budget is 0 used
+        # Complete alone does NOT auto-advance stage: current_stage remains stage_1_plan
+        insp_pre = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_pre["current_stage"], "stage_1_plan")
+
+        # Explicit orchestrator decision advances to stage_2_work with plan
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--plan", json.dumps(rep_plan["result"]["plan"]),
+            "--reason", "Plan approved, decomposed into sub-issues",
+        )
+
+        # Verify state after plan resolution: current_issue_id is 101, current_stage is stage_2_work, budget is 0 used
         insp = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp["current_issue_id"], "101")
         self.assertEqual(insp["current_stage"], "stage_2_work")
@@ -1054,6 +1151,14 @@ class TestLifecycleKernel(unittest.TestCase):
         }
         c_aux = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_aux))
         self.assertEqual(c_aux.returncode, 0, c_aux.stderr)
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--reason", "Workspace preparation completed, proceed to work",
+        )
 
         insp_aux = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_aux["current_issue_id"], "101")
@@ -1081,7 +1186,7 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(insp_w1_fail["current_stage"], "stage_2_work")
         self.assertEqual(insp_w1_fail["stage_status"], "failed")
 
-        # 5. Successful work advances to stage_2_land
+        # 5. Successful work advances to stage_2_land via explicit resolve
         p_w1 = json.loads(self.prepare({
             "stage": "stage_2_work",
             "objective": "Implement 101 retry",
@@ -1097,6 +1202,18 @@ class TestLifecycleKernel(unittest.TestCase):
         }
         c_w1 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_w1))
         self.assertEqual(c_w1.returncode, 0, c_w1.stderr)
+
+        # Verify complete did not auto-advance
+        insp_post_w1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_post_w1["current_stage"], "stage_2_work")
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Work 101 implemented, advance to landing",
+        )
 
         insp_w1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_w1["current_issue_id"], "101")
@@ -1122,8 +1239,9 @@ class TestLifecycleKernel(unittest.TestCase):
         insp_l1_fail = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_l1_fail["current_issue_id"], "101")
         self.assertEqual(insp_l1_fail["current_stage"], "stage_2_land")
+        self.assertEqual(insp_l1_fail["stage_status"], "needs_rework")
 
-        # 7. Landed result advances to issue 102 with independent initial budget
+        # 7. Landed result advances to issue 102 with independent initial budget via explicit resolve
         p_l1 = json.loads(self.prepare({
             "stage": "stage_2_land",
             "objective": "Land 101 retry",
@@ -1139,6 +1257,16 @@ class TestLifecycleKernel(unittest.TestCase):
         }
         c_l1 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_l1))
         self.assertEqual(c_l1.returncode, 0, c_l1.stderr)
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--current-issue", "102",
+            "--mark-landed", "101",
+            "--reason", "101 landed, advance to 102",
+        )
 
         insp_l1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_l1["current_issue_id"], "102")
@@ -1161,11 +1289,19 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Workspace 102 prepared",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--reason", "Workspace 102 prepared, proceed to work",
+        )
+
         insp_aux2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_aux2["current_issue_id"], "102")
         self.assertEqual(insp_aux2["current_stage"], "stage_2_work")
 
-        # 9. Issue 102 work succeeds -> stage_2_land
+        # 9. Issue 102 work succeeds -> stage_2_land via explicit resolve
         p_w2 = json.loads(self.prepare({
             "stage": "stage_2_work",
             "objective": "Implement 102",
@@ -1180,11 +1316,19 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Implemented 102",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "102 implemented, advance to landing",
+        )
+
         insp_w2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_w2["current_issue_id"], "102")
         self.assertEqual(insp_w2["current_stage"], "stage_2_land")
 
-        # 10. Issue 102 land succeeds -> returns to parent 44 at stage_3_verify
+        # 10. Issue 102 land succeeds -> returns to parent 44 at stage_3_verify via explicit resolve
         p_l2 = json.loads(self.prepare({
             "stage": "stage_2_land",
             "objective": "Land 102",
@@ -1198,6 +1342,16 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": p_l2["receipt_path"],
             "summary": "PR 102 landed",
         }))
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_3_verify",
+            "--mark-landed", "102",
+            "--complete-sequence",
+            "--reason", "All issues landed, advance to integrated verification",
+        )
 
         insp_final = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_final["current_issue_id"], "44")
@@ -1222,12 +1376,25 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Direct execution chosen",
         }))
 
+        # Complete does not auto-advance stage
+        insp_pre = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_pre["current_stage"], "stage_1_plan")
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--child-issue", "50",
+            "--reason", "Direct execution approved, advance to work",
+        )
+
         insp = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp["current_issue_id"], "50")
         self.assertEqual(insp["current_stage"], "stage_2_work")
         self.assertEqual(insp["budgets"]["delivery_attempts_used"], 0)
 
-        # 3. Work stage completes -> stage_2_land
+        # 3. Work stage completes -> stage_2_land via explicit resolve
         pw = json.loads(self.prepare({
             "stage": "stage_2_work",
             "objective": "Implement issue 50",
@@ -1242,11 +1409,19 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Implemented 50",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Work complete, advance to land",
+        )
+
         insp_w = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_w["current_issue_id"], "50")
         self.assertEqual(insp_w["current_stage"], "stage_2_land")
 
-        # 4. Land stage completes -> stage_3_verify
+        # 4. Land stage completes -> stage_3_verify via explicit resolve
         pl = json.loads(self.prepare({
             "stage": "stage_2_land",
             "objective": "Land issue 50",
@@ -1260,6 +1435,16 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": pl["receipt_path"],
             "summary": "Landed 50",
         }))
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_3_verify",
+            "--mark-landed", "50",
+            "--complete-sequence",
+            "--reason", "Issue landed, advance to integrated verification",
+        )
 
         insp_final = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_final["current_issue_id"], "50")
@@ -1285,6 +1470,15 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Planned",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--plan", json.dumps({"tasks": [{"number": 101}, {"number": 102}]}),
+            "--reason", "Plan approved",
+        )
+
         pw = json.loads(self.prepare({
             "stage": "stage_2_work",
             "objective": "Work 101",
@@ -1298,6 +1492,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": pw["receipt_path"],
             "summary": "Done work",
         }))
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Work done",
+        )
 
         pl = json.loads(self.prepare({
             "stage": "stage_2_land",
@@ -1314,6 +1516,16 @@ class TestLifecycleKernel(unittest.TestCase):
         }
         res_comp1 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(land_rep))
         self.assertEqual(res_comp1.returncode, 0)
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--current-issue", "102",
+            "--mark-landed", "101",
+            "--reason", "101 landed",
+        )
 
         insp1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp1["current_issue_id"], "102")
@@ -1376,7 +1588,17 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": p1["receipt_path"],
             "summary": "Invalid plan",
         }
-        res_forward = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_forward))
+        res_comp = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_forward))
+        self.assertEqual(res_comp.returncode, 0)
+
+        res_forward = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--plan", json.dumps(rep_forward["result"]["plan"]),
+            "--reason", "Attempting invalid forward dependency plan",
+        )
         self.assertNotEqual(res_forward.returncode, 0)
         self.assertIn("dependency", res_forward.stderr.lower())
 
@@ -1394,7 +1616,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": p1["receipt_path"],
             "summary": "Invalid plan",
         }
-        res_self = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_self))
+        res_self = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--plan", json.dumps(rep_self["result"]["plan"]),
+            "--reason", "Attempting self dependency plan",
+        )
         self.assertNotEqual(res_self.returncode, 0)
         self.assertIn("itself", res_self.stderr.lower())
 
@@ -1413,7 +1642,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": p1["receipt_path"],
             "summary": "Invalid plan",
         }
-        res_unknown = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep_unknown))
+        res_unknown = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--plan", json.dumps(rep_unknown["result"]["plan"]),
+            "--reason", "Attempting unknown dependency plan",
+        )
         self.assertNotEqual(res_unknown.returncode, 0)
         self.assertIn("unknown issue", res_unknown.stderr.lower())
 
@@ -1530,6 +1766,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Implemented 101",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Work 101 complete, advance to land",
+        )
+
         p_l101 = json.loads(self.prepare({
             "stage": "stage_2_land",
             "objective": "Land 101",
@@ -1544,6 +1788,16 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": p_l101["receipt_path"],
             "summary": "Landed 101",
         }))
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--current-issue", "102",
+            "--mark-landed", "101",
+            "--reason", "Land 101 complete, advance to 102",
+        )
 
         # Deliver 102 (work -> land)
         p_w102 = json.loads(self.prepare({
@@ -1561,6 +1815,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Implemented 102",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Work 102 complete, advance to land",
+        )
+
         p_l102 = json.loads(self.prepare({
             "stage": "stage_2_land",
             "objective": "Land 102",
@@ -1575,6 +1837,16 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": p_l102["receipt_path"],
             "summary": "Landed 102",
         }))
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_3_verify",
+            "--mark-landed", "102",
+            "--complete-sequence",
+            "--reason", "All landed, advance to integrated verify",
+        )
 
         # Both landed! State is now at stage_3_verify for root issue 44
         insp_verify = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
@@ -1597,6 +1869,15 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Integrated test reveals defect in 101",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--current-issue", "101",
+            "--reason", "Targeted rework routed for issue 101",
+        )
+
         # 3. Targeted rework on Issue 101: prepare stage_2_work with rework_issue="101" and attempt_intent="new"
         p_rw_work = json.loads(self.prepare({
             "stage": "stage_2_work",
@@ -1616,6 +1897,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Fixed 101 defect",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "101 rework work complete, advance to land",
+        )
+
         # Next stage is stage_2_land for 101; paired work/land attempt remains 2
         p_rw_land = json.loads(self.prepare({
             "stage": "stage_2_land",
@@ -1633,12 +1922,22 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Landed 101 fix",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_3_verify",
+            "--mark-landed", "101",
+            "--complete-sequence",
+            "--reason", "101 rework landed, return to integrated verify",
+        )
+
         # 4. After 101 rework lands:
         # Must return directly to stage_3_verify for root issue 44!
         insp_post_rework = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertEqual(insp_post_rework["current_issue_id"], "44")
         self.assertEqual(insp_post_rework["current_stage"], "stage_3_verify")
-        self.assertEqual(insp_post_rework["stage_status"], "succeeded")
+        self.assertEqual(insp_post_rework["stage_status"], "pending")
 
         # 5. Issue 102 (B) must NOT have re-run; its budget and records are intact
         items_post = insp_post_rework["delivery_sequence"]["items"]
@@ -1772,6 +2071,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Implemented 101",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Work 101 complete, advance to land",
+        )
+
         # Land 101 fails with rework_needed
         p_l101 = json.loads(self.prepare({
             "stage": "stage_2_land",
@@ -1786,6 +2093,15 @@ class TestLifecycleKernel(unittest.TestCase):
             "receipt_path": p_l101["receipt_path"],
             "summary": "Needs rework before landing",
         }))
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--current-issue", "101",
+            "--reason", "Rework needed for 101",
+        )
 
         # 2. Targeted rework on 101
         p_rw_w = json.loads(self.prepare({
@@ -1805,6 +2121,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Reworked 101",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Rework work complete, advance to land",
+        )
+
         # Land rework for 101 succeeds
         p_rw_l = json.loads(self.prepare({
             "stage": "stage_2_land",
@@ -1822,10 +2146,19 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Landed rework 101",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--current-issue", "102",
+            "--mark-landed", "101",
+            "--reason", "101 landed, advance to 102",
+        )
+
         # Inspect state: subsequent issue 102 is still pending! Sequence is NOT completed.
         insp = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         del_seq = insp["delivery_sequence"]
-        self.assertIsNone(del_seq.get("active_rework_issue_id"))
         self.assertFalse(del_seq["completed"])
         self.assertEqual(del_seq["current_index"], 1)
         self.assertEqual(insp["current_issue_id"], "102")
@@ -1847,6 +2180,14 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Implemented 102",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "102 work complete, advance to land",
+        )
+
         p_l102 = json.loads(self.prepare({
             "stage": "stage_2_land",
             "objective": "Land 102",
@@ -1862,12 +2203,960 @@ class TestLifecycleKernel(unittest.TestCase):
             "summary": "Landed 102",
         }))
 
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_3_verify",
+            "--mark-landed", "102",
+            "--complete-sequence",
+            "--reason", "All child issues landed, advance to integrated verification",
+        )
+
         # Now all child issues are delivered! Sequence is completed, routes to stage_3_verify
         insp_done = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
         self.assertTrue(insp_done["delivery_sequence"]["completed"])
         self.assertEqual(insp_done["current_issue_id"], "44")
         self.assertEqual(insp_done["current_stage"], "stage_3_verify")
 
+    def test_init_derives_isolated_receipt_root_and_saves_snapshot(self):
+        """Init derives isolated receipt root from worktree_container and saves full config snapshot."""
+        repo_dir = Path(self.temp_dir.name) / "my-repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:my-org/my-proj.git"], cwd=repo_dir, check=True, capture_output=True)
+
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "my-org/my-proj",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../custom-worktrees",
+            "workflow": "custom-flow",
+            "delivery_attempts_max": 4,
+            "replans_max": 3,
+        }), encoding="utf-8")
+
+        res = self.run_cli(
+            "init",
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        state_data = json.loads(res.stdout)
+
+        # Derived receipt root must be under worktree_container
+        expected_container = (repo_dir / "../custom-worktrees").resolve()
+        expected_receipt_root = expected_container / ".paper-craft" / "receipts" / "issue-49"
+        self.assertEqual(Path(state_data["config_snapshot"]["receipt_root"]).resolve(), expected_receipt_root)
+        self.assertTrue((expected_receipt_root / "state.json").exists())
+
+        # Check snapshot contents and workflow defaults
+        self.assertEqual(state_data["workflow"], "custom-flow")
+        self.assertEqual(state_data["budgets"]["delivery_attempts_max"], 4)
+        self.assertEqual(state_data["budgets"]["replans_max"], 3)
+        self.assertEqual(state_data["config_snapshot"]["repo_checkout"], str(repo_dir.resolve()))
+
+    def test_recovery_consumes_config_snapshot_without_drift(self):
+        """Prepare and recovery consume config snapshot, unaffected by source config edits or cwd changes."""
+        repo_dir = Path(self.temp_dir.name) / "drift-repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:drift-org/drift-repo.git"], cwd=repo_dir, check=True, capture_output=True)
+
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        cfg_file = cfg_dir / "workspace-config.json"
+        cfg_file.write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "drift-org/drift-repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../drift-worktrees",
+        }), encoding="utf-8")
+
+        receipt_root = Path(self.temp_dir.name) / "receipts-drift"
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        # Mutate the source config file afterwards
+        cfg_file.write_text("{ corrupted invalid json", encoding="utf-8")
+
+        # Prepare a task: should consume saved config snapshot without reading the corrupted config file
+        req_path = receipt_root / "prepare-req.json"
+        req_path.write_text(json.dumps({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 49",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }), encoding="utf-8")
+
+        # Invoke prepare from a completely different directory
+        res_prep = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "prepare", "--receipt-root", str(receipt_root), "--request", str(req_path)],
+            cwd=tempfile.gettempdir(),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_prep.returncode, 0, f"Prepare failed:\n{res_prep.stderr}\n{res_prep.stdout}")
+        prep_data = json.loads(res_prep.stdout)
+        env_path = Path(prep_data["envelope_path"])
+        self.assertTrue(env_path.exists())
+
+        env_data = json.loads(env_path.read_text(encoding="utf-8"))
+        self.assertEqual(env_data["environment"]["repository"], "drift-org/drift-repo")
+        self.assertEqual(env_data["environment"]["working_directory"], str(repo_dir.resolve()))
+
+    def test_missing_or_invalid_config_stops_immediately_without_state(self):
+        """Missing or invalid configuration stops immediately without creating runnable state."""
+        empty_dir = Path(self.temp_dir.name) / "empty-dir"
+        empty_dir.mkdir()
+        receipt_root = Path(self.temp_dir.name) / "no-config-receipts"
+
+        # Missing config
+        res = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(empty_dir),
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertFalse((receipt_root / "state.json").exists())
+
+        # Invalid config
+        bad_dir = Path(self.temp_dir.name) / "bad-dir"
+        bad_cfg_dir = bad_dir / ".paper-craft"
+        bad_cfg_dir.mkdir(parents=True)
+        (bad_cfg_dir / "workspace-config.json").write_text("{ not json", encoding="utf-8")
+
+        res_bad = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(bad_dir),
+        )
+        self.assertNotEqual(res_bad.returncode, 0)
+        self.assertFalse((receipt_root / "state.json").exists())
+
+        # Invalid schema in config
+        schema_dir = Path(self.temp_dir.name) / "bad-schema-dir"
+        schema_cfg_dir = schema_dir / ".paper-craft"
+        schema_cfg_dir.mkdir(parents=True)
+        (schema_cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "delivery_attempts_max": -1,  # Invalid
+        }), encoding="utf-8")
+
+        res_schema = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(schema_dir),
+        )
+        self.assertNotEqual(res_schema.returncode, 0)
+        self.assertIn("delivery_attempts_max", res_schema.stderr)
+        self.assertFalse((receipt_root / "state.json").exists())
+
+        # Git repo with no remotes and no config fails without guessing main or local/repo
+        no_remote_repo = Path(self.temp_dir.name) / "no-remote-repo"
+        no_remote_repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=no_remote_repo, check=True, capture_output=True)
+        res_no_remote = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(no_remote_repo),
+        )
+        self.assertNotEqual(res_no_remote.returncode, 0)
+        self.assertIn("Cannot determine base_remote", res_no_remote.stderr)
+        self.assertFalse((receipt_root / "state.json").exists())
+
+    def test_run_identity_conflicts(self):
+        """Run identity conflicts (different root issue, workflow, or repo checkout) fail explicitly."""
+        repo_dir = Path(self.temp_dir.name) / "repo-a"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-a.git"], cwd=repo_dir, check=True, capture_output=True)
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir()
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-a",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "workflow": "workflow-alpha",
+        }), encoding="utf-8")
+
+        receipt_root = Path(self.temp_dir.name) / "receipts-ident"
+        res1 = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res1.returncode, 0)
+
+        # 1. Matching identity re-entrance succeeds idempotently
+        res_same = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_same.returncode, 0)
+
+        # 2. Conflicting root issue fails
+        res_diff_issue = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "50",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertNotEqual(res_diff_issue.returncode, 0)
+        self.assertIn("Run identity conflict", res_diff_issue.stderr)
+
+        # 3. Conflicting workflow fails
+        res_diff_wf = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--workflow", "workflow-beta",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertNotEqual(res_diff_wf.returncode, 0)
+        self.assertIn("Run identity conflict", res_diff_wf.stderr)
+
+        # 4. Conflicting repo checkout fails
+        repo_b = Path(self.temp_dir.name) / "repo-b"
+        repo_b.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_b, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-b.git"], cwd=repo_b, check=True, capture_output=True)
+        cfg_b = repo_b / ".paper-craft"
+        cfg_b.mkdir()
+        (cfg_b / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-b",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "workflow": "workflow-alpha",
+        }), encoding="utf-8")
+
+        res_diff_repo = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_b),
+        )
+        self.assertNotEqual(res_diff_repo.returncode, 0)
+        self.assertIn("Run identity conflict", res_diff_repo.stderr)
+
+    def test_isolation_constraints(self):
+        """Receipt root residing inside the repository checkout violates isolation constraints."""
+        repo_dir = Path(self.temp_dir.name) / "repo-iso"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-iso.git"], cwd=repo_dir, check=True, capture_output=True)
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir()
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-iso",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "inside-worktrees",
+        }), encoding="utf-8")
+
+        # Derived receipt root inside repo violates isolation
+        res_iso = self.run_cli(
+            "init",
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertNotEqual(res_iso.returncode, 0)
+        self.assertIn("violates isolation constraints", res_iso.stderr)
+
+    def test_explicit_cli_parameters_override_project_config(self):
+        """Explicit CLI parameters take precedence over workspace project config."""
+        repo_dir = Path(self.temp_dir.name) / "repo-override"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-override.git"], cwd=repo_dir, check=True, capture_output=True)
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir()
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-override",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "workflow": "workflow-config",
+            "delivery_attempts_max": 2,
+            "replans_max": 1,
+        }), encoding="utf-8")
+
+        receipt_root = Path(self.temp_dir.name) / "receipts-override"
+        res = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+            "--workflow", "workflow-cli-override",
+            "--delivery-attempts-max", "7",
+            "--replans-max", "6",
+            "--delivery-target", "org/custom-target",
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        state_data = json.loads(res.stdout)
+        self.assertEqual(state_data["workflow"], "workflow-cli-override")
+        self.assertEqual(state_data["budgets"]["delivery_attempts_max"], 7)
+        self.assertEqual(state_data["budgets"]["replans_max"], 6)
+        self.assertEqual(state_data["config_snapshot"]["delivery_target"], "org/custom-target")
+
+    def test_arbitrary_named_stages_with_minimal_yaml_generates_skill_envelope(self):
+        """Minimal YAML with arbitrary stage names generates correct skill envelope via prepare."""
+        custom_yaml = self.receipt_root / "custom_workflow.yaml"
+        custom_yaml.write_text(
+            """name: custom-workflow
+version: "1.0"
+stages:
+  - id: custom_evaluate
+    skill: pc-issue-verify
+    description: Run custom verification
+    parameters:
+      eval_mode: strict
+""",
+            encoding="utf-8",
+        )
+
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "50",
+            "--workflow", str(custom_yaml),
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        res_prep = self.prepare({
+            "stage": "custom_evaluate",
+            "workdir": str(self.receipt_root),
+            "objective": "Verify custom stage execution",
+        })
+        self.assertEqual(res_prep.returncode, 0, res_prep.stderr)
+        prep_data = json.loads(res_prep.stdout)
+        self.assertEqual(prep_data["stage"], "custom_evaluate")
+        self.assertEqual(prep_data["stage_context"]["skill"], "pc-issue-verify")
+
+        envelope_path = Path(prep_data["envelope_path"])
+        self.assertTrue(envelope_path.exists())
+        env = json.loads(envelope_path.read_text(encoding="utf-8"))
+        self.assertEqual(env["task"]["logical_stage"], "custom_evaluate")
+        self.assertEqual(env["provider"]["type"], "skill")
+        self.assertEqual(env["provider"]["target"], "pc-issue-verify")
+        self.assertEqual(env["inputs"]["parameters"]["eval_mode"], "strict")
+
+    def test_invalid_stage_id_fails_fast(self):
+        """Prepare with a stage ID not defined in workflow snapshot fails fast with clear error."""
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "50",
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        res_prep = self.prepare({
+            "stage": "nonexistent_stage_id",
+            "workdir": str(self.receipt_root),
+            "objective": "Should fail",
+        })
+        self.assertNotEqual(res_prep.returncode, 0)
+        self.assertIn("not defined in workflow snapshot", res_prep.stderr.lower())
+
+    def test_corrupted_workflow_yaml_fails_fast_on_init(self):
+        """Corrupted or invalid workflow YAML fails fast during init."""
+        # Case 1: Bad YAML syntax
+        bad_syntax_yaml = self.receipt_root / "bad_syntax.yaml"
+        bad_syntax_yaml.write_text("name: broken\nstages: [unclosed", encoding="utf-8")
+        res1 = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root / "r1"),
+            "--root-issue", "50",
+            "--workflow", str(bad_syntax_yaml),
+        )
+        self.assertNotEqual(res1.returncode, 0)
+        self.assertIn("failed to parse workflow", res1.stderr.lower())
+
+        # Case 2: Missing stages field
+        missing_stages_yaml = self.receipt_root / "missing_stages.yaml"
+        missing_stages_yaml.write_text("name: missing_stages\n", encoding="utf-8")
+        res2 = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root / "r2"),
+            "--root-issue", "50",
+            "--workflow", str(missing_stages_yaml),
+        )
+        self.assertNotEqual(res2.returncode, 0)
+        self.assertIn("missing required non-empty list field: 'stages'", res2.stderr.lower())
+
+        # Case 3: Duplicate stage IDs
+        duplicate_stage_yaml = self.receipt_root / "dup_stage.yaml"
+        duplicate_stage_yaml.write_text(
+            """name: dup_test
+stages:
+  - id: step_a
+    skill: pc-issue-plan
+  - id: step_a
+    skill: pc-issue-work
+""",
+            encoding="utf-8",
+        )
+        res3 = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root / "r3"),
+            "--root-issue", "50",
+            "--workflow", str(duplicate_stage_yaml),
+        )
+        self.assertNotEqual(res3.returncode, 0)
+        self.assertIn("duplicate stage id", res3.stderr.lower())
+
+    def test_workflow_snapshot_immutability_on_recovery(self):
+        """Recovery always uses state['workflow_snapshot']; editing/deleting source YAML does not break tasks."""
+        source_yaml = self.receipt_root / "volatile_workflow.yaml"
+        source_yaml.write_text(
+            """name: volatile-flow
+stages:
+  - id: init_step
+    skill: pc-workspace
+  - id: execute_step
+    skill: pc-issue-work
+""",
+            encoding="utf-8",
+        )
+
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "50",
+            "--workflow", str(source_yaml),
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        # Delete the source YAML file from disk completely
+        source_yaml.unlink()
+        self.assertFalse(source_yaml.exists())
+
+        # Prepare first stage succeeds using snapshot
+        res_prep1 = self.prepare({
+            "stage": "init_step",
+            "workdir": str(self.receipt_root),
+            "objective": "Init worktree from deleted yaml snapshot",
+        })
+        self.assertEqual(res_prep1.returncode, 0, res_prep1.stderr)
+        prep1_data = json.loads(res_prep1.stdout)
+        receipt_1 = Path(prep1_data["receipt_path"])
+        receipt_1.parent.mkdir(parents=True, exist_ok=True)
+        receipt_1.write_text("# Step 1 Receipt\nOutcome: success\n", encoding="utf-8")
+
+        # Handoff first before complete
+        res_handoff = self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        self.assertEqual(res_handoff.returncode, 0, res_handoff.stderr)
+
+        # Complete first stage
+        rep1 = {
+            "execution_status": "succeeded",
+            "result": {"outcome": "completed"},
+            "receipt_path": str(receipt_1),
+            "summary": "Init step completed",
+        }
+        res_comp1 = self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps(rep1))
+        self.assertEqual(res_comp1.returncode, 0, res_comp1.stderr)
+
+        # Prepare second stage also succeeds using snapshot
+        res_prep2 = self.prepare({
+            "stage": "execute_step",
+            "workdir": str(self.receipt_root),
+            "objective": "Execute work from deleted yaml snapshot",
+            "attempt_intent": "same",
+        })
+        self.assertEqual(res_prep2.returncode, 0, res_prep2.stderr)
+        prep2_data = json.loads(res_prep2.stdout)
+        self.assertEqual(prep2_data["stage_context"]["skill"], "pc-issue-work")
+
+    def test_arbitrary_stage_names_work_end_to_end_through_prepare_handoff_complete_resolve(self):
+        """Ticket #51: Arbitrary stage names can be prepared, handed off, completed, and resolved."""
+        custom_yaml = self.receipt_root / "custom_pipeline.yaml"
+        custom_yaml.write_text(
+            """name: custom-pipeline
+version: "1.0"
+stages:
+  - id: ingest_data
+    skill: data-agent-kit-plugin
+  - id: train_model
+    skill: bigquery-ai-ml
+  - id: evaluate_metrics
+    skill: ml-best-practices
+""",
+            encoding="utf-8",
+        )
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "99",
+            "--workflow", str(custom_yaml),
+            "--initial-stage", "ingest_data",
+        )
+
+        # 1. Stage: ingest_data
+        p_ingest = json.loads(self.prepare({
+            "stage": "ingest_data",
+            "objective": "Ingest dataset for issue 99",
+            "provider": {"type": "skill", "target": "data-agent-kit-plugin"},
+        }).stdout)
+        self.assertEqual(p_ingest["stage"], "ingest_data")
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_ingest = Path(p_ingest["receipt_path"])
+        receipt_ingest.write_text("# Ingestion Receipt\nDataset ingested.", encoding="utf-8")
+        c_ingest = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps({
+                "execution_status": "succeeded",
+                "result": {"outcome": "ingested", "records": 1000},
+                "receipt_path": str(receipt_ingest),
+                "summary": "1000 records ingested",
+            }),
+        )
+        self.assertEqual(c_ingest.returncode, 0)
+
+        # Complete alone keeps current_stage as ingest_data
+        insp1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp1["current_stage"], "ingest_data")
+
+        # Orchestrator explicitly resolves next stage to train_model
+        r1 = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "train_model",
+            "--reason", "Ingestion complete, proceeding to training",
+        )
+        self.assertEqual(r1.returncode, 0)
+        insp2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp2["current_stage"], "train_model")
+
+        # 2. Stage: train_model (referencing predecessor receipt)
+        p_train = json.loads(self.prepare({
+            "stage": "train_model",
+            "objective": "Train model on dataset",
+            "predecessor_receipts": [str(receipt_ingest)],
+            "provider": {"type": "skill", "target": "bigquery-ai-ml"},
+        }).stdout)
+        self.assertEqual(p_train["stage"], "train_model")
+        env_train = json.loads(Path(p_train["envelope_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(env_train["inputs"]["predecessor_receipts"], [str(receipt_ingest)])
+
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_train = Path(p_train["receipt_path"])
+        receipt_train.write_text("# Train Receipt\nModel trained.", encoding="utf-8")
+        c_train = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps({
+                "execution_status": "succeeded",
+                "result": {"outcome": "trained", "accuracy": 0.95},
+                "receipt_path": str(receipt_train),
+                "summary": "Model trained with 0.95 accuracy",
+            }),
+        )
+        self.assertEqual(c_train.returncode, 0)
+
+        # Orchestrator uses arbitrary stage name as decision directly
+        r2 = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "evaluate_metrics",
+            "--reason", "Training finished, direct stage decision",
+        )
+        self.assertEqual(r2.returncode, 0)
+        insp3 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp3["current_stage"], "evaluate_metrics")
+
+        # 3. Stage: evaluate_metrics
+        p_eval = json.loads(self.prepare({
+            "stage": "evaluate_metrics",
+            "objective": "Evaluate model metrics",
+            "predecessor_receipts": [str(receipt_train)],
+            "provider": {"type": "skill", "target": "ml-best-practices"},
+        }).stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_eval = Path(p_eval["receipt_path"])
+        receipt_eval.write_text("# Eval Receipt\nPassed evaluation.", encoding="utf-8")
+        c_eval = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps({
+                "execution_status": "succeeded",
+                "result": {"outcome": "evaluated", "score": 98},
+                "receipt_path": str(receipt_eval),
+                "summary": "Evaluation passed",
+            }),
+        )
+        self.assertEqual(c_eval.returncode, 0)
+
+        # Resolve finish
+        r3 = self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "finish",
+            "--reason", "Custom pipeline completed successfully",
+        )
+        self.assertEqual(r3.returncode, 0)
+        insp_fin = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_fin["current_stage"], "completed")
+        self.assertEqual(insp_fin["stage_status"], "succeeded")
+
+    def test_domain_outcome_registration_does_not_auto_transition(self):
+        """Ticket #51: Registering domain outcomes (decomposed, direct, landed, etc.) does NOT auto-transition."""
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "77")
+
+        # 1. Complete with decomposed outcome does NOT change current_stage
+        p_plan = json.loads(self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 77",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }).stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_plan["receipt_path"]).write_text("# Plan receipt", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "decomposed", "plan": {"tasks": [{"number": 701}]}},
+            "receipt_path": p_plan["receipt_path"],
+            "summary": "Plan decomposed",
+        }))
+
+        insp1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp1["current_stage"], "stage_1_plan")
+        self.assertEqual(insp1["current_issue_id"], "77")
+
+        # Explicit resolve transitions stage
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_work",
+            "--child-issue", "701",
+            "--reason", "Advance to work",
+        )
+        insp2 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp2["current_stage"], "stage_2_work")
+        self.assertEqual(insp2["current_issue_id"], "701")
+
+        # 2. Complete with implemented outcome does NOT change current_stage
+        p_work = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Work 701",
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_work["receipt_path"]).write_text("# Work receipt", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "implemented", "commit": "c701"},
+            "receipt_path": p_work["receipt_path"],
+            "summary": "Work implemented",
+        }))
+
+        insp3 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp3["current_stage"], "stage_2_work")
+
+        self.run_cli(
+            "resolve",
+            "--receipt-root", str(self.receipt_root),
+            "--decision", "continue",
+            "--next-stage", "stage_2_land",
+            "--reason", "Advance to land",
+        )
+
+        # 3. Complete with landed outcome does NOT change current_stage
+        p_land = json.loads(self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land 701",
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        }).stdout)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        Path(p_land["receipt_path"]).write_text("# Land receipt", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "landed", "mergedCommit": "m701"},
+            "receipt_path": p_land["receipt_path"],
+            "summary": "Land landed",
+        }))
+
+        insp4 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp4["current_stage"], "stage_2_land")
+
+    def test_strict_predecessor_validation(self):
+        """Ticket #51: Predecessors must be explicit; empty remains empty; invalid references rejected."""
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "88")
+
+        # 1. Empty predecessor list strictly remains empty: no implicit inheritance
+        p1 = json.loads(self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 88",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }).stdout)
+        env1 = json.loads(Path(p1["envelope_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(env1["inputs"]["predecessor_receipts"], [])
+
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_1 = Path(p1["receipt_path"])
+        receipt_1.write_text("# Plan receipt 88", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "planned"},
+            "receipt_path": str(receipt_1),
+            "summary": "Plan completed",
+        }))
+
+        # Next prepare with empty predecessor list: MUST NOT inherit receipt_1
+        p2 = json.loads(self.prepare({
+            "stage": "stage_2_work",
+            "objective": "Work issue 88 with no predecessors",
+            "predecessor_receipts": [],
+            "provider": {"type": "skill", "target": "pc-issue-work"},
+        }).stdout)
+        env2 = json.loads(Path(p2["envelope_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(env2["inputs"]["predecessor_receipts"], [])
+
+        # Clean up active dispatch p2 by handoff + complete
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_2 = Path(p2["receipt_path"])
+        receipt_2.write_text("# Work receipt 88", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "done"},
+            "receipt_path": str(receipt_2),
+            "summary": "Work completed",
+        }))
+
+        # 2. Reject non-existent predecessor receipt
+        missing_receipt = self.receipt_root / "does-not-exist.md"
+        res_missing = self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land with missing predecessor",
+            "predecessor_receipts": [str(missing_receipt)],
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        })
+        self.assertNotEqual(res_missing.returncode, 0)
+        self.assertIn("does not exist on disk", res_missing.stderr.lower())
+
+        # 3. Reject empty (0-byte) predecessor receipt
+        empty_receipt = self.receipt_root / "empty-receipt.md"
+        empty_receipt.write_text("", encoding="utf-8")
+        res_empty = self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land with empty predecessor",
+            "predecessor_receipts": [str(empty_receipt)],
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        })
+        self.assertNotEqual(res_empty.returncode, 0)
+        self.assertIn("empty", res_empty.stderr.lower())
+
+        # 4. Reject predecessor inside managed receipts that does NOT belong to completed stages
+        rogue_receipt = self.receipt_root / "fabricated-receipt.md"
+        rogue_receipt.write_text("# Fabricated", encoding="utf-8")
+        res_rogue = self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land with rogue predecessor",
+            "predecessor_receipts": [str(rogue_receipt)],
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        })
+        self.assertNotEqual(res_rogue.returncode, 0)
+        self.assertIn("does not match any completed stage", res_rogue.stderr.lower())
+
+        # 5. Explicit valid completed predecessor succeeds
+        res_valid = self.prepare({
+            "stage": "stage_2_land",
+            "objective": "Land with valid predecessor",
+            "predecessor_receipts": [str(receipt_2)],
+            "provider": {"type": "skill", "target": "pc-pr-land"},
+        })
+        self.assertEqual(res_valid.returncode, 0, res_valid.stderr)
+        p_valid = json.loads(res_valid.stdout)
+        env_valid = json.loads(Path(p_valid["envelope_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(env_valid["inputs"]["predecessor_receipts"], [str(receipt_2)])
+
+    def test_strict_dispatch_binding_rejects_mismatch(self):
+        """Ticket #51: Report must bind strictly to the active dispatch_id."""
+        self.run_cli("init", "--receipt-root", str(self.receipt_root), "--root-issue", "33")
+        p = json.loads(self.prepare({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 33",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }).stdout)
+        real_dispatch_id = p["dispatch_id"]
+        receipt_file = Path(p["receipt_path"])
+        receipt_file.write_text("# Plan receipt", encoding="utf-8")
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+
+        # 1. Complete with wrong dispatch_id in report body is rejected
+        res_bad_rep = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--report", json.dumps({
+                "dispatch_id": "99-stage_1_plan-issue-33-try-1",
+                "execution_status": "succeeded",
+                "result": {"outcome": "planned"},
+                "receipt_path": str(receipt_file),
+                "summary": "Plan done",
+            }),
+        )
+        self.assertNotEqual(res_bad_rep.returncode, 0)
+        self.assertIn("dispatch_mismatch", res_bad_rep.stderr.lower())
+
+        # 2. Complete with wrong dispatch_id in CLI flag is rejected
+        res_bad_cli = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--dispatch-id", "wrong-id",
+            "--report", json.dumps({
+                "execution_status": "succeeded",
+                "result": {"outcome": "planned"},
+                "receipt_path": str(receipt_file),
+                "summary": "Plan done",
+            }),
+        )
+        self.assertNotEqual(res_bad_cli.returncode, 0)
+        self.assertIn("dispatch_mismatch", res_bad_cli.stderr.lower())
+
+        # 3. Complete with matching dispatch_id succeeds
+        res_ok = self.run_cli(
+            "complete",
+            "--receipt-root", str(self.receipt_root),
+            "--dispatch-id", real_dispatch_id,
+            "--report", json.dumps({
+                "dispatch_id": real_dispatch_id,
+                "execution_status": "succeeded",
+                "result": {"outcome": "planned"},
+                "receipt_path": str(receipt_file),
+                "summary": "Plan done",
+            }),
+        )
+        self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+
+    def test_budget_deduplication_and_idempotency_without_double_deduction(self):
+        """Ticket #51: Repeated prepare/handoff calls do not double-deduct budgets or double-authorize."""
+        self.run_cli(
+            "init",
+            "--receipt-root", str(self.receipt_root),
+            "--root-issue", "55",
+            "--delivery-attempts-max", "3",
+        )
+
+        req = {
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 55",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }
+
+        # First prepare: allocates attempt 1, delivery_attempts_used = 1
+        p1 = json.loads(self.prepare(req).stdout)
+        self.assertEqual(p1["attempt"], 1)
+        insp1 = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp1["budgets"]["delivery_attempts_used"], 1)
+
+        # Repeated prepare with identical request: idempotent return, budget unchanged
+        p1_repeat = json.loads(self.prepare(req).stdout)
+        self.assertEqual(p1_repeat["dispatch_id"], p1["dispatch_id"])
+        self.assertEqual(p1_repeat["attempt"], 1)
+        insp1_repeat = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp1_repeat["budgets"]["delivery_attempts_used"], 1)
+
+        # First handoff: authorized = True
+        h1 = json.loads(self.run_cli("handoff", "--receipt-root", str(self.receipt_root)).stdout)
+        self.assertTrue(h1["authorized"])
+
+        # Repeated handoff: does NOT double authorize
+        h1_repeat = json.loads(self.run_cli("handoff", "--receipt-root", str(self.receipt_root)).stdout)
+        self.assertFalse(h1_repeat["authorized"])
+
+        # Complete attempt 1
+        receipt1 = Path(p1["receipt_path"])
+        receipt1.write_text("# Attempt 1", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed"},
+            "receipt_path": str(receipt1),
+            "summary": "Needs rework",
+        }))
+
+        # Prepare with attempt_intent="same": reuses attempt 1, budget remains 1
+        p_same = json.loads(self.prepare({**req, "attempt_intent": "same"}).stdout)
+        self.assertEqual(p_same["attempt"], 1)
+        insp_same = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_same["budgets"]["delivery_attempts_used"], 1)
+
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_same = Path(p_same["receipt_path"])
+        receipt_same.write_text("# Attempt 1 same", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed"},
+            "receipt_path": str(receipt_same),
+            "summary": "Needs rework",
+        }))
+
+        # Prepare with attempt_intent="new": increments to attempt 2, budget becomes 2
+        p_new = json.loads(self.prepare({**req, "attempt_intent": "new"}).stdout)
+        self.assertEqual(p_new["attempt"], 2)
+        insp_new = json.loads(self.run_cli("inspect", "--receipt-root", str(self.receipt_root), "--json").stdout)
+        self.assertEqual(insp_new["budgets"]["delivery_attempts_used"], 2)
+
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_new = Path(p_new["receipt_path"])
+        receipt_new.write_text("# Attempt 2 new", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed"},
+            "receipt_path": str(receipt_new),
+            "summary": "Needs rework",
+        }))
+
+        # Prepare attempt 3 with attempt_intent="new": increments to attempt 3, budget becomes 3
+        p_new3 = json.loads(self.prepare({**req, "attempt_intent": "new"}).stdout)
+        self.assertEqual(p_new3["attempt"], 3)
+        self.run_cli("handoff", "--receipt-root", str(self.receipt_root))
+        receipt_new3 = Path(p_new3["receipt_path"])
+        receipt_new3.write_text("# Attempt 3", encoding="utf-8")
+        self.run_cli("complete", "--receipt-root", str(self.receipt_root), "--report", json.dumps({
+            "execution_status": "succeeded",
+            "result": {"outcome": "rework_needed"},
+            "receipt_path": str(receipt_new3),
+            "summary": "Needs rework",
+        }))
+
+        # Attempt 4 with attempt_intent="new": exceeds max 3, strictly rejected!
+        res_exceeded = self.prepare({**req, "attempt_intent": "new"})
+        self.assertNotEqual(res_exceeded.returncode, 0)
+        self.assertIn("budget exceeded", res_exceeded.stderr.lower())
 
 
 if __name__ == "__main__":

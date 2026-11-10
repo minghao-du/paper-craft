@@ -72,8 +72,8 @@ class WorkspaceTests(unittest.TestCase):
                 "current_issue_id": str(overrides.get("current_issue_id", overrides.get("issue", "42"))),
             },
             "provider": {
-                "type": "script",
-                "target": "skills/pc-workspace/scripts/prepare-worktree.py",
+                "type": "skill",
+                "target": "pc-workspace",
                 "args": [],
             },
             "environment": {
@@ -95,9 +95,9 @@ class WorkspaceTests(unittest.TestCase):
                 "receipt_template": "templates/subagent-receipt.template.md",
             },
             "budgets": {
-                "delivery_attempts_limit": 3,
+                "delivery_attempts_max": 3,
                 "delivery_attempts_used": 0,
-                "replans_limit": 2,
+                "replans_max": 2,
                 "replans_used": 0,
             },
         }
@@ -459,8 +459,8 @@ class WorkspaceTests(unittest.TestCase):
                 "current_issue_id": "39",
             },
             "provider": {
-                "type": "script",
-                "target": str(HELPER),
+                "type": "skill",
+                "target": "pc-workspace",
                 "args": [],
             },
             "environment": {

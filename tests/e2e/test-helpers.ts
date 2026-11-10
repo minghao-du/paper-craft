@@ -25,14 +25,6 @@ export const ENVELOPE_SCRIPT = path.join(
 );
 
 /**
- * Absolute path to deterministic state machine script (state_machine.py).
- */
-export const STATE_MACHINE_SCRIPT = path.join(
-  REPO_ROOT,
-  'skills/pc-orchestrator/scripts/state_machine.py',
-);
-
-/**
  * Absolute path to dispatch lifecycle kernel CLI script (lifecycle_kernel.py).
  */
 export const LIFECYCLE_KERNEL_SCRIPT = path.join(
@@ -69,7 +61,7 @@ export interface TaskInputEnvelope {
     current_issue_id: string;
   };
   provider: {
-    type: 'skill' | 'script';
+    type: 'skill';
     target: string;
     args: string[];
   };
@@ -94,10 +86,8 @@ export interface TaskInputEnvelope {
   budgets: {
     delivery_attempts_used: number;
     delivery_attempts_max: number;
-    delivery_attempts_limit?: number;
     replans_used: number;
     replans_max: number;
-    replans_limit?: number;
   };
 }
 
@@ -148,16 +138,6 @@ export function runEnvelopeCli(
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): ProcessResult {
   return runPython(ENVELOPE_SCRIPT, args, options);
-}
-
-/**
- * Execute state_machine.py CLI subcommand.
- */
-export function runStateMachineCli(
-  args: string[],
-  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
-): ProcessResult {
-  return runPython(STATE_MACHINE_SCRIPT, args, options);
 }
 
 /**

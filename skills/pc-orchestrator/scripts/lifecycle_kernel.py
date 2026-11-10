@@ -19,7 +19,8 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+import yaml
 
 # Import workspace config validator
 _CONFIG_DIR = str(Path(__file__).resolve().parent.parent.parent / "pc-workspace-config" / "scripts")
@@ -27,9 +28,10 @@ if _CONFIG_DIR not in sys.path:
     sys.path.insert(0, _CONFIG_DIR)
 
 try:
-    from config import validate_workspace_config
+    from config import validate_workspace_config, resolve_workspace_config
 except ImportError:
     validate_workspace_config = None
+    resolve_workspace_config = None
 
 # Import envelope utilities
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
@@ -38,118 +40,163 @@ if _SCRIPT_DIR not in sys.path:
 
 from envelope import DEFAULT_RECEIPT_TEMPLATE, validate_envelope, atomic_write_json
 
-
-def _is_plan_stage(stage: str) -> bool:
-    """Check if the given stage name corresponds to a planning stage.
-
-    Args:
-        stage: Stage name string to check.
-
-    Returns:
-        True if the stage is 'stage_1_plan' or 'issue_plan', False otherwise.
-    """
-    return stage in ("stage_1_plan", "issue_plan")
+DEFAULT_WORKFLOW_PATH = str(Path(__file__).resolve().parent.parent / "workflows" / "default.yaml")
 
 
-def _is_work_stage(stage: str) -> bool:
-    """Check if the given stage name corresponds to an issue work stage.
+def load_and_validate_workflow(
+    workflow_source: Optional[Union[str, Dict[str, Any], Path]] = None,
+    repo_dir: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Load workflow from YAML file, string, or dictionary, and validate required schema.
 
     Args:
-        stage: Stage name string to check.
+        workflow_source: None (uses default.yaml), path to YAML, YAML content string, or dict.
+        repo_dir: Optional repository directory to resolve relative paths.
 
     Returns:
-        True if the stage is 'stage_2_work' or 'issue_work', False otherwise.
+        Validated workflow snapshot dictionary.
+
+    Raises:
+        ValueError: if workflow is invalid, missing required fields, contains duplicate
+            stage IDs, invalid references, or non-skill provider types.
+        FileNotFoundError: if a specified workflow file does not exist.
     """
-    return stage in ("stage_2_work", "issue_work")
+    if workflow_source is None or workflow_source == "" or workflow_source == "default":
+        p = Path(DEFAULT_WORKFLOW_PATH)
+        if not p.exists():
+            raise FileNotFoundError(f"Default workflow YAML file not found at: {p}")
+        with open(p, "r", encoding="utf-8") as f:
+            content = f.read()
+        try:
+            data = yaml.safe_load(content)
+        except Exception as e:
+            raise ValueError(f"Failed to parse default workflow YAML: {e}")
+    elif isinstance(workflow_source, dict):
+        data = workflow_source
+    elif isinstance(workflow_source, (str, Path)):
+        src_str = str(workflow_source).strip()
+        # Check if it's an inline YAML string
+        if "\n" in src_str or src_str.startswith("{") or (":" in src_str and not src_str.endswith((".yaml", ".yml")) and "/" not in src_str and "\\" not in src_str and not Path(src_str).exists()):
+            try:
+                data = yaml.safe_load(src_str)
+            except Exception as e:
+                raise ValueError(f"Failed to parse workflow YAML content: {e}")
+        else:
+            is_explicit_path = (
+                src_str.endswith(".yaml")
+                or src_str.endswith(".yml")
+                or "/" in src_str
+                or "\\" in src_str
+            )
+            p = Path(src_str)
+            if not p.is_absolute():
+                if repo_dir and (Path(repo_dir) / p).exists():
+                    p = Path(repo_dir) / p
+                elif not p.exists():
+                    wf_dir = Path(__file__).resolve().parent.parent / "workflows"
+                    if (wf_dir / f"{src_str}.yaml").exists():
+                        p = wf_dir / f"{src_str}.yaml"
+                    elif (wf_dir / f"{src_str}").exists():
+                        p = wf_dir / f"{src_str}"
+            if not p.exists():
+                if is_explicit_path:
+                    raise FileNotFoundError(f"Workflow file not found: {workflow_source}")
+                # Bare name without explicit path: fallback to default workflow with custom name
+                def_p = Path(DEFAULT_WORKFLOW_PATH)
+                if not def_p.exists():
+                    raise FileNotFoundError(f"Default workflow YAML file not found at: {def_p}")
+                with open(def_p, "r", encoding="utf-8") as f:
+                    content = f.read()
+                try:
+                    data = yaml.safe_load(content)
+                    if isinstance(data, dict):
+                        if "workflow" in data and isinstance(data["workflow"], dict):
+                            data["workflow"]["name"] = src_str
+                        else:
+                            data["name"] = src_str
+                except Exception as e:
+                    raise ValueError(f"Failed to parse default workflow YAML: {e}")
+            else:
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    data = yaml.safe_load(content)
+                except Exception as e:
+                    raise ValueError(f"Failed to parse workflow file at {p}: {e}")
+    else:
+        raise TypeError(f"Invalid workflow source type: {type(workflow_source).__name__}")
 
+    if not isinstance(data, dict):
+        raise ValueError(f"Workflow definition must be a mapping/object, got {type(data).__name__}")
 
-def _is_land_stage(stage: str) -> bool:
-    """Check if the given stage name corresponds to an issue landing stage.
+    # Support both root keys and root 'workflow' block
+    wf = data.get("workflow", data) if isinstance(data.get("workflow"), dict) else data
 
-    Args:
-        stage: Stage name string to check.
+    if "name" not in wf or not isinstance(wf["name"], str) or not wf["name"].strip():
+        raise ValueError("Workflow definition missing required non-empty string field: 'name'")
 
-    Returns:
-        True if the stage is 'stage_2_land' or 'issue_land', False otherwise.
-    """
-    return stage in ("stage_2_land", "issue_land")
+    if "stages" not in wf or not isinstance(wf["stages"], list) or len(wf["stages"]) == 0:
+        raise ValueError("Workflow definition missing required non-empty list field: 'stages'")
 
+    seen_stage_ids: set[str] = set()
+    for idx, stage in enumerate(wf["stages"]):
+        if not isinstance(stage, dict):
+            raise ValueError(f"Workflow stage at index {idx} must be a mapping/object")
+        stage_id = stage.get("id")
+        if not stage_id or not isinstance(stage_id, str) or not stage_id.strip():
+            raise ValueError(f"Workflow stage at index {idx} missing required non-empty string field: 'id'")
+        stage_id = stage_id.strip()
+        if stage_id in seen_stage_ids:
+            raise ValueError(f"Duplicate stage ID '{stage_id}' in workflow")
+        seen_stage_ids.add(stage_id)
 
-def _is_verify_stage(stage: str) -> bool:
-    """Check if the given stage name corresponds to an integrated verification stage.
+        # Validate provider: strictly skill
+        if "skill" in stage and "provider" not in stage:
+            stage["provider"] = {"type": "skill", "target": str(stage["skill"]).strip()}
 
-    Args:
-        stage: Stage name string to check.
+        provider = stage.get("provider")
+        if not isinstance(provider, dict):
+            raise ValueError(f"Workflow stage '{stage_id}' missing required mapping: 'provider'")
+        p_type = provider.get("type")
+        if p_type != "skill":
+            raise ValueError(
+                f"Workflow stage '{stage_id}' has invalid provider type '{p_type}'. Only 'skill' provider is supported."
+            )
+        p_target = provider.get("target")
+        if not p_target or not isinstance(p_target, str) or not p_target.strip():
+            raise ValueError(f"Workflow stage '{stage_id}' has missing or empty provider 'target'")
+        p_args = provider.get("args")
+        if p_args is not None and (not isinstance(p_args, list) or any(not isinstance(a, str) for a in p_args)):
+            raise ValueError(f"Workflow stage '{stage_id}' provider 'args' must be a list of strings")
 
-    Returns:
-        True if the stage is 'stage_3_verify' or 'issue_verify', False otherwise.
-    """
-    return stage in ("stage_3_verify", "issue_verify")
+    # Validate references
+    initial_stage = wf.get("initial_stage")
+    if initial_stage and str(initial_stage).strip() not in seen_stage_ids:
+        raise ValueError(
+            f"Workflow 'initial_stage' references unknown stage '{initial_stage}'. Defined stages: {sorted(seen_stage_ids)}"
+        )
 
+    for stage in wf["stages"]:
+        for ref_key in ("next", "on_success", "on_failure", "next_stage"):
+            ref_val = stage.get(ref_key)
+            if ref_val and str(ref_val).strip() not in seen_stage_ids:
+                raise ValueError(
+                    f"Stage '{stage['id']}' {ref_key} references unknown stage '{ref_val}'"
+                )
+        depends_on = stage.get("depends_on") or stage.get("dependencies")
+        if depends_on:
+            if isinstance(depends_on, list):
+                for dep in depends_on:
+                    if str(dep).strip() not in seen_stage_ids:
+                        raise ValueError(
+                            f"Stage '{stage['id']}' dependency references unknown stage '{dep}'"
+                        )
+            elif isinstance(depends_on, str) and depends_on.strip() not in seen_stage_ids:
+                raise ValueError(
+                    f"Stage '{stage['id']}' dependency references unknown stage '{depends_on}'"
+                )
 
-def _is_replan_stage(stage: str) -> bool:
-    """Check if the given stage name corresponds to a scope replanning stage.
-
-    Args:
-        stage: Stage name string to check.
-
-    Returns:
-        True if the stage is 'scope_replan', False otherwise.
-    """
-    return stage in ("scope_replan",)
-
-
-def _is_auxiliary_stage(stage: str) -> bool:
-    """Check if the given stage name corresponds to an auxiliary workspace stage.
-
-    Args:
-        stage: Stage name string to check.
-
-    Returns:
-        True if stage is 'workspace_prepare' or 'workspace_cleanup', False otherwise.
-    """
-    return stage in ("workspace_prepare", "workspace_cleanup")
-
-
-def _is_landed_outcome(result: Dict[str, Any]) -> bool:
-    """Determine whether a stage execution result indicates successful change landing.
-
-    Args:
-        result: Execution result dictionary from compact report.
-
-    Returns:
-        True if outcome is 'landed' or if merge succeeded without rework/failure/block.
-    """
-    if not isinstance(result, dict):
-        return False
-    outcome = result.get("outcome")
-    if outcome == "landed":
-        return True
-    if result.get("merged") is True and outcome not in ("rework_needed", "failed", "blocked"):
-        return True
-    if result.get("mergedCommit") and outcome not in ("rework_needed", "failed", "blocked"):
-        return True
-    return False
-
-
-def _is_effective_work_outcome(status: str, result: Dict[str, Any]) -> bool:
-    """Determine whether a work stage execution produced an effective, non-blocking delivery outcome.
-
-    Args:
-        status: Execution status string ('succeeded', 'failed', 'blocked').
-        result: Execution result dictionary from compact report.
-
-    Returns:
-        True if status is succeeded and outcome is not rework_needed, failed, blocked, or out_of_scope.
-    """
-    if status != "succeeded":
-        return False
-    if not isinstance(result, dict):
-        return False
-    outcome = result.get("outcome")
-    if outcome in ("rework_needed", "failed", "blocked", "out_of_scope"):
-        return False
-    return True
+    return wf
 
 
 def _make_delivery_item(issue_id: str | int, delivery_attempts_max: int) -> Dict[str, Any]:
@@ -189,32 +236,6 @@ def _make_delivery_sequence(issue_ids: List[str | int], delivery_attempts_max: i
         "current_index": 0,
         "completed": False,
     }
-
-
-def _set_fallback_stage_status(state: Dict[str, Any], status: str, outcome: Optional[str]) -> None:
-    """Set stage_status on state, mapping rework_needed outcome to needs_rework.
-
-    Args:
-        state: Mutable workflow state dictionary.
-        status: Execution status string ('succeeded', 'failed', 'blocked').
-        outcome: Optional specialist result outcome string.
-    """
-    state["stage_status"] = "needs_rework" if outcome == "rework_needed" else status
-
-
-def _compute_failure_status(status: str, outcome: Optional[str]) -> str:
-    """Compute failure or blocked status for an item, normalizing rework_needed.
-
-    Args:
-        status: Execution status string ('failed', 'blocked', 'succeeded').
-        outcome: Optional specialist result outcome string.
-
-    Returns:
-        'needs_rework', 'failed', or 'blocked'.
-    """
-    if outcome == "rework_needed":
-        return "needs_rework"
-    return "failed" if status == "failed" else "blocked"
 
 
 def validate_plan_order(tasks: List[Any]) -> List[str]:
@@ -369,69 +390,133 @@ def load_state(receipt_root: Path | str) -> Dict[str, Any]:
     return _recover_uncommitted_dispatch(root_path, state)
 
 
-def check_workspace_config(repo_dir: Path) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-    """Check workspace configuration existence and validity."""
-    config_file = repo_dir / ".paper-craft" / "workspace-config.json"
-    if not config_file.exists():
-        return False, f"Workspace configuration missing at {config_file}", None
-
+def check_workspace_config(
+    repo_dir: Path | str,
+    require_config: bool = False,
+    overrides: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    """Check workspace configuration existence and validity using config.py as single source."""
+    if not resolve_workspace_config:
+        return False, "Config module unavailable", None
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        resolved = resolve_workspace_config(repo_dir, overrides=overrides, require_file=require_config)
+        return True, "Workspace configuration valid", resolved
     except Exception as e:
-        return False, f"Workspace configuration corrupted at {config_file}: {e}", None
-
-    if validate_workspace_config:
-        errors = validate_workspace_config(data, repo_dir)
-        if errors:
-            return False, f"Invalid workspace configuration:\n  - " + "\n  - ".join(errors), None
-
-    return True, "Workspace configuration valid", data
+        return False, str(e), None
 
 
 def init_workflow(
-    receipt_root: Path | str,
-    root_issue: str | int,
+    receipt_root: Optional[Path | str] = None,
+    root_issue: str | int = 0,
     current_issue: Optional[str | int] = None,
-    workflow: str = "default",
+    workflow: Optional[str] = None,
     initial_stage: Optional[str] = None,
     repo_dir: Path | str = ".",
     force: bool = False,
     require_config: bool = False,
-    delivery_attempts_max: int = 3,
-    replans_max: int = 2,
+    delivery_attempts_max: Optional[int] = None,
+    replans_max: Optional[int] = None,
     child_issues: Optional[List[Any]] = None,
     plan: Optional[Any] = None,
+    delivery_target: Optional[str] = None,
+    base_remote: Optional[str] = None,
+    push_remote: Optional[str] = None,
+    base_branch: Optional[str] = None,
+    worktree_container: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Initialize workflow runtime state in <receipt_root>/state.json."""
-    root_path = Path(receipt_root).resolve()
-    state_file = root_path / "state.json"
     repo_path = Path(repo_dir).resolve()
+    if not repo_path.exists():
+        raise FileNotFoundError(f"Repository directory does not exist: {repo_path}")
 
-    # Workspace configuration check
-    cfg_ok, cfg_msg, cfg_data = check_workspace_config(repo_path)
-    if require_config and not cfg_ok:
+    # Build overrides from explicit CLI parameters (explicit parameters take precedence)
+    overrides: Dict[str, Any] = {}
+    if workflow is not None:
+        overrides["workflow"] = workflow
+    if delivery_attempts_max is not None:
+        overrides["delivery_attempts_max"] = delivery_attempts_max
+    if replans_max is not None:
+        overrides["replans_max"] = replans_max
+    if delivery_target is not None:
+        overrides["delivery_target"] = delivery_target
+    if base_remote is not None:
+        overrides["base_remote"] = base_remote
+    if push_remote is not None:
+        overrides["push_remote"] = push_remote
+    if base_branch is not None:
+        overrides["base_branch"] = base_branch
+    if worktree_container is not None:
+        overrides["worktree_container"] = worktree_container
+
+    # Workspace configuration check: stops immediately on missing/invalid config or unconfirmed facts
+    cfg_ok, cfg_msg, resolved_config = check_workspace_config(
+        repo_path,
+        require_config=require_config,
+        overrides=overrides,
+    )
+    if not cfg_ok or not resolved_config:
         raise ValueError(cfg_msg)
 
-    # Idempotency and collision check
+    # Determine isolated receipt root directory
+    if receipt_root is not None and str(receipt_root).strip():
+        root_path = Path(receipt_root).resolve()
+    else:
+        container_path = Path(resolved_config["worktree_container_resolved"])
+        root_path = (container_path / ".paper-craft" / "receipts" / f"issue-{root_issue}").resolve()
+
+    # Validate isolation constraints
+    if root_path == repo_path or repo_path in root_path.parents or root_path in repo_path.parents:
+        raise ValueError(
+            f"Receipt root '{root_path}' violates isolation constraints: cannot be within or contain repository checkout '{repo_path}'."
+        )
+
+    resolved_config["receipt_root"] = str(root_path)
+    state_file = root_path / "state.json"
+
+    target_workflow = resolved_config["workflow"]
+    target_repo = resolved_config["repo_checkout"]
+
+    # Load and validate workflow snapshot
+    workflow_to_load = workflow or target_workflow
+    workflow_snapshot = load_and_validate_workflow(workflow_to_load, repo_dir=repo_path)
+    snapshot_name = workflow_snapshot.get("name", target_workflow)
+
+    # Re-entrance / rerun identity check: check repository checkout and workflow identity, not just issue number
     if state_file.exists() and not force:
         with open(state_file, "r", encoding="utf-8") as f:
             existing = json.load(f)
-        if str(existing.get("root_issue_id")) == str(root_issue):
-            return existing
-        raise FileExistsError(
-            f"State file already exists for root issue {existing.get('root_issue_id')} at {state_file}. Use --force to overwrite."
-        )
+        existing_root = str(existing.get("root_issue_id", ""))
+        existing_wf = existing.get("workflow", "")
+        existing_cfg = existing.get("config_snapshot", {})
+        existing_repo = existing_cfg.get("repo_checkout") or existing.get("context", {}).get("repo_checkout")
+
+        if existing_root != str(root_issue):
+            raise FileExistsError(
+                f"Run identity conflict: State file at {state_file} already exists for root issue {existing_root}, "
+                f"cannot re-initialize with root issue {root_issue}. Use --force to overwrite."
+            )
+        if existing_wf != target_workflow and existing_wf != snapshot_name:
+            raise ValueError(
+                f"Run identity conflict: Existing run at {state_file} has workflow '{existing_wf}', "
+                f"but rerun specified workflow '{target_workflow}'. Use --force to overwrite."
+            )
+        if existing_repo and Path(existing_repo).resolve() != Path(target_repo).resolve():
+            raise ValueError(
+                f"Run identity conflict: Existing run at {state_file} was initialized with repository checkout "
+                f"'{existing_repo}', but rerun specified repository checkout '{target_repo}'. Use --force to overwrite."
+            )
+        return existing
 
     now = datetime.now(timezone.utc).isoformat()
-    context: Dict[str, Any] = {}
-    if cfg_ok and cfg_data:
-        context["repository"] = cfg_data.get("delivery_target") or "local/repo"
-        context["base_branch"] = cfg_data.get("base_branch") or "main"
-        context["delivery_target"] = cfg_data.get("delivery_target")
-        context["base_remote"] = cfg_data.get("base_remote")
-        context["push_remote"] = cfg_data.get("push_remote")
-        context["worktree_container"] = cfg_data.get("worktree_container")
+    context: Dict[str, Any] = {
+        "repository": resolved_config["delivery_target"],
+        "delivery_target": resolved_config["delivery_target"],
+        "base_branch": resolved_config["base_branch"],
+        "base_remote": resolved_config["base_remote"],
+        "push_remote": resolved_config["push_remote"],
+        "worktree_container": resolved_config["worktree_container"],
+        "repo_checkout": resolved_config["repo_checkout"],
+    }
 
     # Resolve child issues / plan if provided
     child_ids: Optional[List[str]] = None
@@ -463,9 +548,29 @@ def init_workflow(
         child_ids = validate_plan_order(tasks)
 
     resolved_current_issue = str(current_issue or (child_ids[0] if child_ids else root_issue))
-    resolved_current_stage = initial_stage or ("stage_2_work" if child_ids else "stage_1_plan")
+
+    snapshot_initial = workflow_snapshot.get("initial_stage")
+    stage_ids = {s["id"] for s in workflow_snapshot.get("stages", [])}
+    if initial_stage:
+        if stage_ids and initial_stage not in stage_ids:
+            raise ValueError(f"Requested initial_stage '{initial_stage}' not found in workflow snapshot.")
+        resolved_current_stage = initial_stage
+    elif child_ids:
+        resolved_current_stage = (
+            "stage_2_work"
+            if "stage_2_work" in stage_ids
+            else (workflow_snapshot["stages"][0]["id"] if workflow_snapshot.get("stages") else "stage_2_work")
+        )
+    elif snapshot_initial and snapshot_initial in stage_ids:
+        resolved_current_stage = snapshot_initial
+    elif workflow_snapshot.get("stages"):
+        resolved_current_stage = workflow_snapshot["stages"][0]["id"]
+    else:
+        resolved_current_stage = "stage_1_plan"
 
     delivery_sequence: Optional[Dict[str, Any]] = None
+    delivery_attempts_max = resolved_config["delivery_attempts_max"]
+    replans_max = resolved_config["replans_max"]
     if child_ids:
         delivery_sequence = _make_delivery_sequence(child_ids, delivery_attempts_max)
     elif initial_stage in ("stage_2_work", "issue_work") or (current_issue and str(current_issue) != str(root_issue)):
@@ -476,7 +581,8 @@ def init_workflow(
         "schema_version": "1.0",
         "root_issue_id": str(root_issue),
         "current_issue_id": resolved_current_issue,
-        "workflow": workflow,
+        "workflow": snapshot_name,
+        "workflow_snapshot": workflow_snapshot,
         "current_stage": resolved_current_stage,
         "stage_status": "pending",
         "next_step_index": 1,
@@ -490,11 +596,13 @@ def init_workflow(
             "replans_max": replans_max,
         },
         "context": context,
+        "config_snapshot": resolved_config,
         "last_updated": now,
     }
     if delivery_sequence:
         state["delivery_sequence"] = delivery_sequence
 
+    root_path.mkdir(parents=True, exist_ok=True)
     atomic_write_json(state_file, state)
     return state
 
@@ -503,8 +611,8 @@ def prepare_task(
     receipt_root: Path | str,
     stage: str,
     objective: str,
-    provider_type: str,
-    provider_target: str,
+    provider_type: Optional[str] = None,
+    provider_target: Optional[str] = None,
     provider_args: Optional[List[str]] = None,
     acceptance_criteria: Optional[List[str]] = None,
     predecessor_receipts: Optional[List[str]] = None,
@@ -514,7 +622,7 @@ def prepare_task(
     attempt_intent: str = "same",
     branch: Optional[str] = None,
     commit: Optional[str] = None,
-    receipt_template: str = DEFAULT_RECEIPT_TEMPLATE,
+    receipt_template: Optional[str] = None,
     rework_issue: Optional[str | int] = None,
 ) -> Dict[str, Any]:
     """Prepare a fixed task dispatch, generate envelope, and assign receipt path."""
@@ -527,9 +635,87 @@ def prepare_task(
 
     # Context & Environment
     context = state.get("context", {})
-    resolved_workdir = str(workdir or context.get("worktree") or context.get("working_directory") or Path.cwd())
+    config_snapshot = state.get("config_snapshot", {})
+    resolved_workdir = str(
+        workdir
+        or context.get("worktree")
+        or context.get("working_directory")
+        or config_snapshot.get("repo_checkout")
+        or Path.cwd()
+    )
     resolved_branch = branch or context.get("branch")
     resolved_commit = commit or context.get("commit")
+
+    # Workflow snapshot stage lookup and extraction
+    workflow_snapshot = state.get("workflow_snapshot")
+    stage_def: Optional[Dict[str, Any]] = None
+    if workflow_snapshot and "stages" in workflow_snapshot:
+        for s in workflow_snapshot["stages"]:
+            if s.get("id") == stage or s.get("logical_task") == stage:
+                stage_def = s
+                break
+
+    if stage_def is None:
+        if provider_target:
+            stage_def = {
+                "id": stage,
+                "provider": {
+                    "type": provider_type or "skill",
+                    "target": provider_target,
+                    "args": provider_args or [],
+                },
+            }
+        else:
+            raise ValueError(
+                f"Cannot prepare task: Stage '{stage}' is not defined in workflow snapshot and no provider was specified."
+            )
+
+    stage_provider = stage_def.get("provider", {})
+    resolved_provider_type = provider_type or stage_provider.get("type", "skill")
+    if resolved_provider_type != "skill":
+        raise ValueError(f"Provider 'type' must be 'skill', received '{resolved_provider_type}'")
+
+    resolved_provider_target = provider_target or stage_provider.get("target")
+    if not resolved_provider_target:
+        raise ValueError(f"Provider 'target' must be defined in stage '{stage}' or provided in prepare request.")
+
+    resolved_provider_args = provider_args if provider_args is not None else list(stage_provider.get("args", []))
+
+    resolved_receipt_template = (
+        receipt_template
+        or stage_def.get("receipt_template")
+        or stage_def.get("template")
+        or DEFAULT_RECEIPT_TEMPLATE
+    )
+
+    resolved_scope = scope or stage_def.get("scope", "")
+    is_auxiliary = stage_def.get("auxiliary", False) or stage in ("workspace_prepare", "workspace_cleanup")
+    is_replan = stage_def.get("replan", False) or stage == "scope_replan"
+
+    resolved_predecessors = list(predecessor_receipts or [])
+    receipt_root_resolved = receipt_root_path.resolve()
+    for p_str in resolved_predecessors:
+        if not isinstance(p_str, str) or not p_str.strip():
+            raise ValueError("Predecessor receipt path must be a non-empty string.")
+        p = Path(p_str).resolve()
+        if not p.exists():
+            raise FileNotFoundError(f"Predecessor receipt does not exist on disk: {p}")
+        if p.stat().st_size == 0:
+            raise ValueError(f"Predecessor receipt at {p} is empty.")
+        try:
+            p.relative_to(receipt_root_resolved)
+            is_internal = True
+        except ValueError:
+            is_internal = False
+        if is_internal:
+            completed_receipts = {
+                Path(c.get("receipt_path", "")).resolve()
+                for c in state.get("completed_stages", [])
+            }
+            if p not in completed_receipts:
+                raise ValueError(
+                    f"Predecessor receipt '{p}' does not match any completed stage in this workflow run."
+                )
 
     # Validate active dispatch
     active = state.get("active_dispatch")
@@ -544,11 +730,11 @@ def prepare_task(
         if (
             active.get("task_name") == stage
             and req.get("objective") == objective
-            and req.get("provider", {}).get("type") == provider_type
-            and req.get("provider", {}).get("target") == provider_target
-            and req.get("provider", {}).get("args", []) == (provider_args or [])
+            and req.get("provider", {}).get("type") == resolved_provider_type
+            and req.get("provider", {}).get("target") == resolved_provider_target
+            and req.get("provider", {}).get("args", []) == (resolved_provider_args or [])
             and req.get("acceptance_criteria", []) == (acceptance_criteria or [])
-            and req.get("predecessors", []) == (predecessor_receipts or [])
+            and req.get("predecessors", []) == resolved_predecessors
             and req.get("working_directory") == resolved_workdir
             and req.get("branch") == resolved_branch
             and req.get("commit") == resolved_commit
@@ -560,6 +746,8 @@ def prepare_task(
                 "receipt_path": active["receipt_path"],
                 "attempt": active["attempt"],
                 "status": active["status"],
+                "stage": stage,
+                "stage_context": stage_def,
             }
         raise RuntimeError(
             f"Cannot prepare task: Active dispatch '{active.get('dispatch_id')}' is already pending. "
@@ -603,14 +791,14 @@ def prepare_task(
                 "Gaps that cannot be attributed to an existing issue must be routed to replanning; "
                 "do not guess attribution or replace plan."
             )
-    elif active_rework and delivery_seq and not _is_plan_stage(stage) and not _is_verify_stage(stage) and not _is_replan_stage(stage):
+    elif active_rework and delivery_seq and not is_replan:
         for it in delivery_seq.get("items", []):
             if str(it.get("issue_id")) == str(active_rework):
                 curr_item = it
                 break
         curr_issue = str(active_rework)
         state["current_issue_id"] = curr_issue
-    elif delivery_seq and not delivery_seq.get("completed", False) and not _is_plan_stage(stage) and not _is_verify_stage(stage):
+    elif delivery_seq and not delivery_seq.get("completed", False) and not is_replan:
         curr_idx = delivery_seq.get("current_index", 0)
         items = delivery_seq.get("items", [])
         if curr_idx < len(items):
@@ -619,18 +807,15 @@ def prepare_task(
             state["current_issue_id"] = curr_issue
         else:
             curr_issue = state.get("current_issue_id", state.get("root_issue_id", "0"))
-    elif _is_plan_stage(stage) or _is_verify_stage(stage):
-        curr_issue = state.get("root_issue_id", "0")
-        state["current_issue_id"] = curr_issue
     else:
         curr_issue = state.get("current_issue_id", state.get("root_issue_id", "0"))
 
     budgets = state.get("budgets", {})
-    if _is_replan_stage(stage):
+    if is_replan:
         origin_stage = (parameters or {}).get("originating_stage")
         if not origin_stage:
             curr_st = state.get("current_stage", "stage_1_plan")
-            if _is_replan_stage(curr_st):
+            if curr_st == "scope_replan":
                 origin_stage = state.get("originating_stage_for_replan", "stage_1_plan")
             else:
                 origin_stage = curr_st
@@ -649,7 +834,8 @@ def prepare_task(
         new_replans = used_replans_stage + 1
         stage_replans[origin_stage] = new_replans
         target_budgets["replans_used"] = target_budgets.get("replans_used", 0) + 1
-        budgets["replans_used"] = budgets.get("replans_used", 0) + 1
+        if curr_item is not None:
+            budgets["replans_used"] = budgets.get("replans_used", 0) + 1
         state["budgets"] = budgets
 
         new_attempt = new_replans
@@ -666,14 +852,14 @@ def prepare_task(
         if max_attempts <= 0:
             raise RuntimeError(f"Budget exceeded: delivery attempts max ({max_attempts}) is exhausted for issue {curr_issue}.")
 
-        if _is_auxiliary_stage(stage):
+        if is_auxiliary:
             new_attempt = max(1, used_attempts)
         elif used_attempts == 0:
             if used_attempts >= max_attempts:
                 raise RuntimeError(f"Budget exceeded: delivery attempts used ({used_attempts}) reached maximum ({max_attempts}) for issue {curr_issue}.")
             new_attempt = 1
             item_budgets["delivery_attempts_used"] = 1
-        elif attempt_intent in ("new", "new_attempt"):
+        elif attempt_intent == "new":
             if used_attempts >= max_attempts:
                 raise RuntimeError(f"Budget exceeded: delivery attempts used ({used_attempts}) reached maximum ({max_attempts}) for issue {curr_issue}.")
             new_attempt = used_attempts + 1
@@ -685,7 +871,7 @@ def prepare_task(
         budgets["delivery_attempts_max"] = max_attempts
         state["budgets"] = budgets
 
-        if not _is_auxiliary_stage(stage):
+        if not is_auxiliary:
             curr_item["stage"] = stage
             curr_item["status"] = "pending"
 
@@ -702,7 +888,7 @@ def prepare_task(
                 f"Budget exceeded: delivery attempts max ({max_attempts}) is exhausted."
             )
 
-        if _is_auxiliary_stage(stage):
+        if is_auxiliary:
             new_attempt = max(1, used_attempts)
         elif used_attempts == 0:
             if used_attempts >= max_attempts:
@@ -711,7 +897,7 @@ def prepare_task(
                 )
             new_attempt = 1
             budgets["delivery_attempts_used"] = 1
-        elif attempt_intent in ("new", "new_attempt"):
+        elif attempt_intent == "new":
             if used_attempts >= max_attempts:
                 raise RuntimeError(
                     f"Budget exceeded: delivery attempts used ({used_attempts}) reached maximum ({max_attempts})."
@@ -739,42 +925,41 @@ def prepare_task(
     envelope_filename = f"{step_index:02d}-input.json"
     envelope_path = receipt_root_path / envelope_filename
 
-    # Resolve environment and parameters
-    repo = context.get("repository", "local/repo")
-    base_branch = context.get("base_branch", "main")
+    # Resolve environment and parameters from config_snapshot directly without guesswork fallbacks
+    repo = (
+        config_snapshot.get("delivery_target")
+        or context.get("delivery_target")
+        or context.get("repository")
+    )
+    base_branch = (
+        config_snapshot.get("base_branch")
+        or context.get("base_branch")
+    )
+    base_remote = (
+        config_snapshot.get("base_remote")
+        or context.get("base_remote")
+    )
+    push_remote = (
+        config_snapshot.get("push_remote")
+        or context.get("push_remote")
+    )
+    worktree_container = (
+        config_snapshot.get("worktree_container")
+        or context.get("worktree_container")
+    )
 
-    resolved_predecessors = list(predecessor_receipts or [])
-    if not resolved_predecessors and state.get("completed_stages"):
-        latest_completed = state["completed_stages"][-1]
-        rec = latest_completed.get("receipt_path")
-        if rec:
-            resolved_predecessors.append(rec)
-
-    params = dict(parameters or {})
-    if "delivery_target" not in params and context.get("delivery_target"):
-        params["delivery_target"] = context["delivery_target"]
-    if "base_remote" not in params and context.get("base_remote"):
-        params["base_remote"] = context["base_remote"]
-    if "push_remote" not in params and context.get("push_remote"):
-        params["push_remote"] = context["push_remote"]
-    if "worktree_container" not in params and context.get("worktree_container"):
-        params["worktree_container"] = context["worktree_container"]
-
-    if not context.get("delivery_target"):
-        cfg_ok, _, cfg_data = check_workspace_config(Path(resolved_workdir))
-        if cfg_ok and cfg_data:
-            if repo == "local/repo" and cfg_data.get("delivery_target"):
-                repo = cfg_data["delivery_target"]
-            if base_branch == "main" and cfg_data.get("base_branch"):
-                base_branch = cfg_data["base_branch"]
-            if "delivery_target" not in params and cfg_data.get("delivery_target"):
-                params["delivery_target"] = cfg_data["delivery_target"]
-            if "base_remote" not in params and cfg_data.get("base_remote"):
-                params["base_remote"] = cfg_data["base_remote"]
-            if "push_remote" not in params and cfg_data.get("push_remote"):
-                params["push_remote"] = cfg_data["push_remote"]
-            if "worktree_container" not in params and cfg_data.get("worktree_container"):
-                params["worktree_container"] = cfg_data["worktree_container"]
+    params = dict(stage_def.get("parameters", {}))
+    params.update(stage_def.get("configs", {}))
+    if parameters:
+        params.update(parameters)
+    if "delivery_target" not in params and repo:
+        params["delivery_target"] = repo
+    if "base_remote" not in params and base_remote:
+        params["base_remote"] = base_remote
+    if "push_remote" not in params and push_remote:
+        params["push_remote"] = push_remote
+    if "worktree_container" not in params and worktree_container:
+        params["worktree_container"] = worktree_container
 
     envelope_data = {
         "schema_version": "1.0",
@@ -786,9 +971,9 @@ def prepare_task(
             "current_issue_id": str(curr_issue),
         },
         "provider": {
-            "type": provider_type,
-            "target": provider_target,
-            "args": provider_args or [],
+            "type": resolved_provider_type,
+            "target": resolved_provider_target,
+            "args": resolved_provider_args,
         },
         "environment": {
             "working_directory": str(resolved_workdir),
@@ -799,22 +984,20 @@ def prepare_task(
         },
         "inputs": {
             "objective": objective,
-            "scope": scope,
+            "scope": resolved_scope,
             "acceptance_criteria": acceptance_criteria or [],
             "predecessor_receipts": resolved_predecessors,
             "parameters": params,
         },
         "contract": {
             "receipt_path": str(receipt_path),
-            "receipt_template": receipt_template,
+            "receipt_template": resolved_receipt_template,
         },
         "budgets": {
             "delivery_attempts_used": envelope_delivery_used,
             "delivery_attempts_max": envelope_delivery_max,
-            "delivery_attempts_limit": envelope_delivery_max,
             "replans_used": envelope_replan_used,
             "replans_max": envelope_replan_max,
-            "replans_limit": envelope_replan_max,
         },
     }
 
@@ -836,12 +1019,13 @@ def prepare_task(
         "authorized": False,
         "envelope_path": str(envelope_path),
         "receipt_path": str(receipt_path),
+        "stage_context": stage_def,
         "request": {
             "objective": objective,
             "provider": {
-                "type": provider_type,
-                "target": provider_target,
-                "args": provider_args or [],
+                "type": resolved_provider_type,
+                "target": resolved_provider_target,
+                "args": resolved_provider_args,
             },
             "logical_stage": stage,
             "acceptance_criteria": acceptance_criteria or [],
@@ -861,6 +1045,8 @@ def prepare_task(
         "receipt_path": str(receipt_path),
         "attempt": new_attempt,
         "status": "prepared",
+        "stage": stage,
+        "stage_context": stage_def,
     }
 
 
@@ -1019,8 +1205,19 @@ def complete_dispatch(
         _record_protocol_error(receipt_root_path, state, "no_active_dispatch", err_msg)
         raise RuntimeError(err_msg)
 
+    report_dispatch_id = report_data.get("dispatch_id")
+    if dispatch_id and report_dispatch_id and dispatch_id != report_dispatch_id:
+        err_msg = f"dispatch_mismatch: Requested dispatch_id '{dispatch_id}' does not match report dispatch_id '{report_dispatch_id}'."
+        _record_protocol_error(receipt_root_path, state, "dispatch_mismatch", err_msg)
+        raise ValueError(err_msg)
+
     if dispatch_id and active.get("dispatch_id") != dispatch_id:
-        err_msg = f"Active dispatch ID '{active.get('dispatch_id')}' does not match requested '{dispatch_id}'."
+        err_msg = f"dispatch_mismatch: Active dispatch ID '{active.get('dispatch_id')}' does not match requested '{dispatch_id}'."
+        _record_protocol_error(receipt_root_path, state, "dispatch_mismatch", err_msg)
+        raise ValueError(err_msg)
+
+    if report_dispatch_id and active.get("dispatch_id") != report_dispatch_id:
+        err_msg = f"dispatch_mismatch: Active dispatch ID '{active.get('dispatch_id')}' does not match report dispatch_id '{report_dispatch_id}'."
         _record_protocol_error(receipt_root_path, state, "dispatch_mismatch", err_msg)
         raise ValueError(err_msg)
 
@@ -1052,33 +1249,6 @@ def complete_dispatch(
         _record_protocol_error(receipt_root_path, state, "receipt_empty", err_msg)
         raise ValueError(err_msg)
 
-    stage_name = active["task_name"]
-    outcome = report_data.get("result", {}).get("outcome")
-
-    # If this is a planning stage decomposing into child issues, validate plan order first
-    child_ids: Optional[List[str]] = None
-    if _is_plan_stage(stage_name) and status == "succeeded" and outcome == "decomposed":
-        plan_data = report_data.get("result", {}).get("plan")
-        if isinstance(plan_data, str):
-            try:
-                plan_data = json.loads(plan_data)
-            except Exception as e:
-                err_msg = f"Invalid plan JSON: {e}"
-                _record_protocol_error(receipt_root_path, state, "invalid_plan", err_msg)
-                raise ValueError(err_msg)
-        if isinstance(plan_data, dict):
-            raw_tasks = plan_data.get("tasks", [])
-        elif isinstance(plan_data, list):
-            raw_tasks = plan_data
-        else:
-            raw_tasks = report_data.get("result", {}).get("issues") or []
-
-        try:
-            child_ids = validate_plan_order(raw_tasks)
-        except ValueError as e:
-            _record_protocol_error(receipt_root_path, state, "invalid_plan", str(e))
-            raise ValueError(str(e))
-
     # Record completion
     now = datetime.now(timezone.utc).isoformat()
     completed_entry = {
@@ -1096,126 +1266,8 @@ def complete_dispatch(
     state.setdefault("completed_stages", []).append(completed_entry)
     state["active_dispatch"] = None
     state["protocol_error"] = None
-
-    # Delivery sequence progression
-    if _is_plan_stage(stage_name) and status == "succeeded":
-        if outcome == "decomposed":
-            assert child_ids is not None
-            delivery_attempts_max = state.get("budgets", {}).get("delivery_attempts_max", 3)
-            state["delivery_sequence"] = _make_delivery_sequence(child_ids, delivery_attempts_max)
-            state["current_issue_id"] = child_ids[0]
-            state["current_stage"] = "stage_2_work"
-            state["stage_status"] = "succeeded"
-            state["budgets"]["delivery_attempts_used"] = 0
-
-        elif outcome == "direct":
-            root_id = str(state.get("root_issue_id", "0"))
-            delivery_attempts_max = state.get("budgets", {}).get("delivery_attempts_max", 3)
-            state["delivery_sequence"] = _make_delivery_sequence([root_id], delivery_attempts_max)
-            state["current_issue_id"] = root_id
-            state["current_stage"] = "stage_2_work"
-            state["stage_status"] = "succeeded"
-            state["budgets"]["delivery_attempts_used"] = 0
-        else:
-            state["stage_status"] = status
-
-    elif state.get("delivery_sequence") and (not state["delivery_sequence"].get("completed", False) or state["delivery_sequence"].get("active_rework_issue_id")):
-        del_seq = state["delivery_sequence"]
-        items = del_seq.get("items", [])
-        curr_idx = del_seq.get("current_index", 0)
-        active_rework = del_seq.get("active_rework_issue_id")
-        curr_item = None
-        if active_rework:
-            for it in items:
-                if str(it.get("issue_id")) == str(active_rework):
-                    curr_item = it
-                    break
-        else:
-            if curr_idx < len(items):
-                curr_item = items[curr_idx]
-
-        if curr_item is not None:
-            if _is_auxiliary_stage(stage_name):
-                # Auxiliary preparation does NOT advance sequence!
-                state["current_stage"] = curr_item["stage"]
-                state["current_issue_id"] = curr_item["issue_id"]
-                state["stage_status"] = status
-            elif _is_work_stage(stage_name):
-                if _is_effective_work_outcome(status, report_data.get("result", {})):
-                    curr_item["stage"] = "stage_2_land"
-                    curr_item["status"] = "in_progress"
-                    curr_item["work_dispatch_id"] = active["dispatch_id"]
-                    curr_item["work_receipt_path"] = str(assigned_receipt)
-                    state["current_stage"] = "stage_2_land"
-                    state["current_issue_id"] = curr_item["issue_id"]
-                    state["stage_status"] = status
-                else:
-                    curr_item["status"] = _compute_failure_status(status, outcome)
-                    state["current_stage"] = "stage_2_work"
-                    state["current_issue_id"] = curr_item["issue_id"]
-                    state["stage_status"] = curr_item["status"]
-            elif _is_land_stage(stage_name):
-                if status == "succeeded" and _is_landed_outcome(report_data.get("result", {})):
-                    curr_item["stage"] = "landed"
-                    curr_item["status"] = "landed"
-                    curr_item["landed"] = True
-                    curr_item["land_dispatch_id"] = active["dispatch_id"]
-                    curr_item["land_receipt_path"] = str(assigned_receipt)
-
-                    if active_rework:
-                        del_seq["active_rework_issue_id"] = None
-                        all_landed = all(it.get("landed", False) for it in items)
-                        if all_landed or del_seq.get("completed", False):
-                            del_seq["completed"] = True
-                            state["current_issue_id"] = str(state.get("root_issue_id", "0"))
-                            state["current_stage"] = "stage_3_verify"
-                            state["stage_status"] = "succeeded"
-                            state["budgets"]["delivery_attempts_used"] = 0
-                        else:
-                            pending_idx = next((i for i, it in enumerate(items) if not it.get("landed", False)), None)
-                            if pending_idx is not None:
-                                del_seq["current_index"] = pending_idx
-                                pending_item = items[pending_idx]
-                                state["current_issue_id"] = pending_item["issue_id"]
-                                state["current_stage"] = pending_item["stage"]
-                                state["stage_status"] = pending_item.get("status", "pending")
-                                item_budgets = pending_item.setdefault("budgets", {})
-                                state["budgets"]["delivery_attempts_used"] = item_budgets.get("delivery_attempts_used", 0)
-                                state["budgets"]["delivery_attempts_max"] = item_budgets.get(
-                                    "delivery_attempts_max", state.get("budgets", {}).get("delivery_attempts_max", 3)
-                                )
-                            else:
-                                del_seq["completed"] = True
-                                state["current_issue_id"] = str(state.get("root_issue_id", "0"))
-                                state["current_stage"] = "stage_3_verify"
-                                state["stage_status"] = "succeeded"
-                                state["budgets"]["delivery_attempts_used"] = 0
-                    elif curr_idx + 1 < len(items):
-                        del_seq["current_index"] = curr_idx + 1
-                        next_item = items[curr_idx + 1]
-                        state["current_issue_id"] = next_item["issue_id"]
-                        state["current_stage"] = next_item["stage"]
-                        state["stage_status"] = "pending"
-                        next_budgets = next_item.setdefault("budgets", {})
-                        state["budgets"]["delivery_attempts_used"] = next_budgets.get("delivery_attempts_used", 0)
-                        state["budgets"]["delivery_attempts_max"] = next_budgets.get("delivery_attempts_max", state.get("budgets", {}).get("delivery_attempts_max", 3))
-                    else:
-                        del_seq["completed"] = True
-                        state["current_issue_id"] = str(state.get("root_issue_id", "0"))
-                        state["current_stage"] = "stage_3_verify"
-                        state["stage_status"] = "succeeded"
-                        state["budgets"]["delivery_attempts_used"] = 0
-                else:
-                    curr_item["status"] = _compute_failure_status(status, outcome)
-                    state["current_stage"] = "stage_2_land"
-                    state["current_issue_id"] = curr_item["issue_id"]
-                    state["stage_status"] = curr_item["status"]
-            else:
-                _set_fallback_stage_status(state, status, outcome)
-        else:
-            _set_fallback_stage_status(state, status, outcome)
-    else:
-        _set_fallback_stage_status(state, status, outcome)
+    outcome = report_data.get("result", {}).get("outcome")
+    state["stage_status"] = "needs_rework" if outcome == "rework_needed" else status
     state["last_updated"] = now
     atomic_write_json(get_state_file_path(receipt_root_path), state)
 
@@ -1227,17 +1279,28 @@ def resolve_decision(
     decision: str,
     reason: str,
     options: Optional[List[str]] = None,
+    next_stage: Optional[str] = None,
+    current_issue: Optional[str | int] = None,
+    plan: Optional[Any] = None,
+    child_issues: Optional[List[str | int]] = None,
+    mark_landed: Optional[str | int] = None,
+    complete_sequence: bool = False,
 ) -> Dict[str, Any]:
-    """Record orchestrator decisions (wait_user, continue, halt, finish)."""
-    valid_decisions = ("wait_user", "continue", "halt", "finish")
-    if decision not in valid_decisions:
-        raise ValueError(f"Invalid decision '{decision}'. Expected one of {valid_decisions}.")
-
+    """Record orchestrator decisions (wait_user, continue, halt, finish, or next stage)."""
     receipt_root_path = Path(receipt_root).resolve()
     state = load_state(receipt_root_path)
 
+    control_decisions = ("wait_user", "continue", "halt", "finish")
+    if decision in control_decisions:
+        action = decision
+        stage_to_set = next_stage
+    else:
+        # Decision is an arbitrary stage name
+        action = "continue"
+        stage_to_set = next_stage or decision
+
     # Guard rules for finish
-    if decision == "finish":
+    if action == "finish":
         active = state.get("active_dispatch")
         if active:
             raise RuntimeError(
@@ -1254,7 +1317,7 @@ def resolve_decision(
                 "'rework_needed', which is not accepted as business pass. Rework must be routed."
             )
 
-    if decision == "finish" and state.get("workflow", "default") == "default":
+    if action == "finish" and state.get("workflow", "default") == "default":
         stages = state.get("completed_stages", [])
         finalizations = [entry for entry in stages if entry.get("stage") == "issue_finalize"
                          and entry.get("execution_status") == "succeeded"
@@ -1296,24 +1359,22 @@ def resolve_decision(
             raise RuntimeError("Cannot finish workflow: repeat issue finalization after intervening work.")
 
     now = datetime.now(timezone.utc).isoformat()
-    record = {
+    record: Dict[str, Any] = {
         "decision": decision,
+        "action": action,
         "reason": reason,
         "options": options or [],
         "timestamp": now,
     }
 
-    state.setdefault("decisions", []).append(record)
-    state["orchestrator_decision"] = decision
-
-    if decision == "halt":
+    if action == "halt":
         state["stage_status"] = "halted"
-    elif decision == "wait_user":
+    elif action == "wait_user":
         state["stage_status"] = "blocked"
-    elif decision == "finish":
+    elif action == "finish":
         state["stage_status"] = "succeeded"
         state["current_stage"] = "completed"
-    elif decision == "continue":
+    elif action == "continue":
         # Resuming from wait cannot bypass unconfirmed external execution
         active = state.get("active_dispatch")
         if active and active.get("status") in ("handed_off", "running"):
@@ -1321,6 +1382,87 @@ def resolve_decision(
         else:
             state["stage_status"] = "pending"
 
+    if stage_to_set:
+        state["current_stage"] = stage_to_set
+        state["stage_status"] = "pending"
+        record["next_stage"] = stage_to_set
+
+    # Plan decomposition / sequence registration
+    resolved_child_ids: Optional[List[str]] = None
+    if child_issues:
+        resolved_child_ids = validate_plan_order(child_issues)
+    elif plan:
+        plan_data = plan
+        if isinstance(plan_data, str):
+            p_str = plan_data.strip()
+            if p_str.startswith("{") or p_str.startswith("["):
+                try:
+                    plan_obj = json.loads(p_str)
+                except Exception as e:
+                    raise ValueError(f"Invalid plan JSON: {e}")
+            else:
+                p_file = Path(p_str).resolve()
+                if not p_file.exists():
+                    raise FileNotFoundError(f"Plan file not found: {p_file}")
+                try:
+                    with open(p_file, "r", encoding="utf-8") as f:
+                        plan_obj = json.load(f)
+                except Exception as e:
+                    raise ValueError(f"Invalid plan file JSON: {e}")
+        elif isinstance(plan_data, (dict, list)):
+            plan_obj = plan_data
+        else:
+            raise TypeError("Plan must be a JSON object dictionary, list, JSON string, or file path.")
+        raw_tasks = plan_obj.get("tasks", []) if isinstance(plan_obj, dict) else plan_obj
+        resolved_child_ids = validate_plan_order(raw_tasks)
+
+    if resolved_child_ids:
+        delivery_attempts_max = state.get("budgets", {}).get("delivery_attempts_max", 3)
+        state["delivery_sequence"] = _make_delivery_sequence(resolved_child_ids, delivery_attempts_max)
+        state["current_issue_id"] = str(resolved_child_ids[0])
+        state["budgets"]["delivery_attempts_used"] = 0
+
+    if current_issue is not None:
+        iss_str = str(current_issue).strip()
+        state["current_issue_id"] = iss_str
+        record["current_issue"] = iss_str
+        if state.get("delivery_sequence"):
+            if state["delivery_sequence"].get("active_rework_issue_id") != iss_str:
+                state["delivery_sequence"]["active_rework_issue_id"] = None
+            for idx, it in enumerate(state["delivery_sequence"].get("items", [])):
+                if str(it.get("issue_id")) == iss_str:
+                    state["delivery_sequence"]["current_index"] = idx
+                    item_budgets = it.setdefault("budgets", {})
+                    state["budgets"]["delivery_attempts_used"] = item_budgets.get("delivery_attempts_used", 0)
+                    state["budgets"]["delivery_attempts_max"] = item_budgets.get(
+                        "delivery_attempts_max", state.get("budgets", {}).get("delivery_attempts_max", 3)
+                    )
+                    break
+
+    if mark_landed is not None:
+        landed_id = str(mark_landed).strip()
+        record["mark_landed"] = landed_id
+        if state.get("delivery_sequence"):
+            if state["delivery_sequence"].get("active_rework_issue_id") == landed_id:
+                state["delivery_sequence"]["active_rework_issue_id"] = None
+            for it in state["delivery_sequence"].get("items", []):
+                if str(it.get("issue_id")) == landed_id:
+                    it["landed"] = True
+                    it["status"] = "landed"
+                    it["stage"] = "landed"
+                    completed_stages = state.get("completed_stages", [])
+                    if completed_stages:
+                        it["land_receipt_path"] = str(completed_stages[-1].get("receipt_path", ""))
+                    break
+
+    if complete_sequence:
+        record["complete_sequence"] = True
+        if state.get("delivery_sequence"):
+            state["delivery_sequence"]["completed"] = True
+            state["current_issue_id"] = str(state.get("root_issue_id", "0"))
+
+    state.setdefault("decisions", []).append(record)
+    state["orchestrator_decision"] = decision
     state["last_updated"] = now
     atomic_write_json(get_state_file_path(receipt_root_path), state)
 
@@ -1443,7 +1585,7 @@ def load_prepare_request(request_path: str) -> Dict[str, Any]:
     unknown = request.keys() - allowed_fields
     if unknown:
         raise ValueError(f"Unknown prepare request fields: {', '.join(sorted(unknown))}")
-    for field in ("stage", "objective", "provider"):
+    for field in ("stage", "objective"):
         if field not in request:
             raise ValueError(f"Prepare request missing required field {field!r}")
     for field in ("stage", "objective", "workdir", "scope", "branch", "commit", "receipt_template"):
@@ -1461,28 +1603,34 @@ def load_prepare_request(request_path: str) -> Dict[str, Any]:
             if not isinstance(value, (str, int)) or (isinstance(value, str) and not value.strip()):
                 raise ValueError(f"Request 'rework_issue' must be a non-empty string or integer, received {value!r}")
 
-    provider = request["provider"]
-    if not isinstance(provider, dict):
-        raise ValueError(f"Request 'provider' must be an object, received {provider!r}")
-    unknown = provider.keys() - {"type", "target", "args"}
-    if unknown:
-        raise ValueError(f"Unknown provider fields: {', '.join(sorted(unknown))}")
-    if provider.get("type") not in ("skill", "script"):
-        raise ValueError(f"Provider 'type' must be 'skill' or 'script', received {provider.get('type')!r}")
-    target = provider.get("target")
-    if not isinstance(target, str) or not target.strip():
-        raise ValueError(f"Provider 'target' must be a non-empty string, received {target!r}")
+    payload = dict(request)
+    if "provider" in request and request["provider"] is not None:
+        provider = request["provider"]
+        if not isinstance(provider, dict):
+            raise ValueError(f"Request 'provider' must be an object, received {provider!r}")
+        unknown = provider.keys() - {"type", "target", "args"}
+        if unknown:
+            raise ValueError(f"Unknown provider fields: {', '.join(sorted(unknown))}")
+        if provider.get("type") != "skill":
+            raise ValueError(f"Provider 'type' must be 'skill', received {provider.get('type')!r}")
+        target = provider.get("target")
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError(f"Provider 'target' must be a non-empty string, received {target!r}")
+        del payload["provider"]
+        payload.update(
+            provider_type=provider["type"],
+            provider_target=target,
+            provider_args=provider.get("args", []),
+        )
+
     for field, value in (
-        ("provider.args", provider.get("args", [])),
+        ("provider.args", payload.get("provider_args", [])),
         ("acceptance_criteria", request.get("acceptance_criteria", [])),
         ("predecessor_receipts", request.get("predecessor_receipts", [])),
     ):
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
             raise ValueError(f"Request {field!r} must be an array of strings, received {value!r}")
 
-    payload = dict(request)
-    del payload["provider"]
-    payload.update(provider_type=provider["type"], provider_target=target, provider_args=provider.get("args", []))
     if "rework_issue" in payload and payload["rework_issue"] is not None:
         payload["rework_issue"] = str(payload["rework_issue"]).strip()
     return payload
@@ -1496,18 +1644,23 @@ def main() -> None:
 
     # init
     p_init = subparsers.add_parser("init", help="Initialize workflow run state snapshot.")
-    p_init.add_argument("--receipt-root", required=True, help="Absolute path to receipts root directory.")
+    p_init.add_argument("--receipt-root", help="Absolute path to receipts root directory. Derived from worktree container if omitted.")
     p_init.add_argument("--root-issue", required=True, help="Root GitHub issue number.")
     p_init.add_argument("--current-issue", help="Initial current issue number (defaults to root issue).")
-    p_init.add_argument("--workflow", default="default", help="Workflow name (defaults to 'default').")
+    p_init.add_argument("--workflow", default=None, help="Workflow name (defaults to configured workflow or 'default').")
     p_init.add_argument("--initial-stage", help="Initial stage name.")
     p_init.add_argument("--force", action="store_true", help="Force overwrite existing state file.")
     p_init.add_argument("--require-config", action="store_true", help="Require valid workspace configuration.")
     p_init.add_argument("--repo-dir", default=".", help="Repository root containing .paper-craft/")
-    p_init.add_argument("--delivery-attempts-max", type=int, default=3, help="Max delivery attempts.")
-    p_init.add_argument("--replans-max", type=int, default=2, help="Max replans.")
+    p_init.add_argument("--delivery-attempts-max", type=int, default=None, help="Max delivery attempts.")
+    p_init.add_argument("--replans-max", type=int, default=None, help="Max replans.")
     p_init.add_argument("--child-issue", dest="child_issues", action="append", default=[], help="Child issue number in planned order.")
     p_init.add_argument("--plan", help="JSON string or file path containing plan snapshot.")
+    p_init.add_argument("--delivery-target", help="Override delivery target repository (owner/repo).")
+    p_init.add_argument("--base-remote", help="Override mainline base git remote (e.g. origin).")
+    p_init.add_argument("--push-remote", help="Override feature push git remote (e.g. origin).")
+    p_init.add_argument("--base-branch", help="Override mainline base branch (e.g. main).")
+    p_init.add_argument("--worktree-container", help="Override container directory for worktrees.")
 
     # prepare
     p_prep = subparsers.add_parser("prepare", help="Prepare a fixed task dispatch and envelope.")
@@ -1530,9 +1683,15 @@ def main() -> None:
     # resolve
     p_res = subparsers.add_parser("resolve", help="Record orchestrator decision.")
     p_res.add_argument("--receipt-root", required=True, help="Absolute path to receipts root directory.")
-    p_res.add_argument("--decision", required=True, choices=["wait_user", "continue", "halt", "finish"], help="Orchestrator decision.")
+    p_res.add_argument("--decision", required=True, help="Orchestrator decision (wait_user, continue, halt, finish, or next stage name).")
     p_res.add_argument("--reason", required=True, help="Reason for decision.")
     p_res.add_argument("--option", dest="options", action="append", default=[], help="Options presented (for Decision Board).")
+    p_res.add_argument("--next-stage", dest="next_stage", help="Next logical stage name to advance to.")
+    p_res.add_argument("--current-issue", dest="current_issue", help="Current issue ID to advance delivery sequence.")
+    p_res.add_argument("--plan", help="JSON string or file path containing plan snapshot to register child issues.")
+    p_res.add_argument("--child-issue", dest="child_issues", action="append", default=[], help="Child issue number in planned order.")
+    p_res.add_argument("--mark-landed", help="Issue ID to mark as landed in delivery sequence.")
+    p_res.add_argument("--complete-sequence", action="store_true", help="Mark delivery sequence as completed.")
 
     # inspect
     p_insp = subparsers.add_parser("inspect", help="Query current state, dispatch, decisions, and blocking reasons.")
@@ -1557,6 +1716,11 @@ def main() -> None:
                 replans_max=args.replans_max,
                 child_issues=args.child_issues or None,
                 plan=args.plan,
+                delivery_target=args.delivery_target,
+                base_remote=args.base_remote,
+                push_remote=args.push_remote,
+                base_branch=args.base_branch,
+                worktree_container=args.worktree_container,
             )
             print(json.dumps(state, indent=2, ensure_ascii=False))
         elif args.command == "prepare":
@@ -1587,6 +1751,12 @@ def main() -> None:
                 decision=args.decision,
                 reason=args.reason,
                 options=args.options,
+                next_stage=args.next_stage,
+                current_issue=args.current_issue,
+                plan=args.plan,
+                child_issues=args.child_issues or None,
+                mark_landed=args.mark_landed,
+                complete_sequence=args.complete_sequence,
             )
             print(json.dumps(res, indent=2, ensure_ascii=False))
         elif args.command == "inspect":

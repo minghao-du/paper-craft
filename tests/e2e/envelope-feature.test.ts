@@ -151,11 +151,11 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     ]);
 
     const prepRes = runPrepareTaskCli(testEnv.dir, {
-      stage: 'pipeline_refactor',
+      stage: 'stage_4_refactor_execute',
       objective: 'Refactor snakemake rules',
       provider: {
-        type: 'script',
-        target: 'scripts/refactor.py',
+        type: 'skill',
+        target: 'pc-pipeline-snakemake',
         args: ['--dry-run'],
       },
       workdir: testEnv.dir,
@@ -170,7 +170,7 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       '--field', 'task.logical_stage',
     ]);
     expect(stageField.status).toBe(0);
-    expect(stageField.stdout.trim()).toBe('pipeline_refactor');
+    expect(stageField.stdout.trim()).toBe('stage_4_refactor_execute');
 
     const receiptField = runEnvelopeCli([
       'show', envelopePath,
@@ -211,10 +211,8 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
     expect(env.budgets.delivery_attempts_used).toBe(1);
     expect(env.budgets.delivery_attempts_max).toBe(5);
-    expect(env.budgets.delivery_attempts_limit).toBe(5);
     expect(env.budgets.replans_used).toBe(0);
     expect(env.budgets.replans_max).toBe(3);
-    expect(env.budgets.replans_limit).toBe(3);
   });
 
   it('F1.6: populates context and predecessor receipts across stages', () => {
@@ -266,6 +264,7 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
       workdir: testEnv.dir,
       branch: 'issue-301',
       commit: '1234567890123456789012345678901234567890',
+      predecessor_receipts: [prepData1.receipt_path],
     });
 
     expect(result.status).toBe(0);
@@ -317,7 +316,7 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
     expect(env.provider.args).toEqual([]);
   });
 
-  it('F2.2: configures provider type "script" targeting executable script', () => {
+  it('F2.2: rejects provider type "script" as unsupported', () => {
     runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
@@ -334,12 +333,8 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       workdir: testEnv.dir,
     });
 
-    expect(result.status).toBe(0);
-    const envelopePath = JSON.parse(result.stdout).envelope_path;
-    const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
-    expect(env.provider.type).toBe('script');
-    expect(env.provider.target).toBe('skills/pc-workspace/scripts/prepare-worktree.py');
-    expect(env.provider.args).toEqual(['--issue', '50']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Provider 'type' must be 'skill'");
   });
 
   it('F2.3: rejects unsupported provider types with schema validation error', () => {
@@ -359,7 +354,7 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
     });
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Provider 'type' must be 'skill' or 'script'");
+    expect(result.stderr).toContain("Provider 'type' must be 'skill'");
   });
 
   it('F2.4: preserves multiple ordered provider arguments', () => {
@@ -372,8 +367,8 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       stage: 'issue_verify',
       objective: 'Run verification script',
       provider: {
-        type: 'script',
-        target: 'scripts/verify.py',
+        type: 'skill',
+        target: 'pc-issue-verify',
         args: [
           '--suite=e2e', '--timeout=60', '--strict', '--repo-dir',
           '/tmp/path with spaces', '', '--', "a'b\"c", '--strict',
@@ -391,10 +386,10 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
     ]);
   });
 
-  it('F2.5: stage definition schema remains identical across provider types', () => {
-    const rootSkill = path.join(testEnv.dir, 'skill-run');
-    runLifecycleKernelCli(['init', '--receipt-root', rootSkill, '--root-issue', '80']);
-    const prepSkill = runPrepareTaskCli(rootSkill, {
+  it('F2.5: envelope schema remains identical across skill targets and stages', () => {
+    const rootSkill1 = path.join(testEnv.dir, 'skill-run-1');
+    runLifecycleKernelCli(['init', '--receipt-root', rootSkill1, '--root-issue', '80']);
+    const prepSkill1 = runPrepareTaskCli(rootSkill1, {
       stage: 'issue_plan',
       objective: 'Planning stage with skill',
       provider: {
@@ -403,29 +398,27 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       },
       workdir: testEnv.dir,
     });
-    const skillEnvPath = JSON.parse(prepSkill.stdout).envelope_path;
+    const skill1EnvPath = JSON.parse(prepSkill1.stdout).envelope_path;
 
-    const rootScript = path.join(testEnv.dir, 'script-run');
-    runLifecycleKernelCli(['init', '--receipt-root', rootScript, '--root-issue', '80']);
-    const prepScript = runPrepareTaskCli(rootScript, {
-      stage: 'issue_plan',
-      objective: 'Planning stage with script',
+    const rootSkill2 = path.join(testEnv.dir, 'skill-run-2');
+    runLifecycleKernelCli(['init', '--receipt-root', rootSkill2, '--root-issue', '80']);
+    const prepSkill2 = runPrepareTaskCli(rootSkill2, {
+      stage: 'issue_work',
+      objective: 'Working stage with skill',
       provider: {
-        type: 'script',
-        target: 'scripts/automated_plan.py',
+        type: 'skill',
+        target: 'pc-issue-work',
       },
       workdir: testEnv.dir,
     });
-    const scriptEnvPath = JSON.parse(prepScript.stdout).envelope_path;
+    const skill2EnvPath = JSON.parse(prepSkill2.stdout).envelope_path;
 
-    const skillEnv: TaskInputEnvelope = JSON.parse(fs.readFileSync(skillEnvPath, 'utf-8'));
-    const scriptEnv: TaskInputEnvelope = JSON.parse(fs.readFileSync(scriptEnvPath, 'utf-8'));
+    const env1: TaskInputEnvelope = JSON.parse(fs.readFileSync(skill1EnvPath, 'utf-8'));
+    const env2: TaskInputEnvelope = JSON.parse(fs.readFileSync(skill2EnvPath, 'utf-8'));
 
     // The task structure, environment structure, contract structure and schema version are invariant
-    expect(skillEnv.schema_version).toBe(scriptEnv.schema_version);
-    expect(skillEnv.task.logical_stage).toBe(scriptEnv.task.logical_stage);
-    expect(skillEnv.task.step_index).toBe(scriptEnv.task.step_index);
-    expect(skillEnv.contract.receipt_template).toBe(scriptEnv.contract.receipt_template);
-    expect(Object.keys(skillEnv)).toEqual(Object.keys(scriptEnv));
+    expect(env1.schema_version).toBe(env2.schema_version);
+    expect(env1.budgets).toEqual(env2.budgets);
+    expect(Object.keys(env1)).toEqual(Object.keys(env2));
   });
 });
