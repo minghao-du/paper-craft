@@ -179,7 +179,7 @@ Carry explicit artifact locations into verification and research recording. Afte
 - **Acceptance**: Before routing, check the planning evidence. A root `direct` requires one cohesive stage and reasons why other candidates lack separate acceptance checkpoints; a depth-limited `direct` requires verified parent evidence. A `decomposed` plan requires filed children, synchronized relationships and tasklist, and an acyclic dependency graph covering the planned work. For a structurally valid report with incomplete planning evidence, dispatch one fresh planner with the missing evidence and predecessor receipt; if still incomplete, halt to the Decision Board. Pending filing is not permission to implement the root instead.
 - **Routing**:
   - `direct`: Set `current_issue_id = root_issue_id`, transition to `stage_2_work`.
-  - `decomposed`: Retain child IDs and dependencies. Set `current_issue_id` to a child whose `blockedBy` prerequisites have accepted delivery evidence, and transition to `stage_2_work`. Execute the children sequentially through Stage 2; the root remains the integrated acceptance target.
+  - `decomposed`: Accept the planned child issue sequence snapshot. Initialize the delivery sequence and set `current_issue_id` to the first child issue in the ordered sequence, transitioning to `stage_2_work`. Execute child issues strictly sequentially through `stage_2_work` → `stage_2_land`; child issues do not execute independent verify/finalize. The root remains the integrated acceptance target.
   - A successful plan completes planning only.
 
 ---
@@ -220,7 +220,7 @@ Deliver the `current_issue_id` through an implementation and landing loop.
 - **Inputs**: Implementation receipt with verified worktree and SHA. Pass issue association references without automatic closing keywords. Parent tasklists are updated after acceptance, not landing.
 - **Expected Result**: Native `result.outcome`, `merged`, and, for `landed`, `mergedCommit`. The provider validates and uses predecessor worktree and SHA.
 - **Routing**:
-  - `landed` with verified merge evidence: Record merge evidence. For a child, dispatch `issue_verify` on the integrated commit for its own criteria. Only after `verified`, dispatch `issue_finalize` for that child and synchronize its parent tasklist. For a direct root, defer closure until Stage 6. Failed child acceptance routes repairs and reopens any prematurely closed issue. If children remain, select the next child whose `blockedBy` prerequisites have accepted delivery evidence and repeat `stage_2_work`, passing predecessor receipts. If none is ready, report the dependency blocker. Once all child issues (or the direct root issue) are delivered, transition to `stage_3_verify` with the root objective and all delivery receipts.
+  - `landed` with verified merge evidence: Record merge evidence. For a child issue, advance directly to the next child issue in the ordered delivery sequence (`stage_2_work`), without child-level independent verification or finalization. Child issues rely on merge evidence for sequence progression; final closure verification is unified at root finalization. If children remain in the delivery sequence, execute the next child sequentially through `stage_2_work` and `stage_2_land`, passing predecessor receipts. Once all child issues (or the direct root issue) in the delivery sequence are landed, transition to `stage_3_verify` with the parent root objective and all delivery receipts.
   - `rework_needed`: Routes to a fresh `stage_2_work` execution with the landing receipt. It reads findings, reconciles the recorded environment and SHA, and writes a new receipt. Pass that receipt to a fresh `stage_2_land` execution. Maximum of 3 delivery attempts per issue, including the initial attempt.
   - `blocked`: Execution status `blocked` when prerequisites prevent landing; halt to Blocker Decision Board.
 
@@ -353,9 +353,9 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Objective**: Execute the acceptance-backed closure task in its [closure contract](../../pc-issue-verify/references/closure.md).
 - **Environment**: Retained persistent checkout, with durable acceptance and research receipts.
 - **Inputs**: Root issue, current closure target, accepted integrated SHA, acceptance receipts and historical delivery records. For root finalization, include completed research recording.
-- **Gate**: Descendants close bottom-up after their own acceptance; root closes only after integrated acceptance and research recording. Reopen prematurely closed issues when their acceptance fails.
-- **Result**: `outcome: finalized`, `root_issue_id`, `scope: tree` for final root reconciliation (or `scope: issue` for child closure), nonempty `issues` containing repository, number, observed `state: CLOSED` and acceptance receipt, plus reconciled cleanup candidates and unresolved ownership items. Missing evidence or unresolved issue state blocks finalization.
-- **Routing**: Child finalization returns to the delivery loop. Root finalization proceeds to cleanup. Retry only unfinished closure/reconciliation operations, reading live states first.
+- **Gate**: Unified closure reconciliation happens after integrated acceptance and research recording. Child issues do not run independent finalize stages during Stage 2; their closed states and the parent tasklist are verified together during root finalization.
+- **Result**: `outcome: finalized`, `root_issue_id`, `scope: tree` for final root reconciliation, nonempty `issues` containing repository, number, observed `state: CLOSED` and acceptance receipt, plus reconciled cleanup candidates and unresolved ownership items. Missing evidence or unresolved issue state blocks finalization.
+- **Routing**: Root finalization proceeds to cleanup. Retry only unfinished closure/reconciliation operations, reading live states first.
 
 ---
 
