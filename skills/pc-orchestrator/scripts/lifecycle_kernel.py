@@ -27,9 +27,10 @@ if _CONFIG_DIR not in sys.path:
     sys.path.insert(0, _CONFIG_DIR)
 
 try:
-    from config import validate_workspace_config
+    from config import validate_workspace_config, resolve_workspace_config
 except ImportError:
     validate_workspace_config = None
+    resolve_workspace_config = None
 
 # Import envelope utilities
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
@@ -369,69 +370,128 @@ def load_state(receipt_root: Path | str) -> Dict[str, Any]:
     return _recover_uncommitted_dispatch(root_path, state)
 
 
-def check_workspace_config(repo_dir: Path) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-    """Check workspace configuration existence and validity."""
-    config_file = repo_dir / ".paper-craft" / "workspace-config.json"
-    if not config_file.exists():
-        return False, f"Workspace configuration missing at {config_file}", None
-
+def check_workspace_config(
+    repo_dir: Path | str,
+    require_config: bool = False,
+    overrides: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    """Check workspace configuration existence and validity using config.py as single source."""
+    if not resolve_workspace_config:
+        return False, "Config module unavailable", None
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        resolved = resolve_workspace_config(repo_dir, overrides=overrides, require_file=require_config)
+        return True, "Workspace configuration valid", resolved
     except Exception as e:
-        return False, f"Workspace configuration corrupted at {config_file}: {e}", None
-
-    if validate_workspace_config:
-        errors = validate_workspace_config(data, repo_dir)
-        if errors:
-            return False, f"Invalid workspace configuration:\n  - " + "\n  - ".join(errors), None
-
-    return True, "Workspace configuration valid", data
+        return False, str(e), None
 
 
 def init_workflow(
-    receipt_root: Path | str,
-    root_issue: str | int,
+    receipt_root: Optional[Path | str] = None,
+    root_issue: str | int = 0,
     current_issue: Optional[str | int] = None,
-    workflow: str = "default",
+    workflow: Optional[str] = None,
     initial_stage: Optional[str] = None,
     repo_dir: Path | str = ".",
     force: bool = False,
     require_config: bool = False,
-    delivery_attempts_max: int = 3,
-    replans_max: int = 2,
+    delivery_attempts_max: Optional[int] = None,
+    replans_max: Optional[int] = None,
     child_issues: Optional[List[Any]] = None,
     plan: Optional[Any] = None,
+    delivery_target: Optional[str] = None,
+    base_remote: Optional[str] = None,
+    push_remote: Optional[str] = None,
+    base_branch: Optional[str] = None,
+    worktree_container: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Initialize workflow runtime state in <receipt_root>/state.json."""
-    root_path = Path(receipt_root).resolve()
-    state_file = root_path / "state.json"
     repo_path = Path(repo_dir).resolve()
+    if not repo_path.exists():
+        raise FileNotFoundError(f"Repository directory does not exist: {repo_path}")
 
-    # Workspace configuration check
-    cfg_ok, cfg_msg, cfg_data = check_workspace_config(repo_path)
-    if require_config and not cfg_ok:
+    # Build overrides from explicit CLI parameters (explicit parameters take precedence)
+    overrides: Dict[str, Any] = {}
+    if workflow is not None:
+        overrides["workflow"] = workflow
+    if delivery_attempts_max is not None:
+        overrides["delivery_attempts_max"] = delivery_attempts_max
+    if replans_max is not None:
+        overrides["replans_max"] = replans_max
+    if delivery_target is not None:
+        overrides["delivery_target"] = delivery_target
+    if base_remote is not None:
+        overrides["base_remote"] = base_remote
+    if push_remote is not None:
+        overrides["push_remote"] = push_remote
+    if base_branch is not None:
+        overrides["base_branch"] = base_branch
+    if worktree_container is not None:
+        overrides["worktree_container"] = worktree_container
+
+    # Workspace configuration check: stops immediately on missing/invalid config or unconfirmed facts
+    cfg_ok, cfg_msg, resolved_config = check_workspace_config(
+        repo_path,
+        require_config=require_config,
+        overrides=overrides,
+    )
+    if not cfg_ok or not resolved_config:
         raise ValueError(cfg_msg)
 
-    # Idempotency and collision check
+    # Determine isolated receipt root directory
+    if receipt_root is not None and str(receipt_root).strip():
+        root_path = Path(receipt_root).resolve()
+    else:
+        container_path = Path(resolved_config["worktree_container_resolved"])
+        root_path = (container_path / ".paper-craft" / "receipts" / f"issue-{root_issue}").resolve()
+
+    # Validate isolation constraints
+    if root_path == repo_path or repo_path in root_path.parents or root_path in repo_path.parents:
+        raise ValueError(
+            f"Receipt root '{root_path}' violates isolation constraints: cannot be within or contain repository checkout '{repo_path}'."
+        )
+
+    resolved_config["receipt_root"] = str(root_path)
+    state_file = root_path / "state.json"
+
+    target_workflow = resolved_config["workflow"]
+    target_repo = resolved_config["repo_checkout"]
+
+    # Re-entrance / rerun identity check: check repository checkout and workflow identity, not just issue number
     if state_file.exists() and not force:
         with open(state_file, "r", encoding="utf-8") as f:
             existing = json.load(f)
-        if str(existing.get("root_issue_id")) == str(root_issue):
-            return existing
-        raise FileExistsError(
-            f"State file already exists for root issue {existing.get('root_issue_id')} at {state_file}. Use --force to overwrite."
-        )
+        existing_root = str(existing.get("root_issue_id", ""))
+        existing_wf = existing.get("workflow", "")
+        existing_cfg = existing.get("config_snapshot", {})
+        existing_repo = existing_cfg.get("repo_checkout") or existing.get("context", {}).get("repo_checkout")
+
+        if existing_root != str(root_issue):
+            raise FileExistsError(
+                f"Run identity conflict: State file at {state_file} already exists for root issue {existing_root}, "
+                f"cannot re-initialize with root issue {root_issue}. Use --force to overwrite."
+            )
+        if existing_wf != target_workflow:
+            raise ValueError(
+                f"Run identity conflict: Existing run at {state_file} has workflow '{existing_wf}', "
+                f"but rerun specified workflow '{target_workflow}'. Use --force to overwrite."
+            )
+        if existing_repo and Path(existing_repo).resolve() != Path(target_repo).resolve():
+            raise ValueError(
+                f"Run identity conflict: Existing run at {state_file} was initialized with repository checkout "
+                f"'{existing_repo}', but rerun specified repository checkout '{target_repo}'. Use --force to overwrite."
+            )
+        return existing
 
     now = datetime.now(timezone.utc).isoformat()
-    context: Dict[str, Any] = {}
-    if cfg_ok and cfg_data:
-        context["repository"] = cfg_data.get("delivery_target") or "local/repo"
-        context["base_branch"] = cfg_data.get("base_branch") or "main"
-        context["delivery_target"] = cfg_data.get("delivery_target")
-        context["base_remote"] = cfg_data.get("base_remote")
-        context["push_remote"] = cfg_data.get("push_remote")
-        context["worktree_container"] = cfg_data.get("worktree_container")
+    context: Dict[str, Any] = {
+        "repository": resolved_config["delivery_target"],
+        "delivery_target": resolved_config["delivery_target"],
+        "base_branch": resolved_config["base_branch"],
+        "base_remote": resolved_config["base_remote"],
+        "push_remote": resolved_config["push_remote"],
+        "worktree_container": resolved_config["worktree_container"],
+        "repo_checkout": resolved_config["repo_checkout"],
+    }
 
     # Resolve child issues / plan if provided
     child_ids: Optional[List[str]] = None
@@ -466,17 +526,19 @@ def init_workflow(
     resolved_current_stage = initial_stage or ("stage_2_work" if child_ids else "stage_1_plan")
 
     delivery_sequence: Optional[Dict[str, Any]] = None
+    dam = resolved_config["delivery_attempts_max"]
+    rm = resolved_config["replans_max"]
     if child_ids:
-        delivery_sequence = _make_delivery_sequence(child_ids, delivery_attempts_max)
+        delivery_sequence = _make_delivery_sequence(child_ids, dam)
     elif initial_stage in ("stage_2_work", "issue_work") or (current_issue and str(current_issue) != str(root_issue)):
         curr = str(current_issue or root_issue)
-        delivery_sequence = _make_delivery_sequence([curr], delivery_attempts_max)
+        delivery_sequence = _make_delivery_sequence([curr], dam)
 
     state = {
         "schema_version": "1.0",
         "root_issue_id": str(root_issue),
         "current_issue_id": resolved_current_issue,
-        "workflow": workflow,
+        "workflow": target_workflow,
         "current_stage": resolved_current_stage,
         "stage_status": "pending",
         "next_step_index": 1,
@@ -485,16 +547,18 @@ def init_workflow(
         "decisions": [],
         "budgets": {
             "delivery_attempts_used": 0,
-            "delivery_attempts_max": delivery_attempts_max,
+            "delivery_attempts_max": dam,
             "replans_used": 0,
-            "replans_max": replans_max,
+            "replans_max": rm,
         },
         "context": context,
+        "config_snapshot": resolved_config,
         "last_updated": now,
     }
     if delivery_sequence:
         state["delivery_sequence"] = delivery_sequence
 
+    root_path.mkdir(parents=True, exist_ok=True)
     atomic_write_json(state_file, state)
     return state
 
@@ -527,7 +591,14 @@ def prepare_task(
 
     # Context & Environment
     context = state.get("context", {})
-    resolved_workdir = str(workdir or context.get("worktree") or context.get("working_directory") or Path.cwd())
+    config_snapshot = state.get("config_snapshot", {})
+    resolved_workdir = str(
+        workdir
+        or context.get("worktree")
+        or context.get("working_directory")
+        or config_snapshot.get("repo_checkout")
+        or Path.cwd()
+    )
     resolved_branch = branch or context.get("branch")
     resolved_commit = commit or context.get("commit")
 
@@ -739,9 +810,28 @@ def prepare_task(
     envelope_filename = f"{step_index:02d}-input.json"
     envelope_path = receipt_root_path / envelope_filename
 
-    # Resolve environment and parameters
-    repo = context.get("repository", "local/repo")
-    base_branch = context.get("base_branch", "main")
+    # Resolve environment and parameters from config_snapshot (falling back to context)
+    repo = (
+        config_snapshot.get("delivery_target")
+        or context.get("delivery_target")
+        or context.get("repository", "local/repo")
+    )
+    base_branch = (
+        config_snapshot.get("base_branch")
+        or context.get("base_branch", "main")
+    )
+    base_remote = (
+        config_snapshot.get("base_remote")
+        or context.get("base_remote", "origin")
+    )
+    push_remote = (
+        config_snapshot.get("push_remote")
+        or context.get("push_remote", "origin")
+    )
+    worktree_container = (
+        config_snapshot.get("worktree_container")
+        or context.get("worktree_container")
+    )
 
     resolved_predecessors = list(predecessor_receipts or [])
     if not resolved_predecessors and state.get("completed_stages"):
@@ -751,30 +841,14 @@ def prepare_task(
             resolved_predecessors.append(rec)
 
     params = dict(parameters or {})
-    if "delivery_target" not in params and context.get("delivery_target"):
-        params["delivery_target"] = context["delivery_target"]
-    if "base_remote" not in params and context.get("base_remote"):
-        params["base_remote"] = context["base_remote"]
-    if "push_remote" not in params and context.get("push_remote"):
-        params["push_remote"] = context["push_remote"]
-    if "worktree_container" not in params and context.get("worktree_container"):
-        params["worktree_container"] = context["worktree_container"]
-
-    if not context.get("delivery_target"):
-        cfg_ok, _, cfg_data = check_workspace_config(Path(resolved_workdir))
-        if cfg_ok and cfg_data:
-            if repo == "local/repo" and cfg_data.get("delivery_target"):
-                repo = cfg_data["delivery_target"]
-            if base_branch == "main" and cfg_data.get("base_branch"):
-                base_branch = cfg_data["base_branch"]
-            if "delivery_target" not in params and cfg_data.get("delivery_target"):
-                params["delivery_target"] = cfg_data["delivery_target"]
-            if "base_remote" not in params and cfg_data.get("base_remote"):
-                params["base_remote"] = cfg_data["base_remote"]
-            if "push_remote" not in params and cfg_data.get("push_remote"):
-                params["push_remote"] = cfg_data["push_remote"]
-            if "worktree_container" not in params and cfg_data.get("worktree_container"):
-                params["worktree_container"] = cfg_data["worktree_container"]
+    if "delivery_target" not in params and repo != "local/repo":
+        params["delivery_target"] = repo
+    if "base_remote" not in params and base_remote:
+        params["base_remote"] = base_remote
+    if "push_remote" not in params and push_remote:
+        params["push_remote"] = push_remote
+    if "worktree_container" not in params and worktree_container:
+        params["worktree_container"] = worktree_container
 
     envelope_data = {
         "schema_version": "1.0",
@@ -1496,18 +1570,23 @@ def main() -> None:
 
     # init
     p_init = subparsers.add_parser("init", help="Initialize workflow run state snapshot.")
-    p_init.add_argument("--receipt-root", required=True, help="Absolute path to receipts root directory.")
+    p_init.add_argument("--receipt-root", help="Absolute path to receipts root directory. Derived from worktree container if omitted.")
     p_init.add_argument("--root-issue", required=True, help="Root GitHub issue number.")
     p_init.add_argument("--current-issue", help="Initial current issue number (defaults to root issue).")
-    p_init.add_argument("--workflow", default="default", help="Workflow name (defaults to 'default').")
+    p_init.add_argument("--workflow", default=None, help="Workflow name (defaults to configured workflow or 'default').")
     p_init.add_argument("--initial-stage", help="Initial stage name.")
     p_init.add_argument("--force", action="store_true", help="Force overwrite existing state file.")
     p_init.add_argument("--require-config", action="store_true", help="Require valid workspace configuration.")
     p_init.add_argument("--repo-dir", default=".", help="Repository root containing .paper-craft/")
-    p_init.add_argument("--delivery-attempts-max", type=int, default=3, help="Max delivery attempts.")
-    p_init.add_argument("--replans-max", type=int, default=2, help="Max replans.")
+    p_init.add_argument("--delivery-attempts-max", type=int, default=None, help="Max delivery attempts.")
+    p_init.add_argument("--replans-max", type=int, default=None, help="Max replans.")
     p_init.add_argument("--child-issue", dest="child_issues", action="append", default=[], help="Child issue number in planned order.")
     p_init.add_argument("--plan", help="JSON string or file path containing plan snapshot.")
+    p_init.add_argument("--delivery-target", help="Override delivery target repository (owner/repo).")
+    p_init.add_argument("--base-remote", help="Override mainline base git remote (e.g. origin).")
+    p_init.add_argument("--push-remote", help="Override feature push git remote (e.g. origin).")
+    p_init.add_argument("--base-branch", help="Override mainline base branch (e.g. main).")
+    p_init.add_argument("--worktree-container", help="Override container directory for worktrees.")
 
     # prepare
     p_prep = subparsers.add_parser("prepare", help="Prepare a fixed task dispatch and envelope.")
@@ -1557,6 +1636,11 @@ def main() -> None:
                 replans_max=args.replans_max,
                 child_issues=args.child_issues or None,
                 plan=args.plan,
+                delivery_target=args.delivery_target,
+                base_remote=args.base_remote,
+                push_remote=args.push_remote,
+                base_branch=args.base_branch,
+                worktree_container=args.worktree_container,
             )
             print(json.dumps(state, indent=2, ensure_ascii=False))
         elif args.command == "prepare":

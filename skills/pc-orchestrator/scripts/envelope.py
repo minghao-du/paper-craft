@@ -12,7 +12,19 @@ import json
 import os
 from pathlib import Path
 import sys
+import sys
 from typing import Any, Dict, List, Optional, Union
+
+# Import workspace config resolver
+_CONFIG_DIR = str(Path(__file__).resolve().parent.parent.parent / "pc-workspace-config" / "scripts")
+if _CONFIG_DIR not in sys.path:
+    sys.path.insert(0, _CONFIG_DIR)
+
+try:
+    from config import resolve_workspace_config, load_workspace_config
+except ImportError:
+    resolve_workspace_config = None
+    load_workspace_config = None
 
 
 # Absolute path to the receipt template bundled with this skill.
@@ -290,6 +302,7 @@ def create_envelope(
     replans_limit: Optional[int] = None,
     schema_version: str = "1.0",
     validate: bool = True,
+    config_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble a standard TaskInputEnvelope dictionary."""
     root_str = str(root_issue_id)
@@ -300,19 +313,25 @@ def create_envelope(
     workdir_str = str(Path(working_directory).resolve()) if working_directory else ""
     receipt_str = str(Path(receipt_path).resolve()) if receipt_path else ""
 
-    config_delivery_target = None
-    config_base_remote = None
-    config_push_remote = None
-    config_base_branch = None
-    config_worktree_container = None
-    if workdir_str:
-        config = load_workspace_config_from_dir(Path(workdir_str))
-        if config:
-            config_delivery_target = config.get("delivery_target")
-            config_base_remote = config.get("base_remote")
-            config_push_remote = config.get("push_remote")
-            config_base_branch = config.get("base_branch")
-            config_worktree_container = config.get("worktree_container")
+    config = None
+    if config_snapshot:
+        config = config_snapshot
+    elif workdir_str:
+        cfg_file = Path(workdir_str) / ".paper-craft" / "workspace-config.json"
+        if cfg_file.exists():
+            if resolve_workspace_config:
+                try:
+                    config = resolve_workspace_config(workdir_str)
+                except ValueError as e:
+                    raise EnvelopeCorruptedError(str(e)) from e
+            else:
+                config = load_workspace_config_from_dir(Path(workdir_str))
+
+    config_delivery_target = config.get("delivery_target") if config else None
+    config_base_remote = config.get("base_remote") if config else None
+    config_push_remote = config.get("push_remote") if config else None
+    config_base_branch = config.get("base_branch") if config else None
+    config_worktree_container = config.get("worktree_container") if config else None
 
     resolved_delivery_target = (
         delivery_target

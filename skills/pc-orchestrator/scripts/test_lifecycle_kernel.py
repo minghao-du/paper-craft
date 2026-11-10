@@ -1868,6 +1868,280 @@ class TestLifecycleKernel(unittest.TestCase):
         self.assertEqual(insp_done["current_issue_id"], "44")
         self.assertEqual(insp_done["current_stage"], "stage_3_verify")
 
+    def test_init_derives_isolated_receipt_root_and_saves_snapshot(self):
+        """Init derives isolated receipt root from worktree_container and saves full config snapshot."""
+        repo_dir = Path(self.temp_dir.name) / "my-repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:my-org/my-proj.git"], cwd=repo_dir, check=True, capture_output=True)
+
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "my-org/my-proj",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../custom-worktrees",
+            "workflow": "custom-flow",
+            "delivery_attempts_max": 4,
+            "replans_max": 3,
+        }), encoding="utf-8")
+
+        res = self.run_cli(
+            "init",
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        state_data = json.loads(res.stdout)
+
+        # Derived receipt root must be under worktree_container
+        expected_container = (repo_dir / "../custom-worktrees").resolve()
+        expected_receipt_root = expected_container / ".paper-craft" / "receipts" / "issue-49"
+        self.assertEqual(Path(state_data["config_snapshot"]["receipt_root"]).resolve(), expected_receipt_root)
+        self.assertTrue((expected_receipt_root / "state.json").exists())
+
+        # Check snapshot contents and workflow defaults
+        self.assertEqual(state_data["workflow"], "custom-flow")
+        self.assertEqual(state_data["budgets"]["delivery_attempts_max"], 4)
+        self.assertEqual(state_data["budgets"]["replans_max"], 3)
+        self.assertEqual(state_data["config_snapshot"]["repo_checkout"], str(repo_dir.resolve()))
+
+    def test_recovery_consumes_config_snapshot_without_drift(self):
+        """Prepare and recovery consume config snapshot, unaffected by source config edits or cwd changes."""
+        repo_dir = Path(self.temp_dir.name) / "drift-repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:drift-org/drift-repo.git"], cwd=repo_dir, check=True, capture_output=True)
+
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        cfg_file = cfg_dir / "workspace-config.json"
+        cfg_file.write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "drift-org/drift-repo",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../drift-worktrees",
+        }), encoding="utf-8")
+
+        receipt_root = Path(self.temp_dir.name) / "receipts-drift"
+        res_init = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        # Mutate the source config file afterwards
+        cfg_file.write_text("{ corrupted invalid json", encoding="utf-8")
+
+        # Prepare a task: should consume saved config snapshot without reading the corrupted config file
+        req_path = receipt_root / "prepare-req.json"
+        req_path.write_text(json.dumps({
+            "stage": "stage_1_plan",
+            "objective": "Plan issue 49",
+            "provider": {"type": "skill", "target": "pc-issue-plan"},
+        }), encoding="utf-8")
+
+        # Invoke prepare from a completely different directory
+        res_prep = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "prepare", "--receipt-root", str(receipt_root), "--request", str(req_path)],
+            cwd=tempfile.gettempdir(),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_prep.returncode, 0, f"Prepare failed:\n{res_prep.stderr}\n{res_prep.stdout}")
+        prep_data = json.loads(res_prep.stdout)
+        env_path = Path(prep_data["envelope_path"])
+        self.assertTrue(env_path.exists())
+
+        env_data = json.loads(env_path.read_text(encoding="utf-8"))
+        self.assertEqual(env_data["environment"]["repository"], "drift-org/drift-repo")
+        self.assertEqual(env_data["environment"]["working_directory"], str(repo_dir.resolve()))
+
+    def test_missing_or_invalid_config_stops_immediately_without_state(self):
+        """Missing or invalid configuration stops immediately without creating runnable state."""
+        empty_dir = Path(self.temp_dir.name) / "empty-dir"
+        empty_dir.mkdir()
+        receipt_root = Path(self.temp_dir.name) / "no-config-receipts"
+
+        # Missing config
+        res = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(empty_dir),
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertFalse((receipt_root / "state.json").exists())
+
+        # Invalid config
+        bad_dir = Path(self.temp_dir.name) / "bad-dir"
+        bad_cfg_dir = bad_dir / ".paper-craft"
+        bad_cfg_dir.mkdir(parents=True)
+        (bad_cfg_dir / "workspace-config.json").write_text("{ not json", encoding="utf-8")
+
+        res_bad = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(bad_dir),
+        )
+        self.assertNotEqual(res_bad.returncode, 0)
+        self.assertFalse((receipt_root / "state.json").exists())
+
+    def test_run_identity_conflicts(self):
+        """Run identity conflicts (different root issue, workflow, or repo checkout) fail explicitly."""
+        repo_dir = Path(self.temp_dir.name) / "repo-a"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-a.git"], cwd=repo_dir, check=True, capture_output=True)
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir()
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-a",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "workflow": "workflow-alpha",
+        }), encoding="utf-8")
+
+        receipt_root = Path(self.temp_dir.name) / "receipts-ident"
+        res1 = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res1.returncode, 0)
+
+        # 1. Matching identity re-entrance succeeds idempotently
+        res_same = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertEqual(res_same.returncode, 0)
+
+        # 2. Conflicting root issue fails
+        res_diff_issue = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "50",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertNotEqual(res_diff_issue.returncode, 0)
+        self.assertIn("Run identity conflict", res_diff_issue.stderr)
+
+        # 3. Conflicting workflow fails
+        res_diff_wf = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--workflow", "workflow-beta",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertNotEqual(res_diff_wf.returncode, 0)
+        self.assertIn("Run identity conflict", res_diff_wf.stderr)
+
+        # 4. Conflicting repo checkout fails
+        repo_b = Path(self.temp_dir.name) / "repo-b"
+        repo_b.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_b, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-b.git"], cwd=repo_b, check=True, capture_output=True)
+        cfg_b = repo_b / ".paper-craft"
+        cfg_b.mkdir()
+        (cfg_b / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-b",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "workflow": "workflow-alpha",
+        }), encoding="utf-8")
+
+        res_diff_repo = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_b),
+        )
+        self.assertNotEqual(res_diff_repo.returncode, 0)
+        self.assertIn("Run identity conflict", res_diff_repo.stderr)
+
+    def test_isolation_constraints(self):
+        """Receipt root residing inside the repository checkout violates isolation constraints."""
+        repo_dir = Path(self.temp_dir.name) / "repo-iso"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-iso.git"], cwd=repo_dir, check=True, capture_output=True)
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir()
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-iso",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "inside-worktrees",
+        }), encoding="utf-8")
+
+        # Derived receipt root inside repo violates isolation
+        res_iso = self.run_cli(
+            "init",
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+        )
+        self.assertNotEqual(res_iso.returncode, 0)
+        self.assertIn("violates isolation constraints", res_iso.stderr)
+
+    def test_explicit_cli_parameters_override_project_config(self):
+        """Explicit CLI parameters take precedence over workspace project config."""
+        repo_dir = Path(self.temp_dir.name) / "repo-override"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:org/repo-override.git"], cwd=repo_dir, check=True, capture_output=True)
+        cfg_dir = repo_dir / ".paper-craft"
+        cfg_dir.mkdir()
+        (cfg_dir / "workspace-config.json").write_text(json.dumps({
+            "schema_version": "1.0",
+            "delivery_target": "org/repo-override",
+            "base_remote": "origin",
+            "push_remote": "origin",
+            "base_branch": "main",
+            "worktree_container": "../worktrees",
+            "workflow": "workflow-config",
+            "delivery_attempts_max": 2,
+            "replans_max": 1,
+        }), encoding="utf-8")
+
+        receipt_root = Path(self.temp_dir.name) / "receipts-override"
+        res = self.run_cli(
+            "init",
+            "--receipt-root", str(receipt_root),
+            "--root-issue", "49",
+            "--repo-dir", str(repo_dir),
+            "--workflow", "workflow-cli-override",
+            "--delivery-attempts-max", "7",
+            "--replans-max", "6",
+            "--delivery-target", "org/custom-target",
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        state_data = json.loads(res.stdout)
+        self.assertEqual(state_data["workflow"], "workflow-cli-override")
+        self.assertEqual(state_data["budgets"]["delivery_attempts_max"], 7)
+        self.assertEqual(state_data["budgets"]["replans_max"], 6)
+        self.assertEqual(state_data["config_snapshot"]["delivery_target"], "org/custom-target")
+
 
 
 if __name__ == "__main__":
