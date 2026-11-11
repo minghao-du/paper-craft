@@ -1,0 +1,28 @@
+/**
+ * Workspace configuration package public API.
+ *
+ * Implements Section 4 & 5 of WORKSPACE_TYPESCRIPT_REFACTOR_PLAN.md.
+ */
+
+export {
+  SCHEMA_VERSION,
+  CONFIG_REL_PATH,
+  DEFAULT_WORKTREE_CONTAINER,
+  DEFAULT_WORKFLOW,
+  DEFAULT_DELIVERY_ATTEMPTS_MAX,
+  DEFAULT_REPLANS_MAX,
+  type ResolvedWorkspaceConfig,
+  type WorkspaceConfigOverrides,
+  type ResolveWorkspaceConfigOptions,
+  atomicWriteJson,
+  runGit,
+  findRepoRoot,
+  findPrimaryCheckout,
+  getConfigFilePath,
+  parseRepoFromUrl,
+  probeGitRemotes,
+  probeDefaultBranch,
+  loadWorkspaceConfig,
+  validateWorkspaceConfig,
+  resolveWorkspaceConfig,
+} from './config.js';

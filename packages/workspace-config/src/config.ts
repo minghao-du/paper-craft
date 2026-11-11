@@ -23,6 +23,25 @@ export interface ResolvedWorkspaceConfig {
   worktree_container_resolved: string;
 }
 
+export interface WorkspaceConfigOverrides {
+  delivery_target?: string;
+  base_remote?: string;
+  push_remote?: string;
+  base_branch?: string;
+  worktree_container?: string;
+  workflow?: string;
+  default_workflow?: string;
+  delivery_attempts_max?: number;
+  replans_max?: number;
+}
+
+export interface ResolveWorkspaceConfigOptions {
+  repoDir: string;
+  configPath?: string;
+  requireFile?: boolean;
+  overrides?: WorkspaceConfigOverrides;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -35,6 +54,37 @@ function resolvePath(value: string): string {
   return parent === absolute ? absolute : path.join(resolvePath(parent), path.basename(absolute));
 }
 
+/** Write dictionary or object to file atomically with flush, fsync, and rename. */
+export function atomicWriteJson(filePath: string, data: unknown): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tempFile = path.join(dir, `.${path.basename(filePath)}.tmp.${process.pid}.${Date.now()}`);
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(tempFile, 'w');
+    fs.writeFileSync(fd, JSON.stringify(data, null, 2) + '\n', 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tempFile, filePath);
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+    if (fs.existsSync(tempFile)) {
+      try {
+        fs.unlinkSync(tempFile);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 export function runGit(directory: string, ...args: string[]): [number, string, string] {
   const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8' });
   return [result.status ?? 1, result.stdout?.trim() ?? '', result.stderr?.trim() ?? String(result.error ?? '')];
@@ -45,17 +95,56 @@ export function findRepoRoot(directory: string): string {
   return resolvePath(code === 0 && output ? output : directory);
 }
 
+/**
+ * Find the primary checkout of a Git repository via `git worktree list --porcelain`.
+ * The first worktree entry is guaranteed by Git to be the main worktree.
+ */
+export function findPrimaryCheckout(directory: string): string {
+  const resolvedDir = resolvePath(directory);
+  if (!fs.existsSync(resolvedDir)) {
+    throw new Error(`Cannot find primary checkout: directory does not exist: '${resolvedDir}'`);
+  }
+  const [code, output, stderr] = runGit(resolvedDir, 'worktree', 'list', '--porcelain');
+  if (code !== 0 || !output) {
+    throw new Error(
+      `Cannot find primary checkout for '${resolvedDir}': not in a git repository or git command failed (${stderr || 'exit code ' + code}).`,
+    );
+  }
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      const candidate = line.slice('worktree '.length).trim();
+      if (candidate) {
+        return resolvePath(candidate);
+      }
+    }
+  }
+  throw new Error(`Cannot find primary checkout for '${resolvedDir}': no worktree entry found in git worktree list.`);
+}
+
 export function getConfigFilePath(repoRoot: string): string {
   return path.join(repoRoot, CONFIG_REL_PATH);
 }
 
 export function parseRepoFromUrl(url: string): string | null {
   if (!url) return null;
-  const match = /[:/]([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/.exec(url);
-  if (match) return `${match[1]}/${match[2]}`;
-  const parentPath = path.dirname(url);
+  const cleanUrl = url.trim().replace(/\/+$/, '');
+  const match = /[:/]([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/.exec(cleanUrl);
+  if (match) {
+    const owner = match[1];
+    const repo = match[2];
+    if (owner === 'git' && cleanUrl.includes('/')) {
+      const parts = cleanUrl.split('/');
+      if (parts.length >= 2) {
+        let repoPart = parts[parts.length - 1];
+        if (repoPart.endsWith('.git')) repoPart = repoPart.slice(0, -4);
+        return `${parts[parts.length - 2]}/${repoPart}`;
+      }
+    }
+    return `${owner}/${repo}`;
+  }
+  const parentPath = path.dirname(cleanUrl);
   const parent = parentPath === '.' ? '' : path.basename(parentPath);
-  const stem = path.parse(url).name;
+  const stem = path.parse(cleanUrl).name;
   return parent && stem ? `${parent}/${stem}` : null;
 }
 
@@ -93,8 +182,10 @@ export function probeDefaultBranch(repoRoot: string, remote = 'origin'): string 
   return null;
 }
 
-export function loadWorkspaceConfig(repoRoot: string): Record<string, unknown> | null {
-  const configPath = getConfigFilePath(repoRoot);
+export function loadWorkspaceConfig(pathOrRepoRoot: string): Record<string, unknown> | null {
+  const configPath = pathOrRepoRoot.endsWith('.json') || (fs.existsSync(pathOrRepoRoot) && fs.statSync(pathOrRepoRoot).isFile())
+    ? pathOrRepoRoot
+    : getConfigFilePath(pathOrRepoRoot);
   if (!fs.existsSync(configPath)) return null;
   let data: unknown;
   try {
@@ -148,50 +239,109 @@ export function validateWorkspaceConfig(data: unknown, repoRoot?: string): strin
 }
 
 /** Resolve a snapshot using explicit values, validated project configuration, then Git facts. */
-export function resolveWorkspaceConfig(
-  repoDir: string,
-  overrides: Record<string, unknown> = {},
-  requireFile = false,
-): ResolvedWorkspaceConfig {
-  const repoRoot = findRepoRoot(repoDir);
-  const configPath = getConfigFilePath(repoRoot);
-  if (requireFile && !fs.existsSync(configPath)) {
-    throw new Error(`Workspace configuration missing at ${configPath}. Please run 'pc-workspace-config' to initialize.`);
+export function resolveWorkspaceConfig(options: ResolveWorkspaceConfigOptions): ResolvedWorkspaceConfig {
+  if (!options || typeof options !== 'object') {
+    throw new Error('resolveWorkspaceConfig requires an options object');
   }
-  const data = loadWorkspaceConfig(repoRoot) ?? {};
-  if (fs.existsSync(configPath)) {
-    const errors = validateWorkspaceConfig(data, repoRoot);
-    if (errors.length) throw new Error(`Workspace configuration at ${configPath} is invalid:\n  - ${errors.join('\n  - ')}\nPlease run 'pc-workspace-config' to reconfigure.`);
+  const sourceCheckout = resolvePath(options.repoDir);
+  const primaryCheckout = findPrimaryCheckout(sourceCheckout);
+
+  let resolvedConfigPath: string;
+  let configExists: boolean;
+
+  if (options.configPath !== undefined) {
+    resolvedConfigPath = path.isAbsolute(options.configPath)
+      ? resolvePath(options.configPath)
+      : resolvePath(path.resolve(sourceCheckout, options.configPath));
+    if (!fs.existsSync(resolvedConfigPath)) {
+      throw new Error(`Specified workspace configuration file does not exist: ${resolvedConfigPath}`);
+    }
+    configExists = true;
+  } else {
+    resolvedConfigPath = getConfigFilePath(primaryCheckout);
+    configExists = fs.existsSync(resolvedConfigPath);
+    if (!configExists && options.requireFile) {
+      throw new Error(`Workspace configuration missing at ${resolvedConfigPath}. Please run 'pc-workspace-config' to initialize.`);
+    }
   }
-  const remotes = probeGitRemotes(repoRoot);
-  const explicitOrFile = (key: string): string | undefined => {
-    const value = overrides[key] || data[key];
-    return value ? String(value).trim() : undefined;
+
+  let configData: Record<string, unknown> = {};
+  if (configExists) {
+    const loaded = loadWorkspaceConfig(resolvedConfigPath);
+    if (loaded) {
+      configData = loaded;
+      const errors = validateWorkspaceConfig(configData, primaryCheckout);
+      if (errors.length) {
+        throw new Error(
+          `Workspace configuration at ${resolvedConfigPath} is invalid:\n  - ${errors.join('\n  - ')}\nPlease run 'pc-workspace-config' to reconfigure.`,
+        );
+      }
+    }
+  }
+
+  const overrides = options.overrides ?? {};
+  const remotes = probeGitRemotes(primaryCheckout);
+
+  const explicitOrFile = (key: keyof WorkspaceConfigOverrides): string | undefined => {
+    const overrideVal = overrides[key];
+    if (overrideVal !== undefined && overrideVal !== null && String(overrideVal).trim() !== '') {
+      return String(overrideVal).trim();
+    }
+    const fileVal = configData[key];
+    if (fileVal !== undefined && fileVal !== null && String(fileVal).trim() !== '') {
+      return String(fileVal).trim();
+    }
+    return undefined;
   };
+
   const baseRemote = explicitOrFile('base_remote') ?? (
-    remotes.includes('upstream') ? 'upstream' : remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0] : undefined
+    remotes.includes('upstream')
+      ? 'upstream'
+      : remotes.includes('origin')
+      ? 'origin'
+      : remotes.length === 1
+      ? remotes[0]
+      : undefined
   );
   if (!baseRemote) {
-    throw new Error("Cannot determine base_remote: configuration missing or undetectable from repository remotes. Do not guess fallback defaults. Please run 'pc-workspace-config' or specify --base-remote explicitly.");
+    throw new Error(
+      "Cannot determine base_remote: configuration missing or undetectable from repository remotes. Do not guess fallback defaults. Please run 'pc-workspace-config' or specify --base-remote explicitly.",
+    );
   }
-  const pushRemote = explicitOrFile('push_remote') ?? (remotes.includes('upstream') && remotes.includes('origin') ? 'origin' : baseRemote);
+
+  const pushRemote = explicitOrFile('push_remote') ?? (
+    remotes.includes('upstream') && remotes.includes('origin')
+      ? 'origin'
+      : baseRemote
+  );
+
   let deliveryTarget = explicitOrFile('delivery_target');
   if (!deliveryTarget) {
-    const [code, url] = runGit(repoRoot, 'remote', 'get-url', baseRemote);
+    const [code, url] = runGit(primaryCheckout, 'remote', 'get-url', baseRemote);
     deliveryTarget = code === 0 ? parseRepoFromUrl(url) ?? undefined : undefined;
     if (!deliveryTarget && remotes.includes('origin') && baseRemote !== 'origin') {
-      const [originCode, originUrl] = runGit(repoRoot, 'remote', 'get-url', 'origin');
+      const [originCode, originUrl] = runGit(primaryCheckout, 'remote', 'get-url', 'origin');
       deliveryTarget = originCode === 0 ? parseRepoFromUrl(originUrl) ?? undefined : undefined;
     }
   }
   if (!deliveryTarget) {
-    throw new Error(`Cannot determine delivery_target: configuration missing or undetectable from remote '${baseRemote}'. Do not guess fallback defaults like 'local/repo'. Please run 'pc-workspace-config' or specify --delivery-target explicitly.`);
+    throw new Error(
+      `Cannot determine delivery_target: configuration missing or undetectable from remote '${baseRemote}'. Do not guess fallback defaults like 'local/repo'. Please run 'pc-workspace-config' or specify --delivery-target explicitly.`,
+    );
   }
-  const baseBranch = explicitOrFile('base_branch') ?? probeDefaultBranch(repoRoot, baseRemote);
+
+  const baseBranch = explicitOrFile('base_branch') ?? probeDefaultBranch(primaryCheckout, baseRemote);
   if (!baseBranch) {
-    throw new Error(`Cannot determine base_branch from remote '${baseRemote}'. Do not guess fallback defaults like 'main'. Please run 'pc-workspace-config' or specify --base-branch explicitly.`);
+    throw new Error(
+      `Cannot determine base_branch from remote '${baseRemote}'. Do not guess fallback defaults like 'main'. Please run 'pc-workspace-config' or specify --base-branch explicitly.`,
+    );
   }
+
   const container = explicitOrFile('worktree_container') ?? DEFAULT_WORKTREE_CONTAINER;
+  const worktreeContainerResolved = path.isAbsolute(container)
+    ? resolvePath(container)
+    : resolvePath(path.resolve(primaryCheckout, container));
+
   const resolved: ResolvedWorkspaceConfig = {
     schema_version: SCHEMA_VERSION,
     delivery_target: deliveryTarget,
@@ -199,13 +349,26 @@ export function resolveWorkspaceConfig(
     push_remote: pushRemote,
     base_branch: baseBranch,
     worktree_container: container,
-    workflow: explicitOrFile('workflow') ?? String(data.default_workflow || DEFAULT_WORKFLOW),
-    delivery_attempts_max: Number(overrides.delivery_attempts_max ?? data.delivery_attempts_max ?? DEFAULT_DELIVERY_ATTEMPTS_MAX),
-    replans_max: Number(overrides.replans_max ?? data.replans_max ?? DEFAULT_REPLANS_MAX),
-    repo_checkout: repoRoot,
-    worktree_container_resolved: resolvePath(path.resolve(repoRoot, container)),
+    workflow: explicitOrFile('workflow') ?? (
+      overrides.default_workflow
+        ? String(overrides.default_workflow).trim()
+        : configData.default_workflow
+        ? String(configData.default_workflow).trim()
+        : DEFAULT_WORKFLOW
+    ),
+    delivery_attempts_max: Number(
+      overrides.delivery_attempts_max ?? configData.delivery_attempts_max ?? DEFAULT_DELIVERY_ATTEMPTS_MAX,
+    ),
+    replans_max: Number(
+      overrides.replans_max ?? configData.replans_max ?? DEFAULT_REPLANS_MAX,
+    ),
+    repo_checkout: primaryCheckout,
+    worktree_container_resolved: worktreeContainerResolved,
   };
-  const errors = validateWorkspaceConfig(resolved, repoRoot);
-  if (errors.length) throw new Error(`Resolved workspace configuration is invalid:\n  - ${errors.join('\n  - ')}`);
+
+  const errors = validateWorkspaceConfig(resolved, primaryCheckout);
+  if (errors.length) {
+    throw new Error(`Resolved workspace configuration is invalid:\n  - ${errors.join('\n  - ')}`);
+  }
   return resolved;
 }

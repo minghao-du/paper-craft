@@ -37,15 +37,15 @@ export const LIFECYCLE_KERNEL_SCRIPT = path.join(
  */
 export const WORKSPACE_CONFIG_SCRIPT = path.join(
   REPO_ROOT,
-  'skills/pc-workspace-config/scripts/config.py',
+  'packages/workspace-config/src/cli.ts',
 );
 
 /**
- * Absolute path to the worktree preparation CLI script (pc-workspace).
+ * Absolute path to the workspace CLI script (pc-workspace).
  */
 export const PREPARE_WORKTREE_SCRIPT = path.join(
   REPO_ROOT,
-  'skills/pc-workspace/scripts/prepare-worktree.py',
+  'packages/workspace/src/cli.ts',
 );
 
 /**
@@ -186,23 +186,23 @@ export function runPrepareTaskCli(
 }
 
 /**
- * Execute pc-workspace-config/scripts/config.py CLI subcommand.
+ * Execute packages/workspace-config/src/cli.ts CLI subcommand.
  */
 export function runWorkspaceConfigCli(
   args: string[],
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): ProcessResult {
-  return runPython(WORKSPACE_CONFIG_SCRIPT, args, options);
+  return runTypeScript(WORKSPACE_CONFIG_SCRIPT, args, options);
 }
 
 /**
- * Execute pc-workspace/scripts/prepare-worktree.py CLI subcommand.
+ * Execute packages/workspace/src/cli.ts CLI subcommand.
  */
 export function runPrepareWorktreeCli(
   args: string[],
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): ProcessResult {
-  return runPython(PREPARE_WORKTREE_SCRIPT, args, options);
+  return runTypeScript(PREPARE_WORKTREE_SCRIPT, args, options);
 }
 
 /**

@@ -7,13 +7,13 @@ allowed-tools: Bash, Read, Write, Glob, Grep
 # /pc-workspace-config
 
 Manage project-level workspace configuration for paper-craft workflows.
-`pc-workspace-config` provides a one-time local initialization wizard and validator, saving a single git-ignored JSON configuration file (`.paper-craft/workspace-config.json`). Once initialized, `pc-orchestrator` and `prepare-worktree.py` automatically consume this configuration without requiring repeated environment parameters.
+`pc-workspace-config` provides a one-time local initialization wizard and validator, saving a single git-ignored JSON configuration file (`.paper-craft/workspace-config.json`). Once initialized, `pc-orchestrator` and `packages/workspace` automatically consume this configuration without requiring repeated environment parameters. Configuration is anchored on the primary Git checkout; linked worktrees read the primary configuration by default.
 
 ---
 
 ## 1. Configuration Schema
 
-The configuration file is stored at `.paper-craft/workspace-config.json` (relative to repository root):
+The configuration file is stored at `.paper-craft/workspace-config.json` (relative to the primary checkout root):
 
 ```json
 {
@@ -53,41 +53,47 @@ The configuration file is stored at `.paper-craft/workspace-config.json` (relati
 
 ## 2. CLI Commands & Options
 
-Resolve `<skill-dir>` to the absolute installed directory containing this `SKILL.md`.
-The bundled helper script `<skill-dir>/scripts/config.py` supports deterministic configuration operations.
+Configuration CLI is implemented in TypeScript in `packages/workspace-config/src/cli.ts` (requires Node.js >= 22).
+Execute using the repository's loader:
+
+```bash
+# Set command prefix
+PC_CONFIG="node --import <paper-craft-root>/node_modules/tsx/dist/loader.mjs <paper-craft-root>/packages/workspace-config/src/cli.ts"
+```
 
 ### Initialize Configuration (`init`)
 Probe Git repository remotes, default branch, and GitHub repository URL, interactively confirming or setting values:
 
 ```bash
 # Interactive wizard
-python3 "<skill-dir>/scripts/config.py" init
+$PC_CONFIG init [--repo-dir <path>]
 
 # Non-interactive initialization with probed defaults
-python3 "<skill-dir>/scripts/config.py" init --defaults
+$PC_CONFIG init --defaults [--repo-dir <path>]
 
 # Explicit parameter overrides
-python3 "<skill-dir>/scripts/config.py" init \
+$PC_CONFIG init \
   --delivery-target "owner/repo" \
   --base-remote "origin" \
   --push-remote "origin" \
   --base-branch "main" \
   --worktree-container "../project-worktrees" \
-  --defaults
+  --defaults \
+  --repo-dir <path>
 ```
 
 ### Display Configuration (`show`)
 Inspect the active workspace configuration:
 
 ```bash
-python3 "<skill-dir>/scripts/config.py" show
+$PC_CONFIG show [--repo-dir <path>]
 ```
 
 ### Validate Configuration (`validate`)
 Verify that the configuration exists, complies with schema `1.0`, and references existing Git remotes:
 
 ```bash
-python3 "<skill-dir>/scripts/config.py" validate
+$PC_CONFIG validate [--repo-dir <path>]
 ```
 
 Exit code is `0` when valid, or `1` when missing or invalid, printing actionable guidance.
@@ -100,9 +106,9 @@ Exit code is `0` when valid, or `1` when missing or invalid, printing actionable
    On workflow entry, `pc-orchestrator` checks configuration validity. If configuration is missing or invalid, execution halts immediately with a clear explanation guiding the user to run `pc-workspace-config`. No task worktree is created on the error path.
 2. **Task Input Envelopes (the orchestrator TypeScript envelope helper)**:
    When creating task envelopes without repetitive CLI parameters, the orchestrator TypeScript envelope helper automatically populates `environment.repository` and `environment.base_branch` from `.paper-craft/workspace-config.json`, passing `delivery_target`, `base_remote`, `push_remote`, and `worktree_container` cleanly under `inputs.parameters`.
-3. **Workspace Preparation (`prepare-worktree.py`)**:
-   `prepare-worktree.py` reads the configuration to resolve:
-   - Target container directory from `worktree_container`.
+3. **Workspace Preparation (`packages/workspace`)**:
+   `packages/workspace` reads the configuration to resolve:
+   - Target container directory from `worktree_container` (resolved relative to the primary checkout).
    - Mainline fetch remote from `base_remote` (starting worktrees from `refs/remotes/<base_remote>/<base_branch>`).
    - Expected repository identity from `delivery_target`, ensuring valid forks are not falsely rejected when `origin` differs from `delivery_target`.
    - Compact reports and receipts preserve `delivery_target`, `base_remote`, and `push_remote`.

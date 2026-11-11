@@ -167,7 +167,7 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(envelope.environment.repository).toBe('paper-craft/demo-repo');
     expect(envelope.environment.base_branch).toBe('main');
 
-    // 3. Prepare workspace using prepare-worktree.py with the envelope
+    // 3. Prepare workspace using packages/workspace CLI with the envelope
     const prepRes = runPrepareWorktreeCli(['--input-envelope', envelopePath]);
     expect(prepRes.status).toBe(0);
 
@@ -334,7 +334,7 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(envelope.inputs.parameters?.push_remote).toBe('origin');
     expect(envelope.inputs.parameters?.worktree_container).toBe('../custom-fork-worktrees');
 
-    // 3. Prepare workspace using prepare-worktree.py with the envelope
+    // 3. Prepare workspace using packages/workspace CLI with the envelope
     const prepRes = runPrepareWorktreeCli(['--input-envelope', envelopePath]);
     expect(prepRes.status).toBe(0);
 

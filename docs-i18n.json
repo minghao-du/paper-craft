@@ -18,7 +18,8 @@
     "docs/prompts/**",
     "docs/research/**",
     "PROJECT.md",
-    "ORCHESTRATOR_REFACTOR_PLAN.md"
+    "ORCHESTRATOR_REFACTOR_PLAN.md",
+    "WORKSPACE_TYPESCRIPT_REFACTOR_PLAN.md"
   ],
   "backlog": {}
 }

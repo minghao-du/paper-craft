@@ -329,7 +329,7 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
       objective: 'Prepare workspace via script kernel',
       provider: {
         type: 'script',
-        target: 'skills/pc-workspace/scripts/prepare-worktree.py',
+        target: 'packages/workspace/src/cli.ts',
         args: ['--issue', '50'],
       },
       workdir: testEnv.dir,

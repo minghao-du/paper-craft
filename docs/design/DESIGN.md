@@ -97,8 +97,11 @@ The Orchestrator validates all four report fields and verifies physical existenc
 
 ## Workspace ownership
 
-The orchestrator assigns environments and decides preparation, reuse, and cleanup timing. A
-`pc-workspace` specialist prepares and validates Git checkouts before professional tasks start.
+The orchestrator assigns environments and decides preparation, reuse, and cleanup timing.
+`packages/workspace` provides the core TypeScript implementation (`prepare`, `cleanup`) and CLI,
+while `packages/workspace-config` provides unified configuration resolution and validation.
+The `pc-workspace` specialist skill serves as the cognitive wrapper preparing and validating Git checkouts
+before professional tasks start, while domain-specific skills retain their own focused helpers (including Python where appropriate).
 Every dispatch, including nested agents, supplies an absolute working directory and relevant repository,
 branch, and revision. Platforms bind the launch directory where supported. Prompt-only adapters require
 explicit per-command directory binding and entry validation. Professional skills consume prepared

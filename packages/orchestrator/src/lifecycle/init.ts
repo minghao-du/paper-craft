@@ -33,11 +33,11 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     if (o[key] != null) overrides[key] = o[key];
   }
 
-  const config = resolveWorkspaceConfig(
-    repo,
+  const config = resolveWorkspaceConfig({
+    repoDir: repo,
     overrides,
-    o.require_config ?? false,
-  );
+    requireFile: o.require_config ?? false,
+  });
 
   const root = path.resolve(
     o.receipt_root?.trim() ||
