@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test, expect } from 'vitest';
+import { REPO_ROOT, TSX_LOADER_PATH } from '../../../tests/support/index.js';
 
-const script = resolve('scripts/docs/docs-i18n.ts');
-const tsx = resolve('node_modules/tsx/dist/loader.mjs');
+const script = resolve(REPO_ROOT, 'scripts/docs/docs-i18n.ts');
+const tsx = TSX_LOADER_PATH;
 test('reviewed pairs detect stale content, preserve unrelated sections and only record named pairs', () => {
   const root = mkdtempSync(join(tmpdir(), 'pc-docs-'));
   const put = (p: string, s: string) => {

@@ -3,6 +3,10 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test, expect } from 'vitest';
+import { REPO_ROOT, TSX_LOADER_PATH } from '../../../tests/support/index.js';
+
+const script = resolve(REPO_ROOT, 'scripts/docs/docs-i18n.ts');
+const tsx = TSX_LOADER_PATH;
 
 // Command boundary catches invalid reader navigation that freshness hashes cannot detect.
 test('recording and checking require reciprocal switches and corresponding local destinations and anchors', () => {
@@ -11,7 +15,7 @@ test('recording and checking require reciprocal switches and corresponding local
   const run = (...args: string[]) =>
     spawnSync(
       process.execPath,
-      ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
+      ['--import', tsx, script, ...args],
       { cwd: root, encoding: 'utf8', timeout: 10000 },
     );
   const en = '# Guide\n\n[中文](Guide.zh.md)\n\n';
@@ -56,7 +60,7 @@ test('complete pair renames and deletes require updated inbound references', () 
   const run = (...args: string[]) =>
     spawnSync(
       process.execPath,
-      ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
+      ['--import', tsx, script, ...args],
       { cwd: root, encoding: 'utf8', timeout: 10000 },
     );
   const pair = (name: string, link = '') => {

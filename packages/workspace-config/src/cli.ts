@@ -5,20 +5,15 @@ import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
-  DEFAULT_DELIVERY_ATTEMPTS_MAX,
-  DEFAULT_REPLANS_MAX,
-  DEFAULT_WORKFLOW,
-  DEFAULT_WORKTREE_CONTAINER,
-  SCHEMA_VERSION,
-  atomicWriteJson,
   findPrimaryCheckout,
   getConfigFilePath,
-  parseRepoFromUrl,
-  probeDefaultBranch,
-  probeGitRemotes,
-  runGit,
   validateWorkspaceConfig,
 } from './config.js';
+import {
+  prepareWorkspaceConfigInitialization,
+  saveWorkspaceConfigInitialization,
+  type WorkspaceConfigInitPreparation,
+} from './initialization.js';
 
 const options = {
   'repo-dir': { type: 'string' as const },
@@ -65,135 +60,25 @@ Options:
 }
 
 async function cmdInit(values: Record<string, unknown>, repoDir: string): Promise<number> {
-  let primaryCheckout: string;
+  let preparation: WorkspaceConfigInitPreparation;
   try {
-    primaryCheckout = findPrimaryCheckout(repoDir);
+    preparation = prepareWorkspaceConfigInitialization(repoDir, values);
   } catch (err: unknown) {
     process.stderr.write(`Error: ${errorMessage(err)}\n`);
     return 1;
   }
 
-  const configPath = getConfigFilePath(primaryCheckout);
   const isDefaults = Boolean(values.defaults || values.yes);
 
-  if (fs.existsSync(configPath) && !values.force && !isDefaults) {
+  if (preparation.configExists && !values.force && !isDefaults) {
     if (process.stdin.isTTY) {
-      process.stderr.write(`Configuration already exists at ${configPath}. Use --force to overwrite.\n`);
+      process.stderr.write(`Configuration already exists at ${preparation.configPath}. Use --force to overwrite.\n`);
       return 1;
     }
   }
 
-  const remotes = probeGitRemotes(primaryCheckout);
-
-  let baseRemote: string;
-  if (values['base-remote']) {
-    baseRemote = String(values['base-remote']).trim();
-    if (remotes.length && !remotes.includes(baseRemote)) {
-      process.stderr.write(
-        `Error: Specified base_remote '${baseRemote}' does not exist in git remotes: ${JSON.stringify(remotes)}\n`,
-      );
-      return 1;
-    }
-  } else {
-    if (remotes.includes('upstream')) {
-      baseRemote = 'upstream';
-    } else if (remotes.includes('origin')) {
-      baseRemote = 'origin';
-    } else if (remotes.length === 1) {
-      baseRemote = remotes[0];
-    } else if (remotes.length === 0) {
-      process.stderr.write(
-        'Error: No git remotes configured in repository. Cannot determine remote without explicit --base-remote.\n',
-      );
-      return 1;
-    } else {
-      process.stderr.write(
-        `Error: Multiple remotes configured (${JSON.stringify(remotes)}) without origin or upstream. Please specify --base-remote explicitly.\n`,
-      );
-      return 1;
-    }
-  }
-
-  let pushRemote: string;
-  if (values['push-remote']) {
-    pushRemote = String(values['push-remote']).trim();
-    if (remotes.length && !remotes.includes(pushRemote)) {
-      process.stderr.write(
-        `Error: Specified push_remote '${pushRemote}' does not exist in git remotes: ${JSON.stringify(remotes)}\n`,
-      );
-      return 1;
-    }
-  } else {
-    if (remotes.includes('upstream') && remotes.includes('origin')) {
-      pushRemote = 'origin';
-    } else {
-      pushRemote = baseRemote;
-    }
-  }
-
-  let deliveryTarget: string;
-  if (values['delivery-target']) {
-    deliveryTarget = String(values['delivery-target']).trim();
-  } else {
-    let probedTarget: string | null = null;
-    const [code, remoteUrl] = runGit(primaryCheckout, 'remote', 'get-url', baseRemote);
-    if (code === 0 && remoteUrl) {
-      probedTarget = parseRepoFromUrl(remoteUrl);
-    }
-    if (!probedTarget && remotes.includes('origin') && baseRemote !== 'origin') {
-      const [originCode, originUrl] = runGit(primaryCheckout, 'remote', 'get-url', 'origin');
-      if (originCode === 0 && originUrl) {
-        probedTarget = parseRepoFromUrl(originUrl);
-      }
-    }
-    if (!probedTarget) {
-      process.stderr.write(
-        `Error: Cannot determine delivery_target from remote '${baseRemote}'. Facts cannot be confirmed. Please specify --delivery-target explicitly.\n`,
-      );
-      return 1;
-    }
-    deliveryTarget = probedTarget;
-  }
-
-  let baseBranch: string;
-  if (values['base-branch']) {
-    baseBranch = String(values['base-branch']).trim();
-  } else {
-    const probedBranch = probeDefaultBranch(primaryCheckout, baseRemote);
-    if (!probedBranch) {
-      process.stderr.write(
-        `Error: Cannot determine base_branch from remote '${baseRemote}'. Facts cannot be confirmed. Please specify --base-branch explicitly.\n`,
-      );
-      return 1;
-    }
-    baseBranch = probedBranch;
-  }
-
-  let worktreeContainer = values['worktree-container']
-    ? String(values['worktree-container']).trim()
-    : DEFAULT_WORKTREE_CONTAINER;
-
-  const workflow = values.workflow ? String(values.workflow).trim() : DEFAULT_WORKFLOW;
-
-  let deliveryAttemptsMax = DEFAULT_DELIVERY_ATTEMPTS_MAX;
-  if (values['delivery-attempts-max'] !== undefined) {
-    deliveryAttemptsMax = Number(values['delivery-attempts-max']);
-    if (!Number.isInteger(deliveryAttemptsMax) || deliveryAttemptsMax < 0) {
-      process.stderr.write("Error: Field 'delivery_attempts_max' must be an integer >= 0\n");
-      return 1;
-    }
-  }
-
-  let replansMax = DEFAULT_REPLANS_MAX;
-  if (values['replans-max'] !== undefined) {
-    replansMax = Number(values['replans-max']);
-    if (!Number.isInteger(replansMax) || replansMax < 0) {
-      process.stderr.write("Error: Field 'replans_max' must be an integer >= 0\n");
-      return 1;
-    }
-  }
-
-  const isFork = baseRemote !== pushRemote;
+  let { draft } = preparation;
+  const { primaryCheckout, isFork } = preparation;
 
   if (process.stdin.isTTY && !isDefaults) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -212,24 +97,33 @@ async function cmdInit(values: Record<string, unknown>, repoDir: string): Promis
       }
 
       console.log('delivery_target: Upstream repository for Issues, PRs, and landing (e.g. owner/repo)');
-      const ansTarget = (await rl.question(`  Delivery Target [${deliveryTarget}]: `)).trim();
-      if (ansTarget) deliveryTarget = ansTarget;
+      const ansTarget = (await rl.question(`  Delivery Target [${draft.delivery_target}]: `)).trim();
+      const deliveryTarget = ansTarget || draft.delivery_target;
 
       console.log('base_remote: Remote to fetch latest mainline code from (e.g. upstream or origin)');
-      const ansBaseRemote = (await rl.question(`  Base Remote [${baseRemote}]: `)).trim();
-      if (ansBaseRemote) baseRemote = ansBaseRemote;
+      const ansBaseRemote = (await rl.question(`  Base Remote [${draft.base_remote}]: `)).trim();
+      const baseRemote = ansBaseRemote || draft.base_remote;
 
       console.log('push_remote: Remote to push personal feature branches to (e.g. origin)');
-      const ansPushRemote = (await rl.question(`  Push Remote [${pushRemote}]: `)).trim();
-      if (ansPushRemote) pushRemote = ansPushRemote;
+      const ansPushRemote = (await rl.question(`  Push Remote [${draft.push_remote}]: `)).trim();
+      const pushRemote = ansPushRemote || draft.push_remote;
 
       console.log('base_branch: Mainline base branch on base_remote (e.g. main)');
-      const ansBaseBranch = (await rl.question(`  Base Branch [${baseBranch}]: `)).trim();
-      if (ansBaseBranch) baseBranch = ansBaseBranch;
+      const ansBaseBranch = (await rl.question(`  Base Branch [${draft.base_branch}]: `)).trim();
+      const baseBranch = ansBaseBranch || draft.base_branch;
 
       console.log('worktree_container: Directory container for disposable git worktrees');
-      const ansContainer = (await rl.question(`  Worktree Container [${worktreeContainer}]: `)).trim();
-      if (ansContainer) worktreeContainer = ansContainer;
+      const ansContainer = (await rl.question(`  Worktree Container [${draft.worktree_container}]: `)).trim();
+      const worktreeContainer = ansContainer || draft.worktree_container;
+
+      draft = {
+        ...draft,
+        delivery_target: deliveryTarget,
+        base_remote: baseRemote,
+        push_remote: pushRemote,
+        base_branch: baseBranch,
+        worktree_container: worktreeContainer,
+      };
     } catch {
       process.stderr.write('\nConfiguration wizard aborted.\n');
       rl.close();
@@ -239,27 +133,20 @@ async function cmdInit(values: Record<string, unknown>, repoDir: string): Promis
     }
   }
 
-  const configData = {
-    schema_version: SCHEMA_VERSION,
-    delivery_target: deliveryTarget,
-    base_remote: baseRemote,
-    push_remote: pushRemote,
-    base_branch: baseBranch,
-    worktree_container: worktreeContainer,
-    workflow,
-    delivery_attempts_max: deliveryAttemptsMax,
-    replans_max: replansMax,
-  };
+  const force = Boolean(values.force || isDefaults || !process.stdin.isTTY);
 
-  const errors = validateWorkspaceConfig(configData, primaryCheckout);
-  if (errors.length) {
-    process.stderr.write(`Validation failed during initialization:\n  - ${errors.join('\n  - ')}\n`);
+  try {
+    const result = saveWorkspaceConfigInitialization({
+      primaryCheckout,
+      config: draft,
+      force,
+    });
+    console.log(JSON.stringify(result.config, null, 2));
+    return 0;
+  } catch (err: unknown) {
+    process.stderr.write(`${errorMessage(err)}\n`);
     return 1;
   }
-
-  atomicWriteJson(configPath, configData);
-  console.log(JSON.stringify(configData, null, 2));
-  return 0;
 }
 
 async function cmdShow(repoDir: string): Promise<number> {

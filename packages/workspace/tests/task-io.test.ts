@@ -16,9 +16,9 @@ import {
   mapToPrepareRequest,
   normalizeIssue,
   TaskInputEnvelope,
-} from '../../packages/workspace/src/task-io.js';
-import { resolvePath } from '../../packages/workspace/src/git.js';
-import { CleanupResult, PreparedWorkspace } from '../../packages/workspace/src/types.js';
+} from '../src/task-io.js';
+import { resolvePath } from '../src/git.js';
+import { CleanupResult, PreparedWorkspace } from '../src/types.js';
 
 describe('Workspace Task-IO', () => {
   let tmpDir: string;

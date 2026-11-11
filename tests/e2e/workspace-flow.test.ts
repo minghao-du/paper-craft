@@ -20,7 +20,7 @@ import {
   runWorkspaceConfigCli,
   type CompactReceiptReport,
   type TaskInputEnvelope,
-} from './test-helpers.js';
+} from './helpers.js';
 
 describe('Issue #38: Workspace Config E2E', () => {
   let testEnv: { dir: string; cleanup: () => void };

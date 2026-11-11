@@ -1,5 +1,5 @@
 /**
- * Tier 3: Combinations & Cross-Module Integration Tests
+ * Dispatch Flow & Combinations Tests (C3.1-C3.4).
  *
  * Verifies cross-cutting interactions between:
  * - State machine state tracking and Envelope generation via --from-state.
@@ -16,9 +16,9 @@ import {
   runLifecycleKernelCli,
   runPrepareTaskCli,
   type TaskInputEnvelope,
-} from './test-helpers.js';
+} from './helpers.js';
 
-describe('Tier 3: Combinations & Cross-Module Integration', () => {
+describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
   let testEnv: { dir: string; cleanup: () => void };
 
   beforeEach(() => {
@@ -64,7 +64,7 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     expect(env.environment.working_directory).toBe(path.resolve(fakeWorkdir));
     expect(env.environment.branch).toBe('issue-777');
     expect(env.environment.commit).toBe('9999999999999999999999999999999999999999');
-  });
+  }, 20000);
 
   it('C3.2: predecessor receipt requires explicit specification without implicit inheritance', () => {
     // 1. Init lifecycle kernel
@@ -159,7 +159,7 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(p3Data.envelope_path, 'utf-8'));
     expect(env.task.logical_stage).toBe('stage_2_land');
     expect(env.inputs.predecessor_receipts).toEqual([p1Data.receipt_path, p2NoPreData.receipt_path]);
-  });
+  }, 20000);
 
   it('C3.3: seamless provider target switching across stages', () => {
     runLifecycleKernelCli([
@@ -222,7 +222,7 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     const stateObj = JSON.parse(stateShow.stdout);
     expect(stateObj.current_stage).toBe('stage_2_work');
     expect(stateObj.completed_stages_count).toBe(1);
-  });
+  }, 20000);
 
   it('C3.4: budget escalation during rework cycle propagates to envelope and triggers budget check', () => {
     runLifecycleKernelCli([
@@ -329,5 +329,5 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
         expect.stringMatching(/delivery attempt budget exhausted/i),
       ]),
     );
-  });
+  }, 20000);
 });

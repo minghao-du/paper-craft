@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { createTestDir, runLifecycleKernelCli, runPrepareTaskCli } from './test-helpers.js';
+import { createTestDir, runLifecycleKernelCli, runPrepareTaskCli } from './helpers.js';
 
 // A crash between envelope and state writes must not allocate or authorize work twice.
 test('prepared dispatch recovers without duplicate steps, budget consumption or handoff', () => {

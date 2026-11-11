@@ -1,5 +1,5 @@
 /**
- * Tier 1 Feature Tests: Skill Kernel-Wrapper Pattern & Unified Receipt Contract
+ * Skill Kernel-Wrapper Pattern & Unified Receipt Contract Feature Tests (F3.1-F3.5, F4.1-F4.5).
  *
  * Verifies kernel execution driven by Task Input Envelope, standard markdown
  * receipt generation, and stdout compact report conformance { execution_status, result, receipt_path, summary }.
@@ -16,9 +16,9 @@ import {
   runPrepareTaskCli,
   runPython,
   type TaskInputEnvelope,
-} from './test-helpers.js';
+} from './helpers.js';
 
-describe('Tier 1: Skill Kernel-Wrapper Pattern Core Features', () => {
+describe('Skill Kernel-Wrapper Pattern Core Features (F3.1-F3.5)', () => {
   let testEnv: { dir: string; cleanup: () => void };
 
   beforeEach(() => {
@@ -216,7 +216,7 @@ if __name__ == "__main__":
   });
 });
 
-describe('Tier 1: Unified Receipt Contract Core Features', () => {
+describe('Unified Receipt Contract Core Features (F4.1-F4.5)', () => {
   let testEnv: { dir: string; cleanup: () => void };
 
   beforeEach(() => {

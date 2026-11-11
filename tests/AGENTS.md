@@ -1,10 +1,8 @@
 # Tests Guidance
 
-Facts and guardrails for authoring and maintaining tests in `tests/`.
+Facts and guardrails for root test suite in `tests/`:
 
-## Authoring and Runtime Budget
-
-When adding or modifying tests:
-- **Earn the test**: Every test must identify a concrete failure mode, meaningful consequence (user contract, business rule, data integrity), and a coverage gap not caught by cheaper checks. Do not add redundant or trivial tests.
-- **Runtime budget ceiling**: Complete execution of a single test must strictly finish within 120 seconds. Use representative fixtures, bounded executions, and never evade the limit.
-- Apply `/pc-test-budget` before adding or modifying tests.
+- `tests/e2e/`: End-to-end integration across multiple packages (e.g. workspace-config + workspace CLI + orchestrator lifecycle).
+- `tests/support/`: Shared test helpers, process execution utilities, temporary directories, and contract interfaces.
+- For package-level unit and CLI tests, place tests in the respective package's `tests/` directory (`packages/*/tests/`).
+- General test authoring and budget rules are defined in the repository root `AGENTS.md`.

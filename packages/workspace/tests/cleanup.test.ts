@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup } from '../../packages/workspace/src/cleanup.js';
-import { resolvePath } from '../../packages/workspace/src/git.js';
-import { WorkspaceError } from '../../packages/workspace/src/types.js';
+import { cleanup } from '../src/cleanup.js';
+import { resolvePath } from '../src/git.js';
+import { WorkspaceError } from '../src/types.js';
 
 interface TestContext {
   tempDir: string;

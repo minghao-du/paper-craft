@@ -3,7 +3,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { resolveWorkspaceConfig } from "../../../workspace-config/src/config.js";
+import { resolveWorkspaceConfig } from "../../../workspace-config/src/index.js";
 import { commitRun, getStateFilePath, getPendingCommitPath, loadRun } from "../run-store/index.js";
 import {
   loadAndValidateWorkflow,

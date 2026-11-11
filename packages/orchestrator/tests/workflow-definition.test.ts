@@ -1,5 +1,5 @@
 /**
- * Workflow Stage-Provider Decoupling & Schema Verification Tests
+ * Workflow Stage-Provider Decoupling & Schema Verification Tests (W1.1-W1.6).
  *
  * Verifies that:
  * 1. skills/pc-orchestrator/workflows/default.json contains decoupled logical stages and providers.
@@ -19,7 +19,7 @@ import {
   runLifecycleKernelCli,
   runPrepareTaskCli,
   type TaskInputEnvelope,
-} from './test-helpers.js';
+} from './helpers.js';
 
 /**
  * Parsed stage representation from workflow file.
@@ -165,7 +165,7 @@ export function parseWorkflowStages(workflowPath: string): ParsedWorkflowStage[]
   }));
 }
 
-describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
+describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
   let testEnv: { dir: string; cleanup: () => void };
   const defaultWorkflowJsonPath = path.join(
     REPO_ROOT,

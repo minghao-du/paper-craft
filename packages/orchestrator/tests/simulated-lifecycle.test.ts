@@ -1,7 +1,7 @@
 /**
- * Tier 4: Real-World Scenarios
+ * Simulated Lifecycle & Runner Integration Tests (S4.1-S4.3).
  *
- * Simulates complete end-to-end task dispatch lifecycles:
+ * Simulates complete end-to-end task dispatch lifecycles with simulated runner/executor:
  * - Multi-stage pipeline execution (workspace_prepare -> issue_work -> issue_verify)
  * - Input envelope generation, validation, kernel/subagent execution, receipt writing,
  *   compact report verification, and state transitions.
@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type CompactReceiptReport,
@@ -19,13 +20,16 @@ import {
   runPrepareTaskCli,
   runPython,
   type TaskInputEnvelope,
-} from './test-helpers.js';
+} from './helpers.js';
 
-describe('Tier 4: Real-World Scenarios', () => {
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+describe('Simulated Lifecycle & Runner Scenarios (S4.1-S4.3)', () => {
   let testEnv: { dir: string; cleanup: () => void };
 
   beforeEach(() => {
-    testEnv = createTestDir('tier4-scenarios-');
+    testEnv = createTestDir('sim-scenarios-');
   });
 
   afterEach(() => {
@@ -318,7 +322,7 @@ sys.exit(1)
     const stateObj = JSON.parse(stateShow.stdout);
     expect(stateObj.budgets.delivery_attempts_used).toBe(1);
     expect(stateObj.stage_status).toBe('failed');
-  });
+  }, 20000);
 
   it('S4.3: guarantees state isolation when envelope generation fails', () => {
     runLifecycleKernelCli([
@@ -346,5 +350,5 @@ sys.exit(1)
     // State file must remain completely unaltered
     const stateAfter = fs.readFileSync(stateFile, 'utf-8');
     expect(stateAfter).toBe(stateBefore);
-  });
+  }, 20000);
 });

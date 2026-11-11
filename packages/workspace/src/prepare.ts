@@ -29,7 +29,8 @@ import {
   resolveWorkspaceConfig,
   parseRepoFromUrl,
   type ResolvedWorkspaceConfig,
-} from '../../workspace-config/src/config.js';
+  type ResolveWorkspaceConfigOptions,
+} from '../../workspace-config/src/index.js';
 
 interface ResolveOptions {
   repoDir: string;
@@ -39,27 +40,10 @@ interface ResolveOptions {
 }
 
 /**
- * Invoke resolveWorkspaceConfig, supporting both options object and legacy signature.
+ * Invoke resolveWorkspaceConfig.
  */
 function invokeResolveConfig(options: ResolveOptions): ResolvedWorkspaceConfig {
-  const resolveFn = resolveWorkspaceConfig as unknown as (
-    optionsOrRepoDir: ResolveOptions | string,
-    overrides?: Record<string, unknown>,
-    requireFile?: boolean,
-  ) => ResolvedWorkspaceConfig;
-
-  try {
-    return resolveFn(options);
-  } catch (err: unknown) {
-    if (
-      err instanceof TypeError &&
-      typeof err.message === 'string' &&
-      err.message.includes('cwd')
-    ) {
-      return resolveFn(options.repoDir, options.overrides, options.requireFile ?? false);
-    }
-    throw err;
-  }
+  return resolveWorkspaceConfig(options as ResolveWorkspaceConfigOptions);
 }
 
 /**

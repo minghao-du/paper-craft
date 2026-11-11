@@ -19,7 +19,8 @@
     "docs/research/**",
     "PROJECT.md",
     "ORCHESTRATOR_REFACTOR_PLAN.md",
-    "WORKSPACE_TYPESCRIPT_REFACTOR_PLAN.md"
+    "WORKSPACE_TYPESCRIPT_REFACTOR_PLAN.md",
+    "DIRECTORY_STRUCTURE_REFACTOR_PLAN.md"
   ],
   "backlog": {}
 }

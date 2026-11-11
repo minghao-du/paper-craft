@@ -1,7 +1,8 @@
 /**
  * Workspace configuration package public API.
  *
- * Implements Section 4 & 5 of WORKSPACE_TYPESCRIPT_REFACTOR_PLAN.md.
+ * Implements Section 4 & 5 of WORKSPACE_TYPESCRIPT_REFACTOR_PLAN.md
+ * and Section 6.3 of DIRECTORY_STRUCTURE_REFACTOR_PLAN.md.
  */
 
 export {
@@ -26,3 +27,13 @@ export {
   validateWorkspaceConfig,
   resolveWorkspaceConfig,
 } from './config.js';
+
+export {
+  prepareWorkspaceConfigInitialization,
+  saveWorkspaceConfigInitialization,
+  type WorkspaceConfigDraft,
+  type WorkspaceConfigInitOverrides,
+  type WorkspaceConfigInitPreparation,
+  type SaveWorkspaceConfigInitializationOptions,
+  type SaveWorkspaceConfigResult,
+} from './initialization.js';

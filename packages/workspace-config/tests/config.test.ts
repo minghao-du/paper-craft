@@ -15,13 +15,15 @@ import {
   findPrimaryCheckout,
   getConfigFilePath,
   parseRepoFromUrl,
+  prepareWorkspaceConfigInitialization,
   resolveWorkspaceConfig,
-} from '../../packages/workspace-config/src/index.js';
+  saveWorkspaceConfigInitialization,
+} from '../src/index.js';
 
 const require = createRequire(import.meta.url);
 const tsxLoader = require.resolve('tsx');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = path.resolve(__dirname, '../../packages/workspace-config/src/cli.ts');
+const CLI_PATH = path.resolve(__dirname, '../src/cli.ts');
 
 describe('workspace-config unit and CLI tests', () => {
   let tempBaseDir: string;
@@ -535,6 +537,129 @@ describe('workspace-config unit and CLI tests', () => {
       // Verify no temporary files remain
       const files = fs.readdirSync(path.dirname(targetFile));
       expect(files).toEqual(['data.json']);
+    });
+  });
+
+  describe('Workspace Config Initialization (Programmatic API)', () => {
+    it('prepareWorkspaceConfigInitialization derives configuration draft without writing files', () => {
+      const { repoDir } = setupStandardRepo('init-api-standard');
+      const prep = prepareWorkspaceConfigInitialization(repoDir);
+
+      expect(prep.primaryCheckout).toBe(repoDir);
+      expect(prep.configExists).toBe(false);
+      expect(fs.existsSync(prep.configPath)).toBe(false);
+      expect(prep.isFork).toBe(false);
+      expect(prep.remotes).toEqual(['origin']);
+      expect(prep.draft.schema_version).toBe(SCHEMA_VERSION);
+      expect(prep.draft.delivery_target).toContain('init-api-standard-origin');
+      expect(prep.draft.base_remote).toBe('origin');
+      expect(prep.draft.push_remote).toBe('origin');
+      expect(prep.draft.base_branch).toBe('main');
+      expect(prep.draft.worktree_container).toBe(DEFAULT_WORKTREE_CONTAINER);
+      expect(prep.draft.workflow).toBe(DEFAULT_WORKFLOW);
+      expect(prep.draft.delivery_attempts_max).toBe(DEFAULT_DELIVERY_ATTEMPTS_MAX);
+      expect(prep.draft.replans_max).toBe(DEFAULT_REPLANS_MAX);
+      // Confirm no file was written to disk during preparation
+      expect(fs.existsSync(getConfigFilePath(repoDir))).toBe(false);
+    });
+
+    it('prepareWorkspaceConfigInitialization handles fork repos and custom overrides', () => {
+      const { repoDir } = setupForkRepo('init-api-fork');
+      const prep = prepareWorkspaceConfigInitialization(repoDir, {
+        'delivery-target': 'upstream-org/target-repo',
+        workflow: 'custom-flow',
+        'replans-max': 4,
+      });
+
+      expect(prep.isFork).toBe(true);
+      expect(prep.remotes).toContain('upstream');
+      expect(prep.remotes).toContain('origin');
+      expect(prep.draft.base_remote).toBe('upstream');
+      expect(prep.draft.push_remote).toBe('origin');
+      expect(prep.draft.delivery_target).toBe('upstream-org/target-repo');
+      expect(prep.draft.workflow).toBe('custom-flow');
+      expect(prep.draft.replans_max).toBe(4);
+    });
+
+    it('prepareWorkspaceConfigInitialization fails fast without TTY when remotes are missing', () => {
+      const noRemoteDir = path.join(tempBaseDir, 'init-api-no-remote');
+      fs.mkdirSync(noRemoteDir);
+      git(noRemoteDir, 'init', '--initial-branch=main');
+
+      expect(() => prepareWorkspaceConfigInitialization(noRemoteDir)).toThrow(
+        /No git remotes configured in repository/,
+      );
+    });
+
+    it('saveWorkspaceConfigInitialization validates, atomically writes, and resolves config', () => {
+      const { repoDir } = setupStandardRepo('save-api-standard');
+      const prep = prepareWorkspaceConfigInitialization(repoDir);
+
+      const result = saveWorkspaceConfigInitialization({
+        primaryCheckout: prep.primaryCheckout,
+        config: prep.draft,
+      });
+
+      expect(result.configPath).toBe(prep.configPath);
+      expect(fs.existsSync(prep.configPath)).toBe(true);
+      expect(result.config.delivery_target).toBe(prep.draft.delivery_target);
+      expect(result.resolved.repo_checkout).toBe(prep.primaryCheckout);
+      expect(result.resolved.schema_version).toBe(SCHEMA_VERSION);
+
+      // Verify content on disk matches
+      const onDisk = JSON.parse(fs.readFileSync(prep.configPath, 'utf8'));
+      expect(onDisk).toEqual(prep.draft);
+    });
+
+    it('saveWorkspaceConfigInitialization enforces overwrite protection unless force is true', () => {
+      const { repoDir } = setupStandardRepo('save-api-overwrite');
+      const prep = prepareWorkspaceConfigInitialization(repoDir);
+
+      // First save
+      saveWorkspaceConfigInitialization({
+        primaryCheckout: prep.primaryCheckout,
+        config: prep.draft,
+      });
+
+      // Second save without force should throw
+      expect(() =>
+        saveWorkspaceConfigInitialization({
+          primaryCheckout: prep.primaryCheckout,
+          config: prep.draft,
+          force: false,
+        }),
+      ).toThrow(/Configuration already exists at .* Use force to overwrite\./);
+
+      // Save with force: true succeeds
+      const updatedDraft = { ...prep.draft, workflow: 'forced-workflow' };
+      const resForced = saveWorkspaceConfigInitialization({
+        primaryCheckout: prep.primaryCheckout,
+        config: updatedDraft,
+        force: true,
+      });
+      expect(resForced.config.workflow).toBe('forced-workflow');
+      const onDisk = JSON.parse(fs.readFileSync(prep.configPath, 'utf8'));
+      expect(onDisk.workflow).toBe('forced-workflow');
+    });
+
+    it('saveWorkspaceConfigInitialization rejects invalid config and leaves disk untouched', () => {
+      const { repoDir } = setupStandardRepo('save-api-invalid');
+      const prep = prepareWorkspaceConfigInitialization(repoDir);
+
+      const invalidDraft = {
+        ...prep.draft,
+        schema_version: '999.0',
+        delivery_target: '',
+      };
+
+      expect(() =>
+        saveWorkspaceConfigInitialization({
+          primaryCheckout: prep.primaryCheckout,
+          config: invalidDraft,
+        }),
+      ).toThrow(/Validation failed during initialization/);
+
+      expect(fs.existsSync(prep.configPath)).toBe(false);
     });
   });
 });
