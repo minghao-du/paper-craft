@@ -65,7 +65,11 @@ This protocol establishes two operational invariants:
 
 Skill instructions guide agent judgment, routing, and recovery. Fixed helpers perform mechanical work and validate external JSON at runtime; TypeScript types alone do not validate files or agent output.
 
-- **Orchestrator helpers (`packages/orchestrator/`)**: TypeScript modules own lifecycle state, dispatch allocation, envelope generation, and receipt validation. The six operations are `init`, `prepare`, `handoff`, `complete`, `resolve`, and `inspect`. Thin script entry points expose these operations for the skill without adding a product CLI or an independent scheduler.
+- **Orchestrator helpers (`packages/orchestrator/`)**: Structured into three cohesive modules and thin CLI entry points:
+  - **Lifecycle**: owns dispatch identity, authorization, report correlation, envelope protocols, idempotency, and operation orchestration across `init`, `prepare`, `handoff`, `complete`, `resolve`, and `inspect`.
+  - **Workflow**: owns domain delivery sequence, stage definition loading and validation, completion policies, retry/replan budgets, and evidence checks.
+  - **RunStore**: owns run directory file layout, atomic commits (state and envelopes), and crash recovery via pending commit records.
+  - **CLI (`cli.ts`, `envelope-cli.ts`)**: handles command arguments, input media, and terminal formatting without embedding workflow policies or direct file mutation.
 - **Configuration helpers (`packages/workspace-config/`)**: TypeScript modules resolve and validate the project configuration used by the orchestrator.
 - **Specialist helpers (`skills/<skill>/scripts/`)**: Existing professional-task helpers can remain alongside their skill, including Python scripts. Moving orchestrator code does not require rewriting every skill.
 

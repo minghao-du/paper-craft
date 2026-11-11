@@ -65,7 +65,11 @@ Orchestrator 通过平台适配器启动新的专业 agent，加载 `skills/<tar
 
 技能指令指导 agent 进行判断、路由和恢复。固定辅助代码执行机械操作，并在运行时校验外部 JSON；TypeScript 类型本身不能校验文件或 agent 输出。
 
-- **Orchestrator 辅助代码（`packages/orchestrator/`）**：TypeScript 模块负责生命周期状态、派发编号分配、输入信封生成和回执校验。六个操作为 `init`、`prepare`、`handoff`、`complete`、`resolve` 和 `inspect`。薄脚本入口供 skill 调用，不增加产品 CLI 或独立调度器。
+- **Orchestrator 辅助代码（`packages/orchestrator/`）**：由三个高内聚核心模块及轻量 CLI 入口构成：
+  - **Lifecycle**：负责派发身份、授权语义、报告关联、信封协议、幂等性，以及 `init`、`prepare`、`handoff`、`complete`、`resolve` 和 `inspect` 六个生命周期操作的组织协调。
+  - **Workflow**：负责交付序列、阶段定义加载与校验、完成策略（completion policies）、重试/重规划预算以及验收证据检查。
+  - **RunStore**：负责运行目录文件布局、原子提交（状态与信封）及通过 pending commit 记录进行中断恢复。
+  - **CLI（`cli.ts`、`envelope-cli.ts`）**：负责参数解析、输入媒介处理与终端输出格式化，不承载交付规则，不直接修改底层文件。
 - **配置辅助代码（`packages/workspace-config/`）**：TypeScript 模块解析并校验 orchestrator 使用的项目配置。
 - **专业辅助脚本（`skills/<skill>/scripts/`）**：现有专业任务辅助代码可以继续与技能放在一起，包括 Python 脚本。迁移 orchestrator 代码不要求改写所有技能。
 

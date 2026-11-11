@@ -95,11 +95,12 @@ if __name__ == "__main__":
     // ==========================================
     // Phase 0: Initialize Orchestrator Workflow
     // ==========================================
+    const fixturePath = path.resolve(__dirname, 'fixtures/three-stage-fixture.json');
     const initRes = runLifecycleKernelCli([
       'init',
       '--receipt-root', rootDir,
       '--root-issue', issueId,
-      '--workflow', 'three-stage-fixture',
+      '--workflow', fixturePath,
     ]);
     expect(initRes.status).toBe(0);
 
@@ -128,7 +129,7 @@ if __name__ == "__main__":
     expect(val1.status).toBe(0);
 
     // Handoff step 1
-    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir, '--dispatch-id', p1.dispatch_id]);
 
     // Execute script kernel
     const exec1 = runPython(kernelScript, ['--input-envelope', step1EnvelopePath]);
@@ -144,6 +145,7 @@ if __name__ == "__main__":
     const comp1 = runLifecycleKernelCli([
       'complete',
       '--receipt-root', rootDir,
+      '--dispatch-id', p1.dispatch_id,
       '--report', JSON.stringify(report1),
     ]);
     expect(comp1.status).toBe(0);
@@ -173,7 +175,7 @@ if __name__ == "__main__":
     expect(env2.provider.type).toBe('skill');
     expect(env2.provider.target).toBe('pc-issue-work');
 
-    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir, '--dispatch-id', p2.dispatch_id]);
 
     // Simulate Subagent execution writing receipt and compact report
     fs.writeFileSync(
@@ -193,6 +195,7 @@ if __name__ == "__main__":
     const comp2 = runLifecycleKernelCli([
       'complete',
       '--receipt-root', rootDir,
+      '--dispatch-id', p2.dispatch_id,
       '--report', JSON.stringify(report2),
     ]);
     expect(comp2.status).toBe(0);
@@ -218,7 +221,7 @@ if __name__ == "__main__":
     const env3: TaskInputEnvelope = JSON.parse(fs.readFileSync(step3EnvelopePath, 'utf-8'));
     expect(env3.inputs.predecessor_receipts).toContain(step2ReceiptPath);
 
-    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir, '--dispatch-id', p3.dispatch_id]);
 
     fs.writeFileSync(step3ReceiptPath, '# Integrated Acceptance Receipt\nOutcome: verified\n');
 
@@ -232,6 +235,7 @@ if __name__ == "__main__":
     const comp3 = runLifecycleKernelCli([
       'complete',
       '--receipt-root', rootDir,
+      '--dispatch-id', p3.dispatch_id,
       '--report', JSON.stringify(report3),
     ]);
     expect(comp3.status).toBe(0);
@@ -286,7 +290,7 @@ sys.exit(1)
       workdir: testEnv.dir,
     });
     const prepData = JSON.parse(prepRes.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', prepData.dispatch_id]);
 
     const execResult = runPython(failingScriptPath, []);
     expect(execResult.status).toBe(1);
@@ -300,6 +304,7 @@ sys.exit(1)
     const compRes = runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', prepData.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'failed',
         result: report.result,

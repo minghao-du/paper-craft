@@ -2,6 +2,7 @@
   "name": "default",
   "version": "1.0.0",
   "initial_stage": "stage_1_plan",
+  "completion_policy": "issue_delivery",
   "target": "End-to-end issue delivery lifecycle",
   "description": "Default issue delivery workflow coordinating workspace preparation, planning, implementation with self-review, landing, verification, refactoring, research recording, finalization, and cleanup.\n",
   "stages": [

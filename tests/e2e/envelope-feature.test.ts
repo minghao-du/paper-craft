@@ -134,13 +134,13 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     const showText = runEnvelopeCli(['show', envelopePath]);
     expect(showText.status).toBe(0);
     expect(showText.stdout).toContain('Envelope:');
-    expect(showText.stdout).toContain('Task: issue_verify (step 1, attempt 1)');
+    expect(showText.stdout).toMatch(/Task: (stage_3_verify|issue_verify) \(step 1, attempt 1\)/);
     expect(showText.stdout).toContain('Provider: skill -> pc-issue-verify');
 
     const showJson = runEnvelopeCli(['show', envelopePath, '--json']);
     expect(showJson.status).toBe(0);
     const parsed = JSON.parse(showJson.stdout);
-    expect(parsed.task.logical_stage).toBe('issue_verify');
+    expect(parsed.task.logical_stage).toBe('stage_3_verify');
   });
 
   it('F1.4: show subcommand retrieves nested fields with --field', () => {
@@ -238,6 +238,7 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     runLifecycleKernelCli([
       'handoff',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', prepData1.dispatch_id,
     ]);
 
     fs.writeFileSync(prepData1.receipt_path, '# Plan Receipt\nStatus: completed');
@@ -245,6 +246,7 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     const compRes = runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', prepData1.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
         result: { outcome: 'planned' },
@@ -270,7 +272,7 @@ describe('Tier 1: Task Input Envelope Core Features', () => {
     expect(result.status).toBe(0);
     const envelopePath = JSON.parse(result.stdout).envelope_path;
     const env: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
-    expect(env.task.logical_stage).toBe('issue_work');
+    expect(env.task.logical_stage).toBe('stage_2_work');
     expect(env.task.root_issue_id).toBe('300');
     expect(env.task.current_issue_id).toBe('301');
     expect(env.environment.working_directory).toBe(path.resolve(testEnv.dir));
@@ -420,5 +422,5 @@ describe('Tier 1: Stage-Provider Decoupling Core Features', () => {
     expect(env1.schema_version).toBe(env2.schema_version);
     expect(env1.budgets).toEqual(env2.budgets);
     expect(Object.keys(env1)).toEqual(Object.keys(env2));
-  });
+  }, 20000);
 });

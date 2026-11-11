@@ -173,9 +173,12 @@ Resolve `<skill-dir>` to the real absolute directory containing this `SKILL.md` 
 `pc-workspace-config` directory. Run `pnpm install` in that checkout once to provide the TypeScript helpers.
 The helper commands below use that checkout explicitly and work from any task working directory.
 
-### 1. Workflow Loading
+### 1. Workflow Loading & Completion Policy
 - **Default workflow**: Load `<skill-dir>/workflows/default.json` (the standard issue delivery workflow).
-- **Custom workflow override**: If the user specifies an alternative workflow path in their prompt or configuration, load and follow that workflow definition instead.
+- **Custom workflow override**: If the user specifies an alternative workflow path in their prompt or configuration, load and follow that workflow definition instead. Unknown workflows fail fast with an error; fallback to default is not permitted.
+- **Completion Policy**: Workflow definitions explicitly declare `completion_policy`:
+  - `"issue_delivery"`: Enforces issue-tree delivery completion checks (landing all planned child issues, verifying parent integrated acceptance, issue-tree finalization, and workspace cleanup with zero retained targets before `finish` can succeed).
+  - `"basic"`: Standard completion policy for simple workflows without issue-tree delivery constraints.
 
 ### 2. Workflow Entry & Configuration Gate
 Before creating task worktrees or initializing workflow runtime state:
@@ -190,14 +193,15 @@ For each stage defined in the loaded workflow:
    - Write the [prepare request](#prepare-request) with a JSON serializer, then execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`.
    - The kernel atomically allocates monotonically increasing `step_index`, generates `<step_index>-input.json`, assigns `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
 4. **Handoff Execution**:
-   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>"` to authorize execution launch.
+   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>" --dispatch-id "<dispatch_id>"` to authorize execution launch.
+   - Handoff authorization semantics: Only the first valid call for an active prepared dispatch returns `"authorized": true`, granting launch authorization. Platform agent launch is performed by the Skill. If `"authorized": false`, the dispatch was already authorized previously.
    - Dispatch fresh specialist subagent using platform adapter with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
 5. **Complete Dispatch & Verify Receipt**:
-   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --report '<compact_json_report>'`.
+   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --dispatch-id "<dispatch_id>" --report '<compact_json_report>'`.
    - The kernel validates report integrity (the 4 required fields) and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
 6. **Evaluate Routing & Resolve Decision**:
    - Match the returned native `result` against the stage's routing table.
-   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish|<next_stage>> --reason "<reason>" [--next-stage <stage>]`. Orchestrator explicitly selects the next stage or records steering decisions; `complete` solely records receipt verification and never auto-advances stages.
+   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>" [--next-stage <stage>]`. Orchestrator explicitly selects the next stage (via `--next-stage <stage>`) or records steering decisions; arbitrary stage names are rejected as `--decision`. `complete` solely records receipt verification and never auto-advances stages.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
@@ -287,12 +291,12 @@ Wait for the human user's prompt instruction before proceeding.
     Creates workflow run state in `<receipt_root>/state.json`. Validates workspace configuration and populates root context.
   - **`prepare`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`
     Prepares a fixed task, allocates monotonically increasing `step_index`, generates Task Input Envelope `<step_index>-input.json`, assigns deterministic receipt path `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
-  - **`handoff`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>" [--dispatch-id <id>] [--platform-handle <handle>]`
-    Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Subsequent calls or queries do NOT grant new launch permission.
-  - **`complete`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --report '<compact_json>'`
+  - **`handoff`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>" --dispatch-id <id> [--platform-handle <handle>]`
+    Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Platform agent launch is performed by the Skill. Subsequent calls or queries return `"authorized": false` and do NOT grant new launch permission.
+  - **`complete`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --dispatch-id <id> --report '<compact_json|report_path>'`
     Registers compact execution report (validating `execution_status`, `result`, `receipt_path`, `summary`) and verifies physical non-empty receipt existence on disk.
-  - **`resolve`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish|<next_stage>> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id>] [--complete-sequence]`
-    Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately. Explicitly resolves stage transitions, sequence progression, or blocking actions.
+  - **`resolve`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id>] [--complete-sequence]`
+    Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately. Decisions are strictly constrained to `wait_user`, `continue`, `halt`, or `finish`; transitions to a named stage must use `--decision continue --next-stage <stage>`.
   - **`inspect`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" inspect --receipt-root "<receipt_root>" [--json] [--field <path>]`
     Queries current state, active dispatch, orchestrator decisions, budgets, and reasons blocking progression.
 - **Task Input Envelope Helper (`packages/orchestrator/src/envelope-cli.ts`)** — Low-level validation and inspection:

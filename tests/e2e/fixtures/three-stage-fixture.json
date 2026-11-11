@@ -1,0 +1,33 @@
+{
+  "name": "three-stage-fixture",
+  "completion_policy": "basic",
+  "initial_stage": "workspace_prepare",
+  "stages": [
+    {
+      "id": "workspace_prepare",
+      "provider": {
+        "type": "skill",
+        "target": "pc-workspace",
+        "args": []
+      },
+      "next_stage": "issue_work"
+    },
+    {
+      "id": "issue_work",
+      "provider": {
+        "type": "skill",
+        "target": "pc-issue-work",
+        "args": []
+      },
+      "next_stage": "issue_verify"
+    },
+    {
+      "id": "issue_verify",
+      "provider": {
+        "type": "skill",
+        "target": "pc-issue-verify",
+        "args": []
+      }
+    }
+  ]
+}

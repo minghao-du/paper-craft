@@ -17,7 +17,8 @@
     "**/templates/**",
     "docs/prompts/**",
     "docs/research/**",
-    "PROJECT.md"
+    "PROJECT.md",
+    "ORCHESTRATOR_REFACTOR_PLAN.md"
   ],
   "backlog": {}
 }

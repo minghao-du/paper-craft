@@ -85,11 +85,12 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       workdir: testEnv.dir,
     });
     const p1Data = JSON.parse(p1.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p1Data.dispatch_id]);
     fs.writeFileSync(p1Data.receipt_path, '# Stage 1 Plan Receipt\nOutcome: direct');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p1Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
         result: { outcome: 'direct' },
@@ -114,11 +115,12 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     expect(envNoPre.inputs.predecessor_receipts).toEqual([]);
 
     // Complete stage 2
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p2NoPreData.dispatch_id]);
     fs.writeFileSync(p2NoPreData.receipt_path, '# Stage 2 Work Receipt\nOutcome: implemented');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p2NoPreData.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
         result: { outcome: 'implemented' },
@@ -177,11 +179,12 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       workdir: testEnv.dir,
     });
     const p1Data = JSON.parse(p1.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p1Data.dispatch_id]);
     fs.writeFileSync(p1Data.receipt_path, '# Receipt 1');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p1Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
         result: { outcome: 'planned' },
@@ -240,11 +243,12 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
       workdir: testEnv.dir,
     });
     const p1Data = JSON.parse(p1.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p1Data.dispatch_id]);
     fs.writeFileSync(p1Data.receipt_path, '# Attempt 1 Receipt');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p1Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'failed',
         result: {},
@@ -270,11 +274,12 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     expect(env2.task.attempt).toBe(2);
     expect(env2.budgets.delivery_attempts_used).toBe(2);
 
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p2Data.dispatch_id]);
     fs.writeFileSync(p2Data.receipt_path, '# Attempt 2 Receipt');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p2Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'failed',
         result: {},
@@ -296,11 +301,12 @@ describe('Tier 3: Combinations & Cross-Module Integration', () => {
     });
     expect(p3.status).toBe(0);
     const p3Data = JSON.parse(p3.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p3Data.dispatch_id]);
     fs.writeFileSync(p3Data.receipt_path, '# Attempt 3 Receipt');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p3Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'failed',
         result: {},

@@ -241,11 +241,12 @@ describe('Tier 2: Boundary & Corner Cases', () => {
       },
     });
     const p1Data = JSON.parse(p1.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p1Data.dispatch_id]);
     fs.writeFileSync(p1Data.receipt_path, '# Receipt 1');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p1Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'failed',
         result: {},
@@ -265,11 +266,12 @@ describe('Tier 2: Boundary & Corner Cases', () => {
       attempt_intent: 'new',
     });
     const p2Data = JSON.parse(p2.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p2Data.dispatch_id]);
     fs.writeFileSync(p2Data.receipt_path, '# Receipt 2');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p2Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'failed',
         result: {},
@@ -289,11 +291,12 @@ describe('Tier 2: Boundary & Corner Cases', () => {
       attempt_intent: 'new',
     });
     const p3Data = JSON.parse(p3.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p3Data.dispatch_id]);
     fs.writeFileSync(p3Data.receipt_path, '# Receipt 3');
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', p3Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'failed',
         result: {},

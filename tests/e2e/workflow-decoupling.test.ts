@@ -317,12 +317,14 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
     runLifecycleKernelCli([
       'handoff',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', prepData.dispatch_id,
     ]);
 
     fs.writeFileSync(prepData.receipt_path, '# Receipt\nOutcome: prepared');
     const compRes = runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', prepData.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
         result: { outcome: 'prepared' },

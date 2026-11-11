@@ -1,7 +1,7 @@
 /** Internal skill helper; not a separate execution provider. */
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { loadEnvelope, validateEnvelope, isObject } from "./envelope.js";
+import { loadEnvelope, validateEnvelope, isObject } from "./lifecycle/index.js";
 
 try {
   const { values, positionals } = parseArgs({

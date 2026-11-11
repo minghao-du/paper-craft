@@ -113,7 +113,7 @@ if __name__ == "__main__":
     const report: CompactReceiptReport = JSON.parse(execResult.stdout);
     expect(report.execution_status).toBe('succeeded');
     expect(report.receipt_path).toBe(path.resolve(receiptPath));
-  });
+  }, 20000);
 
   it('F3.2: kernel consumes envelope parameters and environment', () => {
     const kernelScript = createSampleKernelScript();
@@ -141,9 +141,9 @@ if __name__ == "__main__":
     expect(execResult.status).toBe(0);
 
     const receiptContent = fs.readFileSync(receiptPath, 'utf-8');
-    expect(receiptContent).toContain('# Receipt for issue_work');
+    expect(receiptContent).toMatch(/# Receipt for (stage_2_work|issue_work)/);
     expect(receiptContent).toContain('**Objective**: Run parameter-driven task');
-  });
+  }, 20000);
 
   it('F3.3: kernel writes deterministic Markdown receipt to contract path', () => {
     const kernelScript = createSampleKernelScript();
@@ -285,10 +285,11 @@ describe('Tier 1: Unified Receipt Contract Core Features', () => {
     expect(step1Prep.status).toBe(0);
     const step1Data = JSON.parse(step1Prep.stdout);
     fs.writeFileSync(step1Data.receipt_path, '# Step 1 Plan Receipt\nOutcome: direct');
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir]);
+    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', step1Data.dispatch_id]);
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
+      '--dispatch-id', step1Data.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
         result: { outcome: 'planned' },

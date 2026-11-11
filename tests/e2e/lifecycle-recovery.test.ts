@@ -32,10 +32,10 @@ test('prepared dispatch recovers without duplicate steps, budget consumption or 
     expect(recoveredState.next_step_index).toBe(preparedState.next_step_index);
     expect(recoveredState.budgets.delivery_attempts_used).toBe(preparedState.budgets.delivery_attempts_used);
 
-    const handoff = runLifecycleKernelCli(['handoff', '--receipt-root', env.dir]);
+    const handoff = runLifecycleKernelCli(['handoff', '--receipt-root', env.dir, '--dispatch-id', dispatch.dispatch_id]);
     expect(handoff.status, handoff.stderr).toBe(0);
     expect(JSON.parse(handoff.stdout).authorized).toBe(true);
-    const duplicateHandoff = runLifecycleKernelCli(['handoff', '--receipt-root', env.dir]);
+    const duplicateHandoff = runLifecycleKernelCli(['handoff', '--receipt-root', env.dir, '--dispatch-id', dispatch.dispatch_id]);
     expect(duplicateHandoff.status, duplicateHandoff.stderr).toBe(0);
     expect(JSON.parse(duplicateHandoff.stdout).authorized).toBe(false);
   } finally {
