@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "initial_stage": "stage_1_plan",
   "target": "End-to-end issue delivery lifecycle",
-  "description": "Default issue delivery workflow coordinating workspace preparation, planning, implementation, clean code review, code reuse review, landing, verification, refactoring, research recording, finalization, and cleanup.\n",
+  "description": "Default issue delivery workflow coordinating workspace preparation, planning, implementation with self-review, landing, verification, refactoring, research recording, finalization, and cleanup.\n",
   "stages": [
     {
       "id": "workspace_prepare",
@@ -37,34 +37,12 @@
         "target": "pc-issue-work",
         "args": []
       },
-      "description": "Implement required code/tests for current_issue_id satisfying all acceptance criteria under TDD red-green loop and quality standards.\n"
-    },
-    {
-      "id": "stage_2_clean_code_review",
-      "logical_task": "review_clean_code",
-      "name": "Stage 2.2 — Clean Code Review",
-      "provider": {
-        "type": "skill",
-        "target": "pc-review-clean-code",
-        "args": []
-      },
-      "description": "Review implementation diff for clean code violations (naming, single responsibility, fail-fast, type safety, test quality).\n"
-    },
-    {
-      "id": "stage_2_code_reuse_review",
-      "logical_task": "review_code_reuse",
-      "name": "Stage 2.3 — Code Reuse Review",
-      "provider": {
-        "type": "skill",
-        "target": "pc-review-code-reuse",
-        "args": []
-      },
-      "description": "Audit implementation diff for missed reuse of existing constants, helpers, conventions, and patterns across affected subsystems.\n"
+      "description": "Implement required code/tests for current_issue_id satisfying all acceptance criteria under TDD red-green loop and quality standards, including pc-issue-work's required subagent self-review and repairs.\n"
     },
     {
       "id": "stage_2_land",
       "logical_task": "issue_land",
-      "name": "Stage 2.4 — Landing and Merge",
+      "name": "Stage 2.2 — Landing and Merge",
       "provider": {
         "type": "skill",
         "target": "pc-pr-land",

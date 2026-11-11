@@ -100,7 +100,7 @@ Deliver the `current_issue_id` through an implementation and landing loop.
     }
   }
   ```
-- **Objective**: Implement required code/tests for `current_issue_id` satisfying all acceptance criteria.
+- **Objective**: Implement required code/tests for `current_issue_id` satisfying all acceptance criteria, including the subagent self-review and repairs required by `pc-issue-work`.
 - **Environment**: Prepared isolated feature worktree for `current_issue_id` validated by `workspace_prepare`.
 - **Inputs**: Current issue ID, acceptance criteria, predecessor receipts, and accepted workspace preparation with an explicit execution directory.
 - **Expected Result**: Verified implementation `commit` and verification conclusion in `result`. Accept only with the required checks and recorded environment.
