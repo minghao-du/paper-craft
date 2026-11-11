@@ -2,7 +2,6 @@
 _ignore/
 .beads/
 .last-checkin.json
-/AGENTS.md
 .env
 reports/
 .vitest/

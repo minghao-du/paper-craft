@@ -10,17 +10,10 @@
     "docs/agents/**",
     "**/AGENTS.md",
     "**/CLAUDE.md",
-    "EVIDENCE-DISCIPLINE.md",
-    "PROSE-DISCIPLINE.md",
-    "SUBAGENT-SCAN.md",
     "**/fixtures/**",
     "**/templates/**",
     "docs/prompts/**",
-    "docs/research/**",
-    "PROJECT.md",
-    "ORCHESTRATOR_REFACTOR_PLAN.md",
-    "WORKSPACE_TYPESCRIPT_REFACTOR_PLAN.md",
-    "DIRECTORY_STRUCTURE_REFACTOR_PLAN.md"
+    "docs/research/**"
   ],
   "backlog": {}
 }
