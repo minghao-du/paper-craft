@@ -5,9 +5,7 @@
     "moduleResolution": "nodenext",
     "outDir": "dist",
     "rootDir": ".",
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -18,12 +16,6 @@
     "resolveJsonModule": true,
     "isolatedModules": true
   },
-  "include": [
-    "scripts/**/*.ts",
-    "tests/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ]
+  "include": ["scripts/**/*.ts", "tests/**/*.ts", "packages/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

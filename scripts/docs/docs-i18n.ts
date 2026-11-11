@@ -5,7 +5,6 @@ import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, relative, posix } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { matchesGlob } from 'node:path';
-import { parse, stringify } from 'yaml';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
@@ -20,7 +19,7 @@ export function markdown(text: string): Root {
 }
 /** The three sibling artifacts maintained as one pair. */
 export function pairPaths(en: string) {
-  return { en, zh: en.replace(/\.md$/, '.zh.md'), record: en.replace(/\.md$/, '.i18n.yaml') };
+  return { en, zh: en.replace(/\.md$/, '.zh.md'), record: en.replace(/\.md$/, '.i18n.json') };
 }
 function headingText(node: Nodes): string {
   return 'value' in node
@@ -96,7 +95,7 @@ function main() {
     throw new Error('expected list, check or record; use --help');
   if (command === 'record' && !names.length)
     throw new Error('record requires explicitly named reviewed English.md pairs');
-  const manifest = parse(readFileSync('docs-i18n.yaml', 'utf8')) as {
+  const manifest = JSON.parse(readFileSync('docs-i18n.json', 'utf8')) as {
     include: string[];
     exclude: string[];
     adoption?: string;
@@ -105,14 +104,14 @@ function main() {
   if (manifest.adoption) {
     const firstManifest = execFileSync(
       'git',
-      ['log', '--reverse', '--format=%H', '--diff-filter=A', '--', 'docs-i18n.yaml'],
+      ['log', '--reverse', '--format=%H', '--diff-filter=A', '--', 'docs-i18n.json'],
       { encoding: 'utf8' },
     )
       .trim()
       .split('\n')[0];
     if (firstManifest) {
-      const snapshot = parse(
-        execFileSync('git', ['show', `${firstManifest}:docs-i18n.yaml`], {
+      const snapshot = JSON.parse(
+        execFileSync('git', ['show', `${firstManifest}:docs-i18n.json`], {
           encoding: 'utf8',
         }),
       ) as typeof manifest;
@@ -129,8 +128,8 @@ function main() {
   const all = walk();
   const sources = new Set(
     all
-      .filter((p) => /(?:\.md|\.i18n\.yaml)$/.test(p))
-      .map((p) => p.replace(/\.zh\.md$/, '.md').replace(/\.i18n\.yaml$/, '.md'))
+      .filter((p) => /(?:\.md|\.i18n\.json)$/.test(p))
+      .map((p) => p.replace(/\.zh\.md$/, '.md').replace(/\.i18n\.json$/, '.md'))
       .filter(eligible),
   );
   for (const path of Object.keys(manifest.backlog)) {
@@ -174,9 +173,9 @@ function main() {
       validateStructure(markdown(en), markdown(zh), en, zh);
       const current = computeRecord(en, zh);
 
-      if (command === 'record') writeFileSync(paths.record, stringify(current, { lineWidth: 0 }));
+      if (command === 'record') writeFileSync(paths.record, JSON.stringify(current, null, 2) + '\n');
       else {
-        const stored = parse(readFileSync(paths.record, 'utf8'));
+        const stored = JSON.parse(readFileSync(paths.record, 'utf8'));
         for (const key of new Set([...Object.keys(stored ?? {}), ...Object.keys(current)]))
           if (JSON.stringify(stored?.[key]) !== JSON.stringify(current[key]))
             throw new Error(

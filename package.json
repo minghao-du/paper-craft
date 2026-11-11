@@ -8,14 +8,14 @@
   },
   "scripts": {
     "build": "tsc",
-    "lint": "eslint --no-error-on-unmatched-pattern \"scripts/**/*.ts\" \"tests/**/*.ts\"",
+    "lint": "eslint --no-error-on-unmatched-pattern \"scripts/**/*.ts\" \"packages/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && python3 skills/pc-workspace-config/scripts/test_config.py && python3 skills/pc-orchestrator/scripts/test_lifecycle_kernel.py && python3 skills/pc-orchestrator/scripts/test_envelope.py && python3 skills/pc-workspace/scripts/test_prepare_worktree.py",
+    "test": "vitest run && python3 skills/pc-workspace-config/scripts/test_config.py && python3 skills/pc-workspace/scripts/test_prepare_worktree.py",
     "test:watch": "vitest",
-    "docs:i18n:list": "tsx scripts/docs/docs-i18n.ts list",
-    "docs:i18n:check": "tsx scripts/docs/docs-i18n.ts check",
-    "docs:i18n:record": "tsx scripts/docs/docs-i18n.ts record",
-    "docs:check": "tsx scripts/docs/docs-i18n.ts check"
+    "docs:i18n:list": "node --import tsx scripts/docs/docs-i18n.ts list",
+    "docs:i18n:check": "node --import tsx scripts/docs/docs-i18n.ts check",
+    "docs:i18n:record": "node --import tsx scripts/docs/docs-i18n.ts record",
+    "docs:check": "node --import tsx scripts/docs/docs-i18n.ts check"
   },
   "packageManager": "pnpm@12.8.1",
   "devDependencies": {

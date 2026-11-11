@@ -1,0 +1,42 @@
+{
+  "/paper-craft-design-decisions": {
+    "en": "666094f3dab37bdd",
+    "zh": "ee4d03bd511c8a3f"
+  },
+  "/paper-craft-design-decisions/modular-design": {
+    "en": "7ac577d46746b118",
+    "zh": "a931b86c8e8dc48a"
+  },
+  "/paper-craft-design-decisions/skill-and-execution-boundaries": {
+    "en": "31f40372918bf56e",
+    "zh": "ba1977b1a97e52ce"
+  },
+  "/paper-craft-design-decisions/stage-and-skill-decoupling": {
+    "en": "35165ba441d3f559",
+    "zh": "e93d0d505c9219c5"
+  },
+  "/paper-craft-design-decisions/configuration-and-structured-data": {
+    "en": "92b9fe33002dd69b",
+    "zh": "e153d91815ca4c6a"
+  },
+  "/paper-craft-design-decisions/task-input-envelope": {
+    "en": "4bef6dc3135f883b",
+    "zh": "b62f0dc4a8f5b112"
+  },
+  "/paper-craft-design-decisions/deterministic-steps-within-skills": {
+    "en": "579bd1559476a106",
+    "zh": "990a6595ea4cb797"
+  },
+  "/paper-craft-design-decisions/unified-receipt-contract": {
+    "en": "94cc7627a631a0c6",
+    "zh": "39d44a50535c5927"
+  },
+  "/paper-craft-design-decisions/workspace-ownership": {
+    "en": "e1a2382ad5e44abc",
+    "zh": "962bbd979ff5b8d7"
+  },
+  "/paper-craft-design-decisions/workflow-decoupling": {
+    "en": "b4a27e7c28f228d4",
+    "zh": "7a53d663f14c076c"
+  }
+}

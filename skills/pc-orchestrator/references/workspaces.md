@@ -9,7 +9,8 @@ Every stage's execution context is explicitly materialized as a Task Input Envel
 Receipt Contract (`{ execution_status, result, receipt_path, summary }` + Markdown receipt).
 
 Resolve `<workspace-skill-dir>` and `<orchestrator-skill-dir>` to the absolute installed directories
-of `pc-workspace` and `pc-orchestrator`.
+of `pc-workspace` and `pc-orchestrator`, following installation symlinks. `<paper-craft-root>` is
+the real checkout root two levels above `<orchestrator-skill-dir>`.
 
 ---
 
@@ -60,11 +61,14 @@ in the supplied source checkout to validate the source and prepare the target en
 ### Execution Provider Resolution
 The `workspace_prepare` stage is executed via a specialized skill subagent:
 - **Skill Provider**:
-  ```yaml
-  provider:
-    type: "skill"
-    target: "pc-workspace"
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-workspace",
+      "args": []
+    }
+  }
   ```
   The Orchestrator writes `<receipt_root>/<step_index>-input.json` and dispatches `pc-workspace` with the
   Standardized Slim Prompt (~15 lines). The subagent validates source checkout, creates or reuses the target
@@ -104,7 +108,7 @@ allowing cleanup. Professional tasks proceed only after accepted preparation.
 
 Context passing is fully structured and file-based. The Orchestrator NEVER concatenates large natural language prompts.
 Instead, the Orchestrator generates a Task Input Envelope file (`<receipt_root>/<step_index>-input.json`) using
-`<orchestrator-skill-dir>/scripts/envelope.py` before every dispatch.
+the TypeScript envelope helper at `<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts` before every dispatch.
 
 ### Task Input Envelope Schema (v1.0)
 The envelope encapsulates 7 mandatory sections:

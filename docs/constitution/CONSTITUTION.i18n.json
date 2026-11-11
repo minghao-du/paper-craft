@@ -1,0 +1,26 @@
+{
+  "/paper-craft-constitution": {
+    "en": "3057a96afd835110",
+    "zh": "863d492c28ded6a1"
+  },
+  "/paper-craft-constitution/agents-execute-humans-steer": {
+    "en": "f3d6460f4c8562c0",
+    "zh": "9e6bcb2de1e64392"
+  },
+  "/paper-craft-constitution/skills-are-the-product": {
+    "en": "edd1396454fd5a42",
+    "zh": "7f3dd202f7c0328a"
+  },
+  "/paper-craft-constitution/quality-gates-over-human-review": {
+    "en": "a9d53e447ba56baa",
+    "zh": "392f07870e4731af"
+  },
+  "/paper-craft-constitution/fail-fast-explain-clearly": {
+    "en": "6be2092102a6d8b0",
+    "zh": "7c3c2445f8fb7ed1"
+  },
+  "/paper-craft-constitution/lean-by-default": {
+    "en": "7af7bc6173c27023",
+    "zh": "0dc11113ded4ceeb"
+  }
+}

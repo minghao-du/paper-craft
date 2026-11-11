@@ -2,7 +2,7 @@
  * Workflow Stage-Provider Decoupling & Schema Verification Tests
  *
  * Verifies that:
- * 1. skills/pc-orchestrator/workflows/default.yaml contains decoupled logical stages and providers.
+ * 1. skills/pc-orchestrator/workflows/default.json contains decoupled logical stages and providers.
  * 2. Every stage's provider is strictly "skill", targeting existing codebase skills.
  * 3. Every stage definition successfully maps to a valid Task Input Envelope.
  * 4. Substituting an execution provider target preserves state machine invariance (zero-perception).
@@ -12,7 +12,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parse as parseYaml } from 'yaml';
 import {
   createTestDir,
   REPO_ROOT,
@@ -34,7 +33,7 @@ export interface ParsedWorkflowStage {
 }
 
 /**
- * Stage definition in declarative YAML workflow manifest.
+ * Stage definition in declarative JSON workflow manifest.
  */
 export interface WorkflowManifestStage {
   id: string;
@@ -48,7 +47,7 @@ export interface WorkflowManifestStage {
 }
 
 /**
- * Top-level declarative YAML workflow manifest.
+ * Top-level declarative JSON workflow manifest.
  */
 export interface WorkflowManifest {
   name: string;
@@ -60,10 +59,10 @@ export interface WorkflowManifest {
 }
 
 /**
- * Strict validator for declarative workflow manifest YAML content.
+ * Strict validator for declarative workflow manifest JSON content.
  */
-export function parseAndValidateYamlManifest(content: string): WorkflowManifest {
-  const parsed = parseYaml(content);
+export function parseAndValidateJsonManifest(content: string): WorkflowManifest {
+  const parsed = JSON.parse(content);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Manifest root must be an object');
   }
@@ -152,11 +151,11 @@ export function parseAndValidateYamlManifest(content: string): WorkflowManifest 
 }
 
 /**
- * Helper to parse stage definitions and provider blocks from default.yaml.
+ * Helper to parse stage definitions and provider blocks from default.json.
  */
 export function parseWorkflowStages(workflowPath: string): ParsedWorkflowStage[] {
   const content = fs.readFileSync(workflowPath, 'utf-8');
-  const manifest = parseAndValidateYamlManifest(content);
+  const manifest = parseAndValidateJsonManifest(content);
   return manifest.stages.map((s) => ({
     id: s.id,
     logicalTask: s.logical_task,
@@ -168,9 +167,9 @@ export function parseWorkflowStages(workflowPath: string): ParsedWorkflowStage[]
 
 describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
   let testEnv: { dir: string; cleanup: () => void };
-  const defaultWorkflowYamlPath = path.join(
+  const defaultWorkflowJsonPath = path.join(
     REPO_ROOT,
-    'skills/pc-orchestrator/workflows/default.yaml',
+    'skills/pc-orchestrator/workflows/default.json',
   );
   const defaultWorkflowDocPath = path.join(
     REPO_ROOT,
@@ -185,26 +184,26 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
     testEnv.cleanup();
   });
 
-  it('W1.1: default.yaml exists and default.md references it without duplicating flow definition', () => {
-    expect(fs.existsSync(defaultWorkflowYamlPath)).toBe(true);
-    const yamlContent = fs.readFileSync(defaultWorkflowYamlPath, 'utf-8');
+  it('W1.1: default.json exists and default.md references it without duplicating flow definition', () => {
+    expect(fs.existsSync(defaultWorkflowJsonPath)).toBe(true);
+    const jsonContent = fs.readFileSync(defaultWorkflowJsonPath, 'utf-8');
 
-    // Asserts decoupled provider syntax exists in default.yaml
-    expect(yamlContent).toMatch(/provider:/i);
-    expect(yamlContent).toMatch(/type:\s*["']?skill["']?/i);
-    expect(yamlContent).toMatch(/target:\s*["']?[a-zA-Z0-9_.-]+["']?/i);
+    // Asserts decoupled provider syntax exists in default.json
+    expect(jsonContent).toMatch(/"provider"\s*:/i);
+    expect(jsonContent).toMatch(/"type"\s*:\s*"skill"/i);
+    expect(jsonContent).toMatch(/"target"\s*:\s*"[a-zA-Z0-9_.-]+"/i);
 
-    // Asserts default.md references default.yaml and does not duplicate full YAML flow block
+    // Asserts default.md references default.json and does not duplicate full JSON flow block
     expect(fs.existsSync(defaultWorkflowDocPath)).toBe(true);
     const docContent = fs.readFileSync(defaultWorkflowDocPath, 'utf-8');
-    expect(docContent).toContain('default.yaml');
-    expect(docContent).not.toMatch(/```yaml[\s\S]*?stages:\s*[\s\S]*?```/);
+    expect(docContent).toContain('default.json');
+    expect(docContent).not.toMatch(/```json[\s\S]*?stages:\s*[\s\S]*?```/);
   });
 
-  it('W1.2: validates declarative YAML manifest stages and ensures all provider targets exist', () => {
-    const content = fs.readFileSync(defaultWorkflowYamlPath, 'utf-8');
-    const manifest = parseAndValidateYamlManifest(content);
-    const stages = parseWorkflowStages(defaultWorkflowYamlPath);
+  it('W1.2: validates declarative JSON manifest stages and ensures all provider targets exist', () => {
+    const content = fs.readFileSync(defaultWorkflowJsonPath, 'utf-8');
+    const manifest = parseAndValidateJsonManifest(content);
+    const stages = parseWorkflowStages(defaultWorkflowJsonPath);
 
     expect(manifest.name).toBe('default');
     expect(manifest.version).toBe('1.0.0');
@@ -226,7 +225,7 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
   });
 
   it('W1.3: each parsed stage generates a compliant Task Input Envelope passing validate', () => {
-    const stages = parseWorkflowStages(defaultWorkflowYamlPath);
+    const stages = parseWorkflowStages(defaultWorkflowJsonPath);
     expect(stages.length).toBeGreaterThan(0);
 
     for (let i = 0; i < stages.length; i++) {
@@ -372,18 +371,18 @@ describe('Milestone M3: Workflow Stage-Provider Decoupling Suite', () => {
     expect(resScript.stderr).toContain("Provider 'type' must be 'skill'");
   });
 
-  it('W1.6: YAML manifest parsing actively rejects malformed manifests', () => {
-    const syntaxErrorYaml = 'name: [unclosed\n';
-    expect(() => parseAndValidateYamlManifest(syntaxErrorYaml)).toThrow();
+  it('W1.6: JSON manifest parsing actively rejects malformed manifests', () => {
+    const syntaxErrorJson = '{"name": [unclosed';
+    expect(() => parseAndValidateJsonManifest(syntaxErrorJson)).toThrow();
 
-    const missingNameYaml = 'version: 1.0.0\ninitial_stage: s1\nstages: []\n';
-    expect(() => parseAndValidateYamlManifest(missingNameYaml)).toThrow(/Missing required field 'name'/i);
+    const missingNameJson = JSON.stringify({ version: '1.0.0', initial_stage: 's1', stages: [] });
+    expect(() => parseAndValidateJsonManifest(missingNameJson)).toThrow(/Missing required field 'name'/i);
 
-    const emptyStagesYaml = 'name: default\nversion: 1.0.0\ninitial_stage: s1\nstages: []\n';
-    expect(() => parseAndValidateYamlManifest(emptyStagesYaml)).toThrow(/Field 'stages' must be a non-empty array/i);
+    const emptyStagesJson = JSON.stringify({ name: 'default', version: '1.0.0', initial_stage: 's1', stages: [] });
+    expect(() => parseAndValidateJsonManifest(emptyStagesJson)).toThrow(/Field 'stages' must be a non-empty array/i);
 
-    const badTypeYaml =
-      'name: default\nversion: 1.0.0\ninitial_stage: s1\nstages:\n  - id: s1\n    logical_task: t1\n    provider:\n      type: script\n      target: pc-workspace\n';
-    expect(() => parseAndValidateYamlManifest(badTypeYaml)).toThrow(/provider\.type must be 'skill'/i);
+    const badTypeJson =
+      JSON.stringify({ name: 'default', version: '1.0.0', initial_stage: 's1', stages: [{ id: 's1', logical_task: 't1', provider: { type: 'script', target: 'pc-workspace' } }] });
+    expect(() => parseAndValidateJsonManifest(badTypeJson)).toThrow(/provider\.type must be 'skill'/i);
   });
 });

@@ -22,23 +22,21 @@ paper-craft 的技术架构决策。这些选择承载着整个系统——改�
 
 技能通过内部脚本与 agent 指令强制执行契约。这些脚本属于技能实现，调用它们仍然是 skill 执行。程序化校验与状态机约束守护着每次派发与回执。运行次数限制、报告修复、范围重新评估和恢复规程由 orchestrator 技能定义。
 
-## 阶段与执行者解耦
+## 阶段与技能解耦
 
-工作流阶段将抽象的逻辑任务与具体的执行提供者解耦。工作流状态机跟踪任务进度、状态流转和回执校验，而无需硬编码阶段的具体执行方式。每个阶段通过多态的 provider 规范进行声明：
+每个工作流阶段都由 skill 执行。阶段声明需要派发的专业角色，无需包含它的具体实现：
 
-```yaml
-provider:
-  type: "skill" | "engine"
-  target: "<skill-name> | <engine-operation>"
-  args: []
+```json
+{
+  "provider": { "type": "skill", "target": "<skill-name>", "args": [] }
+}
 ```
 
-目标架构包含两种提供者类型。独立的 paper-craft engine 尚未实现；以下 engine 路径及配置是设计约定，不代表当前已有能力：
+Orchestrator 通过平台适配器启动新的专业 agent，加载 `skills/<target>/SKILL.md` 并提供任务输入信封。固定辅助操作仍属于 skill 执行；代码位于 `packages/` 并不引入另一种执行提供者。
 
-- **`skill` 提供者**：Orchestrator 通过平台适配器派发自主的 LLM 专业子 agent，加载 `skills/<target>/SKILL.md` 并附带引用任务输入信封的标准精简提示词。
-- **`engine` 提供者**：Orchestrator 通过独立的 paper-craft engine 执行确定性操作，无需启动专业 agent。`target` 是 engine 的操作标识，而非脚本路径。engine 代码封装在 `skills/` 之外，不通过直接调用 skill 内部脚本来提供这条执行路径。
+## 配置与结构化数据
 
-同一工作流可以混合调用 skill 与 engine。两种提供者遵循相同的任务输入信封与回执契约，但各自拥有实现。只有操作语义、前置条件和结果满足同一阶段要求时，才可以切换提供者；统一契约本身不保证二者可互换。
+项目自定义的配置、工作流定义、状态快照、任务输入和紧凑执行报告统一使用 JSON。JSONL 仅用于逐条追加的事件或日志，每行是一个完整的 JSON 值，不作为配置格式。现有项目自定义 YAML 迁为 JSON，此类文件不再新增 YAML。外部工具要求的格式，包括包管理器文件、平台技能元数据以及下游 Snakemake 或 Conda 文件，遵循相应工具的契约。Markdown 指令和持久回执继续使用 Markdown。
 
 ## 任务输入信封
 
@@ -50,7 +48,7 @@ provider:
 {
   "schema_version": "1.0",
   "task": { "logical_stage": "...", "step_index": 0, "attempt": 1, "root_issue_id": "...", "current_issue_id": "..." },
-  "provider": { "type": "skill | engine", "target": "...", "args": [] },
+  "provider": { "type": "skill", "target": "...", "args": [] },
   "environment": { "working_directory": "...", "repository": "...", "base_branch": "...", "branch": "...", "commit": "..." },
   "inputs": { "objective": "...", "scope": "...", "acceptance_criteria": [], "predecessor_receipts": [], "parameters": {} },
   "contract": { "receipt_path": "...", "receipt_template": "..." },
@@ -65,12 +63,13 @@ provider:
 
 ## 技能内部的确定性步骤
 
-技能内的确定性步骤应尽可能由 `skills/<skill>/scripts/` 中的脚本完成，将机械操作与需要 agent 判断的工作分开：
+技能指令指导 agent 进行判断、路由和恢复。固定辅助代码执行机械操作，并在运行时校验外部 JSON；TypeScript 类型本身不能校验文件或 agent 输出。
 
-- **内部脚本（`scripts/`）**：封装技能任务中的重复、确定性操作，例如准备 Git worktree 或检查仓库干净度。脚本接口由技能自身定义，不要求每个辅助脚本都实现完整的工作流输入与回执契约。
-- **技能指令（`SKILL.md`）**：指导专业 agent 调用内部脚本、解释结果并完成领域判断与恢复操作。技能负责对外履行阶段的输入与回执契约。
+- **Orchestrator 辅助代码（`packages/orchestrator/`）**：TypeScript 模块负责生命周期状态、派发编号分配、输入信封生成和回执校验。六个操作为 `init`、`prepare`、`handoff`、`complete`、`resolve` 和 `inspect`。薄脚本入口供 skill 调用，不增加产品 CLI 或独立调度器。
+- **配置辅助代码（`packages/workspace-config/`）**：TypeScript 模块解析并校验 orchestrator 使用的项目配置。
+- **专业辅助脚本（`skills/<skill>/scripts/`）**：现有专业任务辅助代码可以继续与技能放在一起，包括 Python 脚本。迁移 orchestrator 代码不要求改写所有技能。
 
-无论内部步骤有多少由脚本完成，对工作流而言仍是一次 skill 调用。独立 engine 承担的确定性操作属于另一条执行路径；其代码不放在技能内部，也不把技能内部脚本直接暴露为 engine 操作。
+技能负责对外履行阶段输入与回执契约。辅助模块实现确定性操作，不选择下一个专业阶段；Orchestrator 通过 `resolve` 显式作出该决策。更换实现时须保留生命周期操作语义、持久化 JSON 格式、中断恢复和回执校验行为。
 
 ## 统一回执协议
 
@@ -87,7 +86,7 @@ provider:
 
 该协议强制实行双重报告机制：
 
-- **紧凑执行报告**：机器可解析的 JSON 对象，由 skill 的 agent 返回，或由未来的 engine 操作返回。`execution_status` 严格限定为 `"succeeded"`、`"blocked"` 或 `"failed"`。有效的专业结论（包括返工结论或 `out_of_scope`）均上报 `"succeeded"`，`"blocked"` 仅用于未满足的前置条件，`"failed"` 用于无法恢复的崩溃。`result` 对象包含领域特定的路由结果。
+- **紧凑执行报告**：机器可解析的 JSON 对象，由 skill 的 agent 返回。`execution_status` 严格限定为 `"succeeded"`、`"blocked"` 或 `"failed"`。有效的专业结论（包括返工结论或 `out_of_scope`）均上报 `"succeeded"`，`"blocked"` 仅用于未满足的前置条件，`"failed"` 用于无法恢复的崩溃。`result` 对象包含领域特定的路由结果。
 - **持久磁盘回执（Markdown）**：写入 `contract.receipt_path` 并符合 `subagent-receipt.template.md` 规范的完整 Markdown 审计记录。它在可丢弃的检出目录外部记录完整的验证日志、Git 版本、修改产物和前序回执链接。
 
 Orchestrator 校验全部四个报告字段并核验回执文件的物理存在。任何协议违背、无法解析的输出或缺失的回执都会触发快速失败，立即暂停并呈现决策看板，杜绝推测性修复。
@@ -100,4 +99,4 @@ Orchestrator 分配环境，决定准备、复用和清理的时机。`pc-worksp
 
 ## 工作流解耦
 
-工作流定义与技术架构及执行提供者解耦。具体的执行序列（如 Issue 交付、热修复或重构）作为独立的工作流文件维护在 `skills/pc-orchestrator/workflows/` 下。Orchestrator 负责流程策略与路由；未来的独立 engine 封装确定性操作，不硬编码具体的领域交付步骤。工作流文件位于技能内，不意味着 engine 实现也位于技能内。
+具体的执行序列（如 Issue 交付、热修复或重构）以 JSON 工作流文件维护在 `skills/pc-orchestrator/workflows/` 下。Orchestrator 负责流程策略与路由。TypeScript 辅助代码实现固定的生命周期操作；工作流定义和回执模板仍是技能资源。资源路径应从已安装技能的真实检出目录解析，保证通过安装软链接以及在其他工作目录调用时仍能正常工作。

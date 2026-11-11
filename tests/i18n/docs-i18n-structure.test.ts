@@ -5,19 +5,19 @@ import { spawnSync } from 'node:child_process';
 import { test, expect } from 'vitest';
 
 const script = resolve('scripts/docs/docs-i18n.ts');
-const tsx = resolve('node_modules/tsx/dist/cli.mjs');
+const tsx = resolve('node_modules/tsx/dist/loader.mjs');
 
 test('record and check reject structural drift before accepting confirmations', () => {
   const root = mkdtempSync(join(tmpdir(), 'pc-doc-structure-'));
   const put = (p: string, text: string) => writeFileSync(join(root, p), text);
   const run = (...args: string[]) =>
-    spawnSync(process.execPath, [tsx, script, ...args], {
+    spawnSync(process.execPath, ['--import', tsx, script, ...args], {
       cwd: root,
       encoding: 'utf8',
       timeout: 10000,
     });
   try {
-    put('docs-i18n.yaml', 'include: ["*.md"]\nexclude: []\nbacklog: {}\n');
+    put('docs-i18n.json', JSON.stringify({ include: ['*.md'], exclude: [], backlog: {} }));
     const en = '# Project\n\n[简体中文](README.zh.md)\n\n';
     const zh = '# 项目\n\n[English](README.md)\n\n';
     const pairs = [
@@ -34,7 +34,7 @@ test('record and check reject structural drift before accepting confirmations', 
     put('README.md', en + '## Section\n\nText\n');
     put('README.zh.md', zh + '## 章节\n\n正文\n');
     expect(run('record', 'README.md').status).toBe(0);
-    const original = readFileSync(join(root, 'README.i18n.yaml'), 'utf8');
+    const original = readFileSync(join(root, 'README.i18n.json'), 'utf8');
     for (const [english, chinese, kind] of pairs) {
       put('README.md', en + english);
       put('README.zh.md', zh + chinese);
@@ -42,7 +42,7 @@ test('record and check reject structural drift before accepting confirmations', 
       expect(recording.status, recording.stdout).toBe(1);
       expect(recording.stdout).toContain(`structure ${kind}`);
       expect(run('check', 'README.md').stdout).toContain(`structure ${kind}`);
-      expect(readFileSync(join(root, 'README.i18n.yaml'), 'utf8')).toBe(original);
+      expect(readFileSync(join(root, 'README.i18n.json'), 'utf8')).toBe(original);
     }
     // Title edits and duplicate headings legitimately generate a new set of keys.
     put(
@@ -51,9 +51,9 @@ test('record and check reject structural drift before accepting confirmations', 
     );
     put('README.zh.md', '# 新标题\n\n[English](README.md)\n\n## 重复\n\n一\n\n## 重复\n\n二\n');
     expect(run('record', 'README.md').status).toBe(0);
-    const updated = readFileSync(join(root, 'README.i18n.yaml'), 'utf8');
-    expect(updated).toContain('/renamed/repeat~2:');
-    expect(updated).not.toContain('/project:');
+    const updated = readFileSync(join(root, 'README.i18n.json'), 'utf8');
+    expect(updated).toContain('/renamed/repeat~2');
+    expect(updated).not.toContain('"/project"');
     expect(run('check').status).toBe(0);
   } finally {
     rmSync(root, { recursive: true, force: true });

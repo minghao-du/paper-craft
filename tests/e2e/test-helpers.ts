@@ -17,19 +17,19 @@ const __dirname = path.dirname(__filename);
 export const REPO_ROOT = path.resolve(__dirname, '../..');
 
 /**
- * Absolute path to envelope CLI script (envelope.py).
+ * Absolute path to envelope CLI script (envelope-cli.ts).
  */
 export const ENVELOPE_SCRIPT = path.join(
   REPO_ROOT,
-  'skills/pc-orchestrator/scripts/envelope.py',
+  'packages/orchestrator/src/envelope-cli.ts',
 );
 
 /**
- * Absolute path to dispatch lifecycle kernel CLI script (lifecycle_kernel.py).
+ * Absolute path to dispatch lifecycle kernel CLI script (cli.ts).
  */
 export const LIFECYCLE_KERNEL_SCRIPT = path.join(
   REPO_ROOT,
-  'skills/pc-orchestrator/scripts/lifecycle_kernel.py',
+  'packages/orchestrator/src/cli.ts',
 );
 
 /**
@@ -49,7 +49,7 @@ export const PREPARE_WORKTREE_SCRIPT = path.join(
 );
 
 /**
- * TaskInputEnvelope contract definition matching envelope.py schema.
+ * TaskInputEnvelope contract definition matching envelope-cli.ts schema.
  */
 export interface TaskInputEnvelope {
   schema_version: string;
@@ -130,24 +130,41 @@ export function runPython(
   };
 }
 
+/** Execute an installed skill helper with the repository's TypeScript loader. */
+export function runTypeScript(
+  scriptPath: string,
+  args: string[],
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+): ProcessResult {
+  const result = spawnSync(process.execPath, [
+    '--import', path.join(REPO_ROOT, 'node_modules/tsx/dist/loader.mjs'), scriptPath, ...args,
+  ], {
+    cwd: options?.cwd ?? REPO_ROOT,
+    env: { ...process.env, ...options?.env },
+    encoding: 'utf-8',
+    timeout: 10000,
+  });
+  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
 /**
- * Execute envelope.py CLI subcommand.
+ * Execute envelope-cli.ts CLI subcommand.
  */
 export function runEnvelopeCli(
   args: string[],
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): ProcessResult {
-  return runPython(ENVELOPE_SCRIPT, args, options);
+  return runTypeScript(ENVELOPE_SCRIPT, args, options);
 }
 
 /**
- * Execute lifecycle_kernel.py CLI subcommand.
+ * Execute cli.ts CLI subcommand.
  */
 export function runLifecycleKernelCli(
   args: string[],
   options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): ProcessResult {
-  return runPython(LIFECYCLE_KERNEL_SCRIPT, args, options);
+  return runTypeScript(LIFECYCLE_KERNEL_SCRIPT, args, options);
 }
 
 /** Write a preparation request fixture, execute the real CLI, and remove the fixture. */

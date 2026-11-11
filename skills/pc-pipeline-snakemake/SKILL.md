@@ -12,7 +12,7 @@ This skill can be invoked directly by a human or agent with a task prompt or par
 ## Task Inputs
 
 Before beginning work, ensure the following inputs are available:
-1. **Workflow directory & configuration:** Target workflow root (`Snakefile`, `workflow/rules/`, `config/config.yaml`, `config/schema.yaml`).
+1. **Workflow directory & configuration:** Target workflow root (`Snakefile`, `workflow/rules/`, `config/config.yaml`, `config/schema.json`).
 2. **Task brief & mode:** Intent to scaffold a new workflow (Branch 1), audit an existing pipeline (Branch 2), or recover from a failure (Incremental recovery).
 3. **Compute environment:** Local workstation environment and cluster parameters specified in `.paper-craft/compute.md` or configuration.
 
@@ -27,7 +27,7 @@ A production Snakemake workflow strictly separates version-controlled orchestrat
 ├── uv.lock                      # uv lockfile for deterministic Python environment
 ├── config/
 │   ├── config.yaml              # Production execution parameters and path variables
-│   ├── schema.yaml              # JSONSchema parameter validation specification
+│   ├── schema.json              # JSONSchema parameter validation specification
 │   └── test.yaml                # Smoke inputs, reduced workload, and isolated output roots
 ├── workflow/
 │   ├── AGENTS.md                # Workflow agent guidance (SLURM native scheduler restriction)
@@ -97,8 +97,8 @@ records needed by the research; Snakemake rules produce the evidence they refere
 - **Immutability of `data/` and `workflow/`**: Treat `data/` as read-only. Confine all output definitions strictly within `processed/`, `results/`, or `logs/`. Never write outputs to `workflow/`.
 
 ### 2. Fail-fast Parameter Validation
-- **Schema-Enforced Configuration**: Validate parameters at startup in `workflow/Snakefile` using `snakemake.utils.validate(config, schema="../config/schema.yaml")`.
-- **Fail-Fast Error Reporting**: Enforce required configuration keys, expected types, and value constraints through JSONSchema in `config/schema.yaml`.
+- **Schema-Enforced Configuration**: Validate parameters at startup in `workflow/Snakefile` using `snakemake.utils.validate(config, schema="../config/schema.json")`.
+- **Fail-Fast Error Reporting**: Enforce required configuration keys, expected types, and value constraints through JSONSchema in `config/schema.json`.
 - **Parametrized Directory Roots**: Define data roots in `config/config.yaml` rather than hardcoding filesystem paths inside rule definitions.
 
 ### 3. Modular Architecture & Rule Design
@@ -143,7 +143,7 @@ When generating a new Snakemake workflow or expanding an existing one:
 1. **Scaffold Directory Tree & uv Project**: Create the Standard Directory Layout as outputs are introduced. Initialize root `pyproject.toml` declaring `snakemake` and `snakefmt`.
 2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `.venv/`, `processed/`, `results/`, and `logs/` are gitignored while `pyproject.toml`, `uv.lock`, and `tests/` are tracked. Resolve the fixed research entry from `AGENTS.md`; use `/pc-research-state` to establish it when needed, keeping its whole workspace ignored at the designated research home.
 3. **Configure & Schema**:
-   - Read [schema.yaml](templates/schema.yaml) as a reference to write `config/schema.yaml`.
+   - Read [schema.json](templates/schema.json) as a reference to write `config/schema.json`.
    - Write `config/config.yaml` with required paths and execution parameters matching the schema.
    - Configure smoke inputs and output roots following the **Smoke Execution Contract**.
 4. **Author Modular Rules & Scripts**:

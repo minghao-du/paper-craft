@@ -4,9 +4,9 @@
 - **Version**: 1.0.0
 - **Initial Stage**: stage_1_plan
 - **Target**: Coordinate end-to-end issue delivery from planning through implementation, landing, verification, refactoring, and state recording.
-- **Workflow Definition**: Defined in [default.yaml](default.yaml).
+- **Workflow Definition**: Defined in [default.json](default.json).
 
-This document provides natural-language documentation for the lifecycle stages, environment bindings, routing rules, and acceptance gates declared in `default.yaml`.
+This document provides natural-language documentation for the lifecycle stages, environment bindings, routing rules, and acceptance gates declared in `default.json`.
 
 ---
 
@@ -39,11 +39,14 @@ Carry explicit artifact locations into verification and research recording. Afte
 - **Stage ID**: `workspace_prepare`
 - **Logical Task**: `workspace_prepare`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-workspace
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-workspace",
+      "args": []
+    }
+  }
   ```
 - **Objective**: Prepare and validate the Git execution directory (persistent checkout, isolated feature worktree, or pinned detached worktree) required for the target logical stage.
 - **Inputs**: Target repository, base branch, requested feature branch or commit SHA, and workspace configuration.
@@ -59,11 +62,14 @@ Carry explicit artifact locations into verification and research recording. Afte
 - **Stage ID**: `stage_1_plan`
 - **Logical Task**: `issue_plan`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-issue-plan
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-issue-plan",
+      "args": []
+    }
+  }
   ```
 - **Objective**: Determine whether subissues are needed and establish a filed, dispatch-ready execution plan.
 - **Environment**: Explicit existing repository checkout validated by `workspace_prepare`.
@@ -85,11 +91,14 @@ Deliver the `current_issue_id` through an implementation and landing loop.
 - **Stage ID**: `stage_2_work`
 - **Logical Task**: `issue_work`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-issue-work
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-issue-work",
+      "args": []
+    }
+  }
   ```
 - **Objective**: Implement required code/tests for `current_issue_id` satisfying all acceptance criteria.
 - **Environment**: Prepared isolated feature worktree for `current_issue_id` validated by `workspace_prepare`.
@@ -103,11 +112,14 @@ Deliver the `current_issue_id` through an implementation and landing loop.
 - **Stage ID**: `stage_2_land`
 - **Logical Task**: `issue_land`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-pr-land
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-pr-land",
+      "args": []
+    }
+  }
   ```
 - **Objective**: Review, verify pre-merge checks, and land (merge) the implementation changes.
 - **Environment**: Same feature worktree with verified worktree and latest delivered SHA.
@@ -127,11 +139,14 @@ Accept delivery only for `landed` with verified merge evidence.
 - **Stage ID**: `stage_3_verify`
 - **Logical Task**: `issue_verify`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-issue-verify
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-issue-verify",
+      "args": []
+    }
+  }
   ```
 - **Entry Gate**: All planned children have accepted delivery evidence, or the root was delivered directly. Individual child completion does not establish parent acceptance.
 - **Objective**: Verify every original parent requirement and acceptance threshold against the integrated HEAD and combined artifacts. Check that the delivered children collectively fulfill the parent, including cross-child integration; child receipts support this verification but do not replace it.
@@ -152,11 +167,16 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Stage ID**: `stage_4_refactor_audit`
 - **Logical Task**: `pipeline_refactor_audit`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-pipeline-refactor
-    args: ["--audit"]
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-pipeline-refactor",
+      "args": [
+        "--audit"
+      ]
+    }
+  }
   ```
 - **Objective**: Audit touched pipeline scope and generate the migration ledger without modifying code or filesystem structures.
 - **Environment**: Accepted integrated checkout environment.
@@ -174,11 +194,16 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Stage ID**: `stage_4_refactor_execute`
 - **Logical Task**: `pipeline_refactor_execute`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-pipeline-refactor
-    args: ["--execute"]
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-pipeline-refactor",
+      "args": [
+        "--execute"
+      ]
+    }
+  }
   ```
 - **Objective**: Execute approved migration ledger atomically under scientific invariance.
 - **Environment**: Fresh branch/worktree prepared from the current integrated base by `workspace_prepare`.
@@ -195,11 +220,14 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Stage ID**: `stage_5_redeliver`
 - **Logical Task**: `pipeline_refactor_redeliver`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-pr-land
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-pr-land",
+      "args": []
+    }
+  }
   ```
 - **Objective**: Deliver refactored pipeline files.
 - **Environment**: Same refactor worktree with verified repository, branch, base branch, and commit.
@@ -216,11 +244,14 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Stage ID**: `stage_6_research_record`
 - **Logical Task**: `research_record`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-research-state
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-research-state",
+      "args": []
+    }
+  }
   ```
 - **Objective**: Record final research state, artifact locations, and reproduction entry points.
 - **Environment**: Validated persistent checkout plus the fixed shared research entry.
@@ -237,11 +268,14 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Stage ID**: `issue_finalize`
 - **Logical Task**: `issue_finalize`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-issue-verify
-    args: []
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-issue-verify",
+      "args": []
+    }
+  }
   ```
 - **Objective**: Execute the acceptance-backed closure task in its [closure contract](../../pc-issue-verify/references/closure.md).
 - **Environment**: Retained persistent checkout, with durable acceptance and research receipts.
@@ -257,11 +291,16 @@ Organize touched pipeline files under scientific invariance with a human steerin
 - **Stage ID**: `workspace_cleanup`
 - **Logical Task**: `workspace_cleanup`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-workspace
-    args: ["--cleanup"]
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-workspace",
+      "args": [
+        "--cleanup"
+      ]
+    }
+  }
   ```
 - **Objective**: Remove eligible worktrees and merged local and remote task branches belonging to the root issue tree, including evidenced historical resources; retain changed or still-used resources with reasons.
 - **Inputs**: Supply `inputs.parameters.candidates` using the cleanup candidate contract in `pc-workspace` §5. Reconcile the finalization inventory and historical ownership evidence with final SHAs, PR identities, delivery/verification receipts, durable artifact locations, and completed-consumer status. Carry the recorded delivery target, base remote, and push remote for each branch, and forward unresolved inventory items in `inputs.parameters.unresolved`.
@@ -278,11 +317,16 @@ When any stage reports `out_of_scope`:
 - **Stage ID**: `scope_replan`
 - **Logical Task**: `scope_replan`
 - **Default Provider**:
-  ```yaml
-  provider:
-    type: skill
-    target: pc-issue-plan
-    args: ["--replan"]
+  ```json
+  {
+    "provider": {
+      "type": "skill",
+      "target": "pc-issue-plan",
+      "args": [
+        "--replan"
+      ]
+    }
+  }
   ```
 
 1. Dispatch a fresh replanning provider with a scope-reassessment brief, original acceptance criteria, current authorization, predecessor receipts, current artifact state, and a validated planning checkout with explicit directory binding. Reassessment only; preserve existing issue-tracker state.

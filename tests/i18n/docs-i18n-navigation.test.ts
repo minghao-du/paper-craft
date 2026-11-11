@@ -11,13 +11,13 @@ test('recording and checking require reciprocal switches and corresponding local
   const run = (...args: string[]) =>
     spawnSync(
       process.execPath,
-      [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
+      ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
       { cwd: root, encoding: 'utf8', timeout: 10000 },
     );
   const en = '# Guide\n\n[中文](Guide.zh.md)\n\n';
   const zh = '# 指南\n\n[English](Guide.md)\n\n';
   try {
-    put('docs-i18n.yaml', 'include: ["*.md"]\nexclude: [Outside.md]\nbacklog: {}\n');
+    put('docs-i18n.json', JSON.stringify({ include: ['*.md'], exclude: ['Outside.md'], backlog: {} }));
     put('Outside.md', '# Outside\n');
     put('Guide.md', en + '[Next](Target.md?q=1#usage)\n');
     put('Guide.zh.md', zh + '[下一步](Target.zh.md?q=1#usage)\n');
@@ -25,7 +25,7 @@ test('recording and checking require reciprocal switches and corresponding local
     put('Target.zh.md', '# 目标\n\n[English](Target.md)\n\n<a id="usage"></a>\n\n## 用法\n');
     expect(run('record', 'Guide.md', 'Target.md').status).toBe(0);
     expect(run('check').status).toBe(0);
-    const before = readFileSync(join(root, 'Guide.i18n.yaml'), 'utf8');
+    const before = readFileSync(join(root, 'Guide.i18n.json'), 'utf8');
     for (const body of [
       '# 指南\n\n无链接\n',
       zh + '[下一步](Target.md?q=1#usage)\n',
@@ -34,7 +34,7 @@ test('recording and checking require reciprocal switches and corresponding local
     ]) {
       put('Guide.zh.md', body);
       expect(run('record', 'Guide.md').status).toBe(1);
-      expect(readFileSync(join(root, 'Guide.i18n.yaml'), 'utf8')).toBe(before);
+      expect(readFileSync(join(root, 'Guide.i18n.json'), 'utf8')).toBe(before);
     }
     put('Guide.zh.md', zh + '[下一步](Target.zh.md?q=1#usage)\n');
     put('Target.zh.md', '# 目标\n\n[English](Target.md)\n\n## 用法\n');
@@ -56,7 +56,7 @@ test('complete pair renames and deletes require updated inbound references', () 
   const run = (...args: string[]) =>
     spawnSync(
       process.execPath,
-      [resolve('node_modules/tsx/dist/cli.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
+      ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/docs/docs-i18n.ts'), ...args],
       { cwd: root, encoding: 'utf8', timeout: 10000 },
     );
   const pair = (name: string, link = '') => {
@@ -70,10 +70,10 @@ test('complete pair renames and deletes require updated inbound references', () 
     );
   };
   const remove = (name: string) => {
-    for (const suffix of ['.md', '.zh.md', '.i18n.yaml']) rmSync(join(root, name + suffix));
+    for (const suffix of ['.md', '.zh.md', '.i18n.json']) rmSync(join(root, name + suffix));
   };
   try {
-    put('docs-i18n.yaml', 'include: ["*.md"]\nexclude: []\nbacklog: {}\n');
+    put('docs-i18n.json', JSON.stringify({ include: ['*.md'], exclude: [], backlog: {} }));
     pair('Index', 'Old');
     pair('Old');
     expect(run('record', 'Index.md', 'Old.md').status).toBe(0);

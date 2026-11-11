@@ -1,6 +1,6 @@
 ---
 name: pc-orchestrator
-description: Pure dispatch orchestrator — coordinate Issue delivery workflows strictly through subagent delegation without CLI or direct execution.
+description: Pure dispatch orchestrator — coordinate Issue delivery workflows strictly through subagent delegation through specialist skills and fixed lifecycle helpers.
 ---
 
 # /pc-orchestrator
@@ -24,7 +24,7 @@ exclusively by dedicated Specialist Subagents.
 The Orchestrator's sole responsibilities are:
 1. Receiving the root Issue and goal from the user.
 2. Maintaining workflow runtime state directly by recording state snapshots to `<receipt_root>/state.json`.
-3. Generating Task Input Envelopes (`<receipt_root>/<step>-input.json`) and dispatching execution environments, professional tasks, and cleanup through resolved Execution Providers (Specialist Subagents or direct Script Runners).
+3. Generating Task Input Envelopes (`<receipt_root>/<step>-input.json`) and dispatching execution environments, professional tasks, and cleanup through resolved Execution Providers (Specialist Subagents).
 4. Checking compact execution reports and consuming professional conclusions.
 5. Routing to the next stage or dispatching repair subagents.
 6. Halting and presenting a Blocker Decision Board when blocked, failed, or when retry budgets expire. Request a concise blocker or decision-options summary from a specialist when needed for the board.
@@ -69,7 +69,7 @@ Every workflow maintains two issue identifiers:
 ### Task Input Envelope Standard
 
 The Orchestrator **never concatenates massive free-text prompts**. Before dispatching any provider,
-the Orchestrator uses the minimal dispatch lifecycle kernel (`scripts/lifecycle_kernel.py prepare`)
+the Orchestrator uses the minimal dispatch lifecycle kernel (`packages/orchestrator/src/cli.ts prepare`)
 to atomically allocate the next `step_index`, write the structured Task Input Envelope to
 `<receipt_root>/<step_index>-input.json`, and assign the deterministic receipt path.
 
@@ -162,17 +162,19 @@ the Orchestrator follows Constitution's **Fail Fast**:
 
 ---
 
-## Workflow Execution Engine
+## Workflow Execution
 
 The Orchestrator coordinates execution by reading a workflow definition and advancing through
 its stages as a state machine. It contains no hardcoded stage logic; domain delivery sequences
 are fully decoupled into modular workflow files.
 
-Resolve `<skill-dir>` to the absolute installed directory containing this `SKILL.md`, and
-`<config-skill-dir>` to the installed `pc-workspace-config` directory.
+Resolve `<skill-dir>` to the real absolute directory containing this `SKILL.md` (follow installation symlinks),
+`<paper-craft-root>` to its checkout root two levels above, and `<config-skill-dir>` to the installed
+`pc-workspace-config` directory. Run `pnpm install` in that checkout once to provide the TypeScript helpers.
+The helper commands below use that checkout explicitly and work from any task working directory.
 
 ### 1. Workflow Loading
-- **Default workflow**: Load `<skill-dir>/workflows/default.yaml` (the standard issue delivery workflow).
+- **Default workflow**: Load `<skill-dir>/workflows/default.json` (the standard issue delivery workflow).
 - **Custom workflow override**: If the user specifies an alternative workflow path in their prompt or configuration, load and follow that workflow definition instead.
 
 ### 2. Workflow Entry & Configuration Gate
@@ -185,17 +187,17 @@ For each stage defined in the loaded workflow:
 1. **Identify Stage Contract & Resolve Provider**: Read the stage's `logical_stage`, `provider` (`type: "skill"`, `target`, `args`), inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules.
 2. **Prepare Environment**: Apply [Workspace lifecycle and dispatch](references/workspaces.md), verifying or creating the assigned workspace before professional execution.
 3. **Prepare Task Dispatch**:
-   - Write the [prepare request](#prepare-request) with a JSON serializer, then execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`.
+   - Write the [prepare request](#prepare-request) with a JSON serializer, then execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`.
    - The kernel atomically allocates monotonically increasing `step_index`, generates `<step_index>-input.json`, assigns `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
 4. **Handoff Execution**:
-   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" handoff --receipt-root "<receipt_root>"` to authorize execution launch.
+   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>"` to authorize execution launch.
    - Dispatch fresh specialist subagent using platform adapter with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
 5. **Complete Dispatch & Verify Receipt**:
-   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" complete --receipt-root "<receipt_root>" --report '<compact_json_report>'`.
+   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --report '<compact_json_report>'`.
    - The kernel validates report integrity (the 4 required fields) and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
 6. **Evaluate Routing & Resolve Decision**:
    - Match the returned native `result` against the stage's routing table.
-   - Execute `python3 "<skill-dir>/scripts/lifecycle_kernel.py" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish|<next_stage>> --reason "<reason>" [--next-stage <stage>]`. Orchestrator explicitly selects the next stage or records steering decisions; `complete` solely records receipt verification and never auto-advances stages.
+   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish|<next_stage>> --reason "<reason>" [--next-stage <stage>]`. Orchestrator explicitly selects the next stage or records steering decisions; `complete` solely records receipt verification and never auto-advances stages.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
@@ -280,24 +282,24 @@ Wait for the human user's prompt instruction before proceeding.
     "last_updated": "<iso_timestamp>"
   }
   ```
-- **Lifecycle Kernel (`scripts/lifecycle_kernel.py`)** — The authoritative controller for runtime state snapshots, task dispatches, and orchestrator decisions. The kernel provides 6 distinct operations:
-  - **`init`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py init --receipt-root "<receipt_root>" --root-issue <root_id> [--repo-dir <repo_dir>] [--require-config]`
+- **Lifecycle Kernel (`packages/orchestrator/src/cli.ts`)** — The authoritative controller for runtime state snapshots, task dispatches, and orchestrator decisions. The kernel provides 6 distinct operations:
+  - **`init`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" init --receipt-root "<receipt_root>" --root-issue <root_id> [--repo-dir <repo_dir>] [--require-config]`
     Creates workflow run state in `<receipt_root>/state.json`. Validates workspace configuration and populates root context.
-  - **`prepare`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`
+  - **`prepare`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`
     Prepares a fixed task, allocates monotonically increasing `step_index`, generates Task Input Envelope `<step_index>-input.json`, assigns deterministic receipt path `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
-  - **`handoff`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py handoff --receipt-root "<receipt_root>" [--dispatch-id <id>] [--platform-handle <handle>]`
+  - **`handoff`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>" [--dispatch-id <id>] [--platform-handle <handle>]`
     Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Subsequent calls or queries do NOT grant new launch permission.
-  - **`complete`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py complete --receipt-root "<receipt_root>" --report '<compact_json>'`
+  - **`complete`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --report '<compact_json>'`
     Registers compact execution report (validating `execution_status`, `result`, `receipt_path`, `summary`) and verifies physical non-empty receipt existence on disk.
-  - **`resolve`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish|<next_stage>> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id>] [--complete-sequence]`
+  - **`resolve`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish|<next_stage>> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id>] [--complete-sequence]`
     Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately. Explicitly resolves stage transitions, sequence progression, or blocking actions.
-  - **`inspect`**: `python3 <skill-dir>/scripts/lifecycle_kernel.py inspect --receipt-root "<receipt_root>" [--json] [--field <path>]`
+  - **`inspect`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" inspect --receipt-root "<receipt_root>" [--json] [--field <path>]`
     Queries current state, active dispatch, orchestrator decisions, budgets, and reasons blocking progression.
-- **Task Input Envelope Engine (`scripts/envelope.py`)** — Low-level validation and inspection:
-  - Validate: `python3 <skill-dir>/scripts/envelope.py validate "<receipt_root>/<step>-input.json"`
-  - Inspect: `python3 <skill-dir>/scripts/envelope.py show "<receipt_root>/<step>-input.json" [--json]`
+- **Task Input Envelope Helper (`packages/orchestrator/src/envelope-cli.ts`)** — Low-level validation and inspection:
+  - Validate: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts" validate "<receipt_root>/<step>-input.json"`
+  - Inspect: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts" show "<receipt_root>/<step>-input.json" [--json]`
 - **Durable File Receipts** — Specialist agents write their evidence, logs, and verification outputs to their assigned `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md` file using [the receipt template](templates/subagent-receipt.template.md). Receipts remain outside source checkouts.
-- **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator inspects `<receipt_root>/state.json` directly via `lifecycle_kernel.py inspect`:
+- **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator inspects `<receipt_root>/state.json` directly via `packages/orchestrator/src/cli.ts inspect`:
   1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using recorded receipt references, active dispatch status, and consumed budgets.
   2. If `state.json` is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.

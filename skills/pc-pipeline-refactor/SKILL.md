@@ -111,7 +111,7 @@ Update code, rules, configurations, and test suites to use the target paths spec
 Keep code changes strictly scoped to path updates, preserving business logic and analytical parameters.
 
 Execution steps:
-1. **Configuration Anchors**: Update base directory paths and dataset paths in `config/config.yaml` and `config/schema.yaml`.
+1. **Configuration Anchors**: Update base directory paths and dataset paths in `config/config.yaml` and `config/schema.json`.
 2. **Workflow Rules**: Update `include:` directives in `workflow/Snakefile` to point to unnumbered semantic rules.
    Update rule `input:`, `output:`, and `log:` directives in `workflow/rules/*.smk` to match the new submodule and mirror output hierarchy.
 3. **Script Invocations**: Update script relative paths in rule `script:` directives (e.g., `script: "../scripts/<stage>/<submodule>/<script>.py"`).
