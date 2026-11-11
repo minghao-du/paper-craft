@@ -10,6 +10,8 @@ import type {
   DeliverySequence,
 } from "./types.js";
 
+const LANDING_PROVIDER = "pc-pr-land";
+
 export function validatePlanOrder(tasks: unknown[]): string[] {
   if (!Array.isArray(tasks) || !tasks.length) {
     throw new Error("Plan must contain at least one task.");
@@ -236,12 +238,63 @@ export function calculateDeliveryChange(
   };
 }
 
+function assertLandingEvidence(
+  params: ApplyDeliveryDecisionParams,
+  issue: string,
+  dispatchId: string,
+): { receipt_path: string } {
+  const record = (params.completedStages ?? []).find(
+    (e) => e.dispatch_id === dispatchId,
+  );
+  if (!record) {
+    throw new Error(
+      `Landing dispatch '${dispatchId}' not found in completed stages.`,
+    );
+  }
+  if (record.issue_id == null || String(record.issue_id).trim() === "") {
+    throw new Error(
+      `Landing dispatch '${dispatchId}' lacks issue_id; use a completed record that carries issue_id.`,
+    );
+  }
+  if (String(record.issue_id).trim() !== issue) {
+    throw new Error(
+      `Landing dispatch '${dispatchId}' belongs to issue '${String(record.issue_id)}', not '${issue}'.`,
+    );
+  }
+  const stageDef = params.workflow.stages.find((s) => s.id === record.stage);
+  if (stageDef?.provider?.target !== LANDING_PROVIDER) {
+    throw new Error(
+      `Landing dispatch '${dispatchId}' stage '${String(record.stage)}' is not a '${LANDING_PROVIDER}' stage in the workflow.`,
+    );
+  }
+  const result = (record.result ?? {}) as Record<string, unknown>;
+  const nonEmpty = (v: unknown): boolean =>
+    typeof v === "string" && v.trim() !== "";
+  if (
+    record.execution_status !== "succeeded" ||
+    result.outcome !== "landed" ||
+    result.merged !== true ||
+    !nonEmpty(result.mergedCommit)
+  ) {
+    throw new Error(
+      `Landing dispatch '${dispatchId}' does not satisfy the landed outcome contract (requires succeeded, outcome 'landed', merged true, mergedCommit).`,
+    );
+  }
+  if (!nonEmpty(record.receipt_path)) {
+    throw new Error(`Landing dispatch '${dispatchId}' has no receipt_path.`);
+  }
+  return { receipt_path: record.receipt_path as string };
+}
+
 export function applyDeliveryDecision(
   params: ApplyDeliveryDecisionParams,
 ): ApplyDeliveryDecisionResult {
-  let deliverySequence = params.deliverySequence ?? undefined;
+  // Work on clones so a thrown validation error leaves caller state untouched.
+  let deliverySequence = params.deliverySequence
+    ? structuredClone(params.deliverySequence)
+    : undefined;
   let currentIssueId = params.currentIssueId;
-  const budgets = params.budgets;
+  const budgets = structuredClone(params.budgets);
 
   const children = params.childIssues?.length
     ? validatePlanOrder(params.childIssues)
@@ -284,39 +337,70 @@ export function applyDeliveryDecision(
     }
   }
 
+  if ((params.markLanded != null) !== (params.landingDispatchId != null)) {
+    throw new Error(
+      "markLanded and landingDispatchId must be provided together.",
+    );
+  }
+
   if (params.markLanded != null) {
     const issue = String(params.markLanded).trim();
-    if (deliverySequence) {
-      if (deliverySequence.active_rework_issue_id === issue) {
-        deliverySequence.active_rework_issue_id = null;
-      }
-      const item = deliverySequence.items.find(
-        (i) => String(i.issue_id) === issue,
+    const dispatchId = String(params.landingDispatchId).trim();
+    if (!deliverySequence) {
+      throw new Error(
+        `Cannot mark issue '${issue}' landed: no delivery sequence exists.`,
       );
-      if (item) {
-        item.landed = true;
-        item.status = "landed";
-        item.stage = "landed";
-        if (params.completedStages?.length) {
-          item.land_receipt_path = String(
-            params.completedStages.at(-1)?.receipt_path ?? "",
-          );
-        }
+    }
+    const item = deliverySequence.items.find(
+      (i) => String(i.issue_id) === issue,
+    );
+    if (!item) {
+      throw new Error(
+        `Cannot mark issue '${issue}' landed: issue not found in delivery sequence.`,
+      );
+    }
+    const record = assertLandingEvidence(params, issue, dispatchId);
+    if (item.landed) {
+      if (item.land_dispatch_id !== dispatchId) {
+        throw new Error(
+          `Issue '${issue}' is already landed by dispatch '${String(item.land_dispatch_id)}'; refusing different landing evidence from dispatch '${dispatchId}'.`,
+        );
       }
+    } else {
+      item.landed = true;
+      item.status = "landed";
+      item.stage = "landed";
+      item.land_dispatch_id = dispatchId;
+      item.land_receipt_path = record.receipt_path;
+    }
+    if (deliverySequence.active_rework_issue_id === issue) {
+      deliverySequence.active_rework_issue_id = null;
     }
   }
 
   if (params.completeSequence) {
-    if (deliverySequence) {
+    if (!deliverySequence) {
+      throw new Error("Cannot complete delivery sequence: none exists.");
+    }
+    if (!deliverySequence.completed) {
+      const unlanded = deliverySequence.items.filter(
+        (i) => !i.landed || !i.land_receipt_path || !i.land_dispatch_id,
+      );
+      if (unlanded.length) {
+        throw new Error(
+          `Cannot complete delivery sequence: issues without landing evidence: ${unlanded.map((i) => i.issue_id).join(", ")}.`,
+        );
+      }
       deliverySequence.completed = true;
       currentIssueId = String(params.rootIssueId ?? "0");
     }
   }
 
+  Object.assign(params.budgets, budgets);
   return {
     deliverySequence,
     currentIssueId,
-    budgets,
+    budgets: params.budgets,
   };
 }
 

@@ -3,9 +3,9 @@
  */
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { parseReportInput } from "../protocol/index.js";
 import type {
   CompactReport,
-  ExecutionStatus,
   NormalizedPrepareRequest,
   ResolveOptions,
 } from "./types.js";
@@ -32,7 +32,9 @@ export function parsePrepareRequest(raw: unknown): NormalizedPrepareRequest {
     try {
       parsed = JSON.parse(parsed);
     } catch (error) {
-      throw new Error(`Invalid prepare request JSON: ${String(error)}`);
+      throw new Error(`Invalid prepare request JSON: ${String(error)}`, {
+        cause: error,
+      });
     }
   }
 
@@ -271,67 +273,7 @@ export function compareNormalizedRequests(
   return true;
 }
 
-export function parseCompleteReport(raw: unknown): CompactReport {
-  let report: unknown = raw;
-  if (typeof report === "string") {
-    try {
-      report = JSON.parse(report);
-    } catch (error) {
-      throw new Error(`Invalid compact report JSON: ${String(error)}`);
-    }
-  }
-
-  if (!report || typeof report !== "object" || Array.isArray(report)) {
-    throw new Error("Report must be a JSON object dictionary or JSON string.");
-  }
-
-  const rec = report as Record<string, unknown>;
-
-  for (const key of ["execution_status", "result", "receipt_path", "summary"]) {
-    if (!(key in rec)) {
-      throw new Error(
-        `Compact execution report missing required field: '${key}'`,
-      );
-    }
-  }
-
-  const status = rec.execution_status;
-  if (status !== "succeeded" && status !== "failed" && status !== "blocked") {
-    throw new Error(
-      `Invalid execution_status '${status}'. Expected 'succeeded' | 'failed' | 'blocked'.`,
-    );
-  }
-
-  if (!rec.result || typeof rec.result !== "object" || Array.isArray(rec.result)) {
-    throw new Error(
-      `Field 'result' must be a JSON object (dict), got ${rec.result === null ? "NoneType" : typeof rec.result}.`,
-    );
-  }
-
-  if (typeof rec.receipt_path !== "string" || !rec.receipt_path.trim()) {
-    throw new Error("Field 'receipt_path' must be a non-empty string.");
-  }
-
-  if (typeof rec.summary !== "string" || !rec.summary.trim()) {
-    throw new Error("Field 'summary' must be a non-empty string.");
-  }
-
-  if (
-    rec.dispatch_id !== undefined &&
-    rec.dispatch_id !== null &&
-    (typeof rec.dispatch_id !== "string" || !rec.dispatch_id.trim())
-  ) {
-    throw new Error("Field 'dispatch_id' must be a non-empty string if provided.");
-  }
-
-  return {
-    execution_status: status as ExecutionStatus,
-    result: rec.result as Record<string, unknown>,
-    receipt_path: rec.receipt_path.trim(),
-    summary: rec.summary.trim(),
-    ...(rec.dispatch_id ? { dispatch_id: (rec.dispatch_id as string).trim() } : {}),
-  };
-}
+export const parseCompleteReport = parseReportInput;
 
 export function compareCompleteReports(
   a: CompactReport,
@@ -388,6 +330,9 @@ export function parseResolveOptions(
       : {}),
     ...(raw.mark_landed != null
       ? { mark_landed: raw.mark_landed as string | number }
+      : {}),
+    ...(raw.landing_dispatch_id != null
+      ? { landing_dispatch_id: String(raw.landing_dispatch_id).trim() }
       : {}),
     ...(typeof raw.complete_sequence === "boolean"
       ? { complete_sequence: raw.complete_sequence }

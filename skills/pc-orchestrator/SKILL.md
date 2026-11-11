@@ -23,7 +23,7 @@ exclusively by dedicated Specialist Subagents.
 ### Authorized Orchestrator Responsibilities
 The Orchestrator's sole responsibilities are:
 1. Receiving the root Issue and goal from the user.
-2. Maintaining workflow runtime state directly by recording state snapshots to `<receipt_root>/state.json`.
+2. Maintaining workflow runtime state exclusively via the lifecycle kernel helper (`packages/orchestrator/src/cli.ts`), never editing `<receipt_root>/state.json` directly.
 3. Generating Task Input Envelopes (`<receipt_root>/<step>-input.json`) and dispatching execution environments, professional tasks, and cleanup through resolved Execution Providers (Specialist Subagents).
 4. Checking compact execution reports and consuming professional conclusions.
 5. Routing to the next stage or dispatching repair subagents.
@@ -156,7 +156,7 @@ Check routing fields and reported execution environment against the dispatched t
 
 If a compact report is missing, unparseable, contradictory, or the referenced receipt file does not exist,
 the Orchestrator follows Constitution's **Fail Fast**:
-- Record the protocol defect in `<receipt_root>/state.json`.
+- Submit the report defect via the lifecycle kernel helper (`packages/orchestrator/src/cli.ts complete`), which records the protocol error against the active dispatch. Never edit `state.json` directly.
 - Halt immediately and present the Blocker Decision Board to the user with the observed defect and last confirmed state.
 - Do not dispatch speculative repair agents to guess missing conclusions.
 
@@ -192,22 +192,28 @@ For each stage defined in the loaded workflow:
 3. **Prepare Task Dispatch**:
    - Write the [prepare request](#prepare-request) with a JSON serializer, then execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`.
    - The kernel atomically allocates monotonically increasing `step_index`, generates `<step_index>-input.json`, assigns `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
+   - **Prepared Task Conflict Rule**: In-place replacement of a prepared task is not supported. If a different task is prepared while a prepared dispatch is already pending, either continue the original dispatch (`handoff` then `complete`) or, once verified it was never started, plan again in a new receipt root. Never use `resolve` to cancel or manually edit state.
 4. **Handoff Execution**:
    - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>" --dispatch-id "<dispatch_id>"` to authorize execution launch.
-   - Handoff authorization semantics: Only the first valid call for an active prepared dispatch returns `"authorized": true`, granting launch authorization. Platform agent launch is performed by the Skill. If `"authorized": false`, the dispatch was already authorized previously.
+   - Handoff authorization semantics: Only the first valid call for an active prepared dispatch returns `"authorized": true`, granting launch authorization. Platform agent launch is performed by the Skill. Subsequent calls or queries return `"authorized": false` and do NOT grant new launch permission.
+   - **Pause Semantics**: When the workflow is paused (`halt` or `wait_user`), handoff of a prepared task is blocked until resumed via `resolve --decision continue`. Pausing stops new task launches but does *not* cancel an already handed-off task; handed-off tasks may still complete during a pause.
    - Dispatch fresh specialist subagent using platform adapter with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
 5. **Complete Dispatch & Verify Receipt**:
    - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --dispatch-id "<dispatch_id>" --report '<compact_json_report>'`.
-   - The kernel validates report integrity (the 4 required fields) and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
+   - The kernel validates report integrity (the 4 required fields), tags completion with the active dispatch's `issue_id`, and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
+   - Completing a task preserves any existing pause decision (`halt`/`wait_user`). If execution outcome is unknown or in flight, verify against original execution rather than guessing or restarting.
 6. **Evaluate Routing & Resolve Decision**:
    - Match the returned native `result` against the stage's routing table.
-   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>" [--next-stage <stage>]`. Orchestrator explicitly selects the next stage (via `--next-stage <stage>`) or records steering decisions; arbitrary stage names are rejected as `--decision`. `complete` solely records receipt verification and never auto-advances stages.
+   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>" [--next-stage <stage>] [--mark-landed <id> --landing-dispatch-id <dispatch_id>]`.
+   - Orchestrator explicitly selects the next stage (via `--next-stage <stage>`) or records steering decisions; arbitrary stage names are rejected as `--decision`. `complete` solely records receipt verification and never auto-advances stages.
+   - **Landed Evidence Rule**: `--mark-landed <issue_id>` and `--landing-dispatch-id <dispatch_id>` must be provided together. The referenced dispatch must be a succeeded completion record whose stage/provider target matches `pc-pr-land` and whose result satisfies `{ outcome: "landed", merged: true, mergedCommit: "<sha>" }`.
+   - **Sequence Completion Rule**: `--complete-sequence` requires a delivery sequence where every item is landed with valid landing dispatch evidence.
    - For linear progression, advance to the indicated successor stage.
    - For rework, route to the designated repair role with predecessor findings, tracking consumed retry budgets.
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
    - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
    - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
-7. **Completion Gate**: After the workflow's required professional gates succeed, finalize issue closure and reconcile the full issue-tree resource inventory, then dispatch workspace cleanup. Require a successful tree finalization receipt and cleanup with no retained targets before `resolve --decision finish`. Retained targets mean delivery complete / cleanup incomplete; retry only outstanding finalization work.
+7. **Completion Gate**: After the workflow's required professional gates succeed, finalize issue closure and reconcile the full issue-tree resource inventory, then dispatch workspace cleanup. Require a successful tree finalization receipt and cleanup with no retained targets before `resolve --decision finish`. Retained targets mean delivery complete / cleanup incomplete; retry only outstanding finalization work. `finish` is terminal: a finished workflow cannot be reopened via `continue`.
 
 ---
 
@@ -244,7 +250,7 @@ Wait for the human user's prompt instruction before proceeding.
 
 ## State Persistence & Session Recovery
 
-- **Structured State Snapshot (`state.json`)** — The Orchestrator maintains `<receipt_root>/state.json` via the lifecycle kernel as the authoritative runtime state:
+- **Structured State Snapshot (`state.json`)** — The authoritative runtime state machine snapshot on disk. The Orchestrator interacts with this state exclusively via the lifecycle kernel helpers, never modifying `state.json` directly:
   ```json
   {
     "schema_version": "1.0",
@@ -261,6 +267,7 @@ Wait for the human user's prompt instruction before proceeding.
         "step_index": 1,
         "stage": "<stage_name>",
         "attempt": 1,
+        "issue_id": "<current_issue_id>",
         "execution_status": "succeeded",
         "result": { "outcome": "<domain_outcome>" },
         "receipt_path": "<assigned_absolute_receipt_path>",
@@ -295,17 +302,17 @@ Wait for the human user's prompt instruction before proceeding.
     Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Platform agent launch is performed by the Skill. Subsequent calls or queries return `"authorized": false` and do NOT grant new launch permission.
   - **`complete`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --dispatch-id <id> --report '<compact_json|report_path>'`
     Registers compact execution report (validating `execution_status`, `result`, `receipt_path`, `summary`) and verifies physical non-empty receipt existence on disk.
-  - **`resolve`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id>] [--complete-sequence]`
-    Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately. Decisions are strictly constrained to `wait_user`, `continue`, `halt`, or `finish`; transitions to a named stage must use `--decision continue --next-stage <stage>`.
+  - **`resolve`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id> --landing-dispatch-id <id>] [--complete-sequence]`
+    Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately. Decisions are strictly constrained to `wait_user`, `continue`, `halt`, or `finish`; transitions to a named stage must use `--decision continue --next-stage <stage>`. `--mark-landed` and `--landing-dispatch-id` must be passed together and reference valid landing evidence from completed stages.
   - **`inspect`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" inspect --receipt-root "<receipt_root>" [--json] [--field <path>]`
     Queries current state, active dispatch, orchestrator decisions, budgets, and reasons blocking progression.
 - **Task Input Envelope Helper (`packages/orchestrator/src/envelope-cli.ts`)** — Low-level validation and inspection:
   - Validate: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts" validate "<receipt_root>/<step>-input.json"`
   - Inspect: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts" show "<receipt_root>/<step>-input.json" [--json]`
 - **Durable File Receipts** — Specialist agents write their evidence, logs, and verification outputs to their assigned `<step_index>-<task_name>-issue-<current_issue_id>-try-<attempt>.md` file using [the receipt template](templates/subagent-receipt.template.md). Receipts remain outside source checkouts.
-- **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator inspects `<receipt_root>/state.json` directly via `packages/orchestrator/src/cli.ts inspect`:
-  1. If `state.json` exists, restore in-memory tracking from its fields and resume from `current_stage` using recorded receipt references, active dispatch status, and consumed budgets.
-  2. If `state.json` is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
+- **Resumption ($O(1)$)** — To resume an interrupted workflow, the Orchestrator inspects workflow state via `packages/orchestrator/src/cli.ts inspect`:
+  1. If valid state exists, restore in-memory tracking from its fields and resume from `current_stage` using recorded receipt references, active dispatch status, and consumed budgets.
+  2. If state is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.
 
 ### Prepare Request

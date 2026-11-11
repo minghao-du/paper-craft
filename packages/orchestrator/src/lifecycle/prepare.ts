@@ -6,6 +6,7 @@ import path from "node:path";
 import { commitRun, loadRun } from "../run-store/index.js";
 import { calculateDeliveryChange, resolveTaskIntent } from "../workflow/index.js";
 import { createEnvelope } from "./envelope.js";
+import { assertNotPaused, assertMatchesPendingStageDecision, isFinished } from "./control.js";
 import { compareNormalizedRequests, parsePrepareRequest } from "./requests.js";
 import type { PrepareOptions, PrepareResult, RuntimeState } from "./types.js";
 
@@ -14,19 +15,7 @@ export function prepareTask(options: PrepareOptions): PrepareResult {
   const state = loadRun<RuntimeState>(root);
   const expectedPreviousState = JSON.parse(JSON.stringify(state));
 
-  if (
-    state.stage_status === "halted" ||
-    state.orchestrator_decision === "halt"
-  ) {
-    throw new Error(
-      "Cannot prepare task: Workflow is halted. Run 'resolve --decision continue' to resume first.",
-    );
-  }
-
-  if (
-    state.stage_status === "succeeded" &&
-    state.current_stage === "completed"
-  ) {
+  if (isFinished(state)) {
     throw new Error(
       "Cannot prepare task: Workflow is completed. Start a new run in a new receipt root.",
     );
@@ -115,7 +104,7 @@ export function prepareTask(options: PrepareOptions): PrepareResult {
   if (active) {
     if (["handed_off", "running"].includes(active.status)) {
       throw new Error(
-        `Cannot prepare task: Active dispatch '${active.dispatch_id}' has already been handed off to execution. Complete or resolve it first.`,
+        `Cannot prepare task: Active dispatch '${active.dispatch_id}' has already been handed off to execution. Submit its completion report with 'complete' (an unknown result must be verified against the original execution, not restarted).`,
       );
     }
     if (active.status === "prepared") {
@@ -132,10 +121,13 @@ export function prepareTask(options: PrepareOptions): PrepareResult {
         };
       }
       throw new Error(
-        `Cannot prepare task: Active dispatch '${active.dispatch_id}' is already pending. Resolve or complete it before preparing a different task.`,
+        `Cannot prepare task: Active dispatch '${active.dispatch_id}' is prepared but not yet authorized, and replacing it in place is not supported. Continue the original dispatch (handoff, then complete), or, once you have confirmed it was never started, plan again in a new receipt root.`,
       );
     }
   }
+
+  assertNotPaused(state, "prepare a task");
+  assertMatchesPendingStageDecision(state, intent.canonical_stage, intent.auxiliary);
 
   for (const item of normalizedRequest.predecessor_receipts) {
     if (typeof item !== "string" || !item.trim()) {

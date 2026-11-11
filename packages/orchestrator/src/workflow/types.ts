@@ -68,6 +68,7 @@ export interface DeliveryItem {
   };
   landed: boolean;
   land_receipt_path?: string;
+  land_dispatch_id?: string;
   [key: string]: unknown;
 }
 
@@ -144,8 +145,19 @@ export interface ApplyDeliveryDecisionParams {
   plan?: unknown;
   currentIssue?: string | null;
   markLanded?: string | null;
+  landingDispatchId?: string | null;
   completeSequence?: boolean;
-  completedStages?: Array<{ receipt_path?: string; [key: string]: unknown }>;
+  workflow: WorkflowDefinition;
+  completedStages?: Array<{
+    dispatch_id?: string;
+    issue_id?: string;
+    stage?: string;
+    execution_status?: string;
+    result?: Record<string, unknown>;
+    receipt_path?: string;
+    step_index?: number;
+    [key: string]: unknown;
+  }>;
 }
 
 export interface ApplyDeliveryDecisionResult {

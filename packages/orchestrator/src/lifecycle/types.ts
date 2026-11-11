@@ -55,22 +55,16 @@ export interface Dispatch {
   [key: string]: unknown;
 }
 
-export type ExecutionStatus = "succeeded" | "failed" | "blocked";
-
-export interface CompactReport {
-  execution_status: ExecutionStatus;
-  result: Record<string, unknown>;
-  receipt_path: string;
-  summary: string;
-  dispatch_id?: string;
-  [key: string]: unknown;
-}
+export type { CompactReport, ExecutionStatus, TaskInputEnvelope } from "../protocol/index.js";
+import type { ExecutionStatus } from "../protocol/index.js";
 
 export interface Completion {
   dispatch_id: string;
   step_index: number;
   stage: string;
   attempt: number;
+  /** Issue the dispatch worked on; taken from the active dispatch, not mutable current_issue_id. */
+  issue_id?: string;
   execution_status: ExecutionStatus;
   result: Record<string, unknown>;
   receipt_path: string;
@@ -96,6 +90,7 @@ export interface DecisionRecord {
   next_stage?: string;
   current_issue?: string;
   mark_landed?: string;
+  landing_dispatch_id?: string | null;
   complete_sequence?: boolean;
   timestamp: string;
   [key: string]: unknown;
@@ -213,6 +208,8 @@ export interface ResolveOptions {
   plan?: unknown;
   current_issue?: string | number | null;
   mark_landed?: string | number | null;
+  /** Dispatch id of the completed pc-pr-land record that proves mark_landed. */
+  landing_dispatch_id?: string | null;
   complete_sequence?: boolean;
   [key: string]: unknown;
 }
@@ -220,47 +217,6 @@ export interface ResolveOptions {
 export interface InspectOptions {
   receipt_root: string;
   field?: string;
-}
-
-export interface TaskInputEnvelope {
-  schema_version: string;
-  task: {
-    logical_stage: string;
-    step_index: number;
-    attempt: number;
-    root_issue_id: string;
-    current_issue_id: string;
-  };
-  provider: {
-    type: string;
-    target: string;
-    args: string[];
-  };
-  environment: {
-    working_directory: string;
-    repository: string;
-    base_branch: string;
-    branch: string | null;
-    commit: string | null;
-  };
-  inputs: {
-    objective: string;
-    scope: string;
-    acceptance_criteria: string[];
-    predecessor_receipts: string[];
-    parameters: Record<string, unknown>;
-  };
-  contract: {
-    receipt_path: string;
-    receipt_template: string;
-  };
-  budgets: {
-    delivery_attempts_used: number;
-    delivery_attempts_max: number;
-    replans_used: number;
-    replans_max: number;
-  };
-  [key: string]: unknown;
 }
 
 export interface EnvelopeCreateOptions {

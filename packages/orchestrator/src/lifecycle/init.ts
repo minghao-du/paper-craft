@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveWorkspaceConfig } from "../../../workspace-config/src/index.js";
-import { commitRun, getStateFilePath, getPendingCommitPath, loadRun } from "../run-store/index.js";
+import { commitRun, loadRunIfExists, replaceRun } from "../run-store/index.js";
 import {
   loadAndValidateWorkflow,
   makeDeliverySequence,
@@ -72,10 +72,9 @@ export function initWorkflow(o: InitOptions): RuntimeState {
 
   const snapshot = loadAndValidateWorkflow(o.workflow || config.workflow, repo);
   const rootIssue = String(o.root_issue ?? 0);
-  const stateFile = getStateFilePath(root);
 
-  if (fs.existsSync(stateFile) && !o.force) {
-    const existing = loadRun<RuntimeState>(root);
+  const existing = o.force ? null : loadRunIfExists<RuntimeState>(root);
+  if (existing) {
     const oldRepo =
       existing.config_snapshot?.repo_checkout ??
       (existing.context?.repo_checkout as string | undefined);
@@ -161,28 +160,15 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     );
   }
 
-  let existingState: RuntimeState | null = null;
-  if (fs.existsSync(stateFile) && o.force) {
-    try {
-      existingState = loadRun<RuntimeState>(root);
-    } catch {
-      if (fs.existsSync(getPendingCommitPath(root))) {
-        try {
-          fs.unlinkSync(getPendingCommitPath(root));
-        } catch {}
-      }
-      try {
-        fs.unlinkSync(stateFile);
-      } catch {}
-      existingState = null;
-    }
+  if (o.force) {
+    replaceRun(root, state);
+  } else {
+    commitRun(root, {
+      is_initial: true,
+      expected_previous_state: null,
+      target_state: state,
+    });
   }
-
-  commitRun(root, {
-    is_initial: existingState === null,
-    expected_previous_state: existingState,
-    target_state: state,
-  });
 
   return state;
 }

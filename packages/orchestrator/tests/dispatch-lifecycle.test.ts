@@ -277,7 +277,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         replans_max: 2,
       });
 
-      const state1 = loadRun<Record<string, unknown>>(env.dir);
+      const state1 = loadRun<{ budgets: Record<string, unknown> }>(env.dir);
       expect(state1.budgets.delivery_attempts_used).toBe(0);
       expect(state1.budgets.replans_used).toBe(0);
 
@@ -289,7 +289,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         workdir: env.dir,
       });
 
-      const state2 = loadRun<Record<string, unknown>>(env.dir);
+      const state2 = loadRun<{ budgets: Record<string, unknown> }>(env.dir);
       expect(state2.budgets.delivery_attempts_used).toBe(1);
 
       handoffDispatch({ receipt_root: env.dir, dispatch_id: p1.dispatch_id });
@@ -313,7 +313,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         next_stage: 'stage_1_plan',
       });
 
-      const state3 = loadRun<Record<string, unknown>>(env.dir);
+      const state3 = loadRun<{ budgets: Record<string, unknown> }>(env.dir);
       expect(state3.budgets.delivery_attempts_used).toBe(1);
     } finally {
       env.cleanup();

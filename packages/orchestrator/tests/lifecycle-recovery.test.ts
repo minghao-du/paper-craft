@@ -42,3 +42,22 @@ test('prepared dispatch recovers without duplicate steps, budget consumption or 
     env.cleanup();
   }
 }, 20000);
+
+// Forced init over a corrupt state must preserve evidence and still start a fresh run.
+test('init --force replaces corrupt state and keeps it as evidence', () => {
+  const env = createTestDir('pc-force-corrupt-');
+  try {
+    const first = runLifecycleKernelCli(['init', '--receipt-root', env.dir, '--root-issue', '80']);
+    expect(first.status, first.stderr).toBe(0);
+    const statePath = path.join(env.dir, 'state.json');
+    fs.writeFileSync(statePath, '{not json');
+    const plain = runLifecycleKernelCli(['init', '--receipt-root', env.dir, '--root-issue', '80']);
+    expect(plain.status).not.toBe(0);
+    const forced = runLifecycleKernelCli(['init', '--receipt-root', env.dir, '--root-issue', '80', '--force']);
+    expect(forced.status, forced.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(statePath, 'utf8')).root_issue_id).toBe('80');
+    expect(fs.readdirSync(env.dir).some((f) => f.startsWith('state.json.corrupt-'))).toBe(true);
+  } finally {
+    env.cleanup();
+  }
+}, 20000);

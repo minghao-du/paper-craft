@@ -5,9 +5,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { EnvelopeCreateOptions, TaskInputEnvelope } from "./types.js";
-
-export type JsonObject = Record<string, unknown>;
+import {
+  assertTaskInputEnvelope,
+  type TaskInputEnvelope,
+} from "../protocol/index.js";
+import type { EnvelopeCreateOptions } from "./types.js";
 
 const candidateTemplate = fileURLToPath(
   new URL(
@@ -26,12 +28,6 @@ export const DEFAULT_RECEIPT_TEMPLATE = fs.existsSync(candidateTemplate)
   : fallbackTemplate;
 
 export class EnvelopeError extends Error {}
-export class EnvelopeValidationError extends EnvelopeError {
-  constructor(public errors: string[]) {
-    super(`Invalid TaskInputEnvelope:\n  - ${errors.join("\n  - ")}`);
-    this.name = "EnvelopeValidationError";
-  }
-}
 export class EnvelopeCorruptedError extends EnvelopeError {
   constructor(message: string) {
     super(message);
@@ -39,133 +35,14 @@ export class EnvelopeCorruptedError extends EnvelopeError {
   }
 }
 
-export const isObject = (value: unknown): value is JsonObject =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-
-export function validateEnvelope(data: unknown): string[] {
-  if (!isObject(data)) return ["Root envelope must be a JSON object (dict)"];
-  const object = data;
-  const errors: string[] = [];
-  const sections = [
-    "schema_version",
-    "task",
-    "provider",
-    "environment",
-    "inputs",
-    "contract",
-    "budgets",
-  ];
-  for (const key of sections) {
-    if (!(key in data)) errors.push(`Missing required top-level key: '${key}'`);
-  }
-  if ("schema_version" in data && data.schema_version !== "1.0") {
-    errors.push(
-      `[schema_version] Unsupported schema_version '${data.schema_version}'. Expected '1.0'`,
-    );
-  }
-
-  function section(name: string, inspect: (value: JsonObject) => void) {
-    const value = object[name];
-    if (!(name in object)) return;
-    if (!isObject(value)) errors.push(`[${name}] Expected JSON object (dict)`);
-    else inspect(value);
-  }
-
-  function text(obj: JsonObject, field: string, location: string) {
-    const value = obj[field];
-    if (typeof value !== "string" || !value.trim()) {
-      errors.push(`[${location}.${field}] Expected non-empty string`);
-    }
-  }
-
-  function integer(
-    obj: JsonObject,
-    field: string,
-    location: string,
-    minimum: number,
-    required = false,
-  ) {
-    if (!(field in obj)) {
-      if (required) {
-        errors.push(`[${location}.${field}] Expected integer >= ${minimum}`);
-      }
-      return;
-    }
-    const value = obj[field];
-    if (
-      typeof value !== "number" ||
-      !Number.isInteger(value) ||
-      value < minimum
-    ) {
-      errors.push(
-        `[${location}.${field}] Expected integer >= ${minimum}, got ${obj[field]}`,
-      );
-    }
-  }
-
-  section("task", (task) => {
-    for (const field of ["logical_stage", "root_issue_id", "current_issue_id"]) {
-      text(task, field, "task");
-    }
-    integer(task, "step_index", "task", 0, true);
-    integer(task, "attempt", "task", 1, true);
-  });
-
-  section("provider", (provider) => {
-    if (provider.type !== "skill") {
-      errors.push(`[provider.type] Expected 'skill', got '${provider.type}'`);
-    }
-    text(provider, "target", "provider");
-    if (
-      "args" in provider &&
-      (!Array.isArray(provider.args) ||
-        provider.args.some((a) => typeof a !== "string"))
-    ) {
-      errors.push("[provider.args] Expected list of strings");
-    }
-  });
-
-  section("environment", (env) => {
-    text(env, "working_directory", "environment");
-  });
-
-  section("inputs", (inputs) => {
-    text(inputs, "objective", "inputs");
-    if ("scope" in inputs && typeof inputs.scope !== "string") {
-      errors.push("[inputs.scope] Expected string");
-    }
-    for (const field of ["acceptance_criteria", "predecessor_receipts"]) {
-      if (field in inputs && !Array.isArray(inputs[field])) {
-        errors.push(`[inputs.${field}] Expected list`);
-      }
-    }
-    if ("parameters" in inputs && !isObject(inputs.parameters)) {
-      errors.push("[inputs.parameters] Expected JSON object (dict)");
-    }
-  });
-
-  section("contract", (contract) => {
-    text(contract, "receipt_path", "contract");
-  });
-
-  section("budgets", (budgets) => {
-    for (const field of ["delivery_attempts_used", "replans_used"]) {
-      integer(budgets, field, "budgets", 0);
-    }
-    for (const field of ["delivery_attempts_max", "replans_max"]) {
-      integer(budgets, field, "budgets", 1);
-    }
-  });
-
-  return errors;
-}
-
-export function assertValidEnvelope(
-  data: unknown,
-): asserts data is TaskInputEnvelope {
-  const errors = validateEnvelope(data);
-  if (errors.length) throw new EnvelopeValidationError(errors);
-}
+// Validation lives in ../protocol; re-exported for existing lifecycle callers.
+export {
+  EnvelopeValidationError,
+  isObject,
+  validateTaskInputEnvelope as validateEnvelope,
+  assertTaskInputEnvelope as assertValidEnvelope,
+  type JsonObject,
+} from "../protocol/index.js";
 
 export function loadEnvelope(
   filename: string,
@@ -185,7 +62,7 @@ export function loadEnvelope(filename: string, validate = true): unknown {
       `Corrupted envelope JSON at ${absolute}: ${error}`,
     );
   }
-  if (validate) assertValidEnvelope(data);
+  if (validate) assertTaskInputEnvelope(data);
   return data;
 }
 
@@ -302,7 +179,7 @@ export function createEnvelope(
   };
 
   if (options.validate !== false) {
-    assertValidEnvelope(envelope);
+    assertTaskInputEnvelope(envelope);
   }
 
   return envelope;

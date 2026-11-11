@@ -19,8 +19,21 @@ import {
   WorkspaceOverrides,
 } from './types.js';
 import { findRepoRoot, resolvePath } from './git.js';
+import {
+  parseTaskInputEnvelope,
+  type TaskInputEnvelope as ProtocolTaskInputEnvelope,
+} from '../../orchestrator/src/protocol/index.js';
 
-export interface TaskInputEnvelope {
+/** @deprecated Use WorkspaceTaskInput (simplified) or the protocol TaskInputEnvelope (full). */
+export type TaskInputEnvelope = WorkspaceTaskInput;
+
+/**
+ * Simplified, all-optional task input for the explicit/independent workspace
+ * mapping functions. NOT the full versioned envelope: `--input-envelope`
+ * files are validated against the protocol `TaskInputEnvelope` by
+ * `loadEnvelope`, whose result is assignable to this type.
+ */
+export interface WorkspaceTaskInput {
   schema_version?: string;
   task?: {
     logical_stage?: string;
@@ -143,24 +156,20 @@ export interface RawPrepareCliArgs {
 }
 
 /**
- * Load and validate envelope JSON.
+ * Load a complete versioned Task Input Envelope and validate it through the
+ * shared protocol entry.
  */
-export function loadEnvelope(envelopePath: string): TaskInputEnvelope {
+export function loadEnvelope(envelopePath: string): ProtocolTaskInputEnvelope {
   const absPath = resolvePath(envelopePath);
   if (!fs.existsSync(absPath)) {
     throw new WorkspaceError('INVALID_INPUT', `Input envelope not found: ${absPath}`);
   }
   try {
-    const raw = fs.readFileSync(absPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Envelope root must be a JSON object');
-    }
-    return parsed as TaskInputEnvelope;
+    return parseTaskInputEnvelope(fs.readFileSync(absPath, 'utf8'));
   } catch (err) {
     throw new WorkspaceError(
       'INVALID_INPUT',
-      `Malformed envelope JSON at ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
+      `Invalid envelope at ${absPath}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -192,7 +201,7 @@ function assertNoConflict(name: string, cliVal: unknown, envVal: unknown, arePat
  */
 export function mapToPrepareRequest(
   args: RawPrepareCliArgs,
-  envelope?: TaskInputEnvelope,
+  envelope?: WorkspaceTaskInput,
 ): {
   request: PrepareRequest;
   receiptPath?: string;
@@ -354,7 +363,7 @@ export function mapToPrepareRequest(
  * Map CLI arguments and envelope to a CleanupRequest.
  */
 export function mapToCleanupRequest(
-  envelope: TaskInputEnvelope,
+  envelope: WorkspaceTaskInput,
   args: { repoDir?: string; receiptPath?: string },
 ): {
   request: CleanupRequest;
@@ -557,7 +566,7 @@ export interface BuildReceiptOptions {
   created: boolean;
   logicalStage: string;
   isCleanup?: boolean;
-  envelope?: TaskInputEnvelope;
+  envelope?: WorkspaceTaskInput;
   rootIssueId?: string;
   currentIssueId?: string;
   summary: string;

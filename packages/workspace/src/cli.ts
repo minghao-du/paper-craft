@@ -19,7 +19,7 @@ import {
   mapToCleanupRequest,
   mapToPrepareRequest,
   RawPrepareCliArgs,
-  TaskInputEnvelope,
+  WorkspaceTaskInput,
 } from './task-io.js';
 
 interface CliArgs {
@@ -42,79 +42,108 @@ interface CliArgs {
   cleanupFlag?: boolean;
 }
 
-function parseCliArgs(argv: string[]): CliArgs {
+class CliUsageError extends Error {}
+
+type StringOptionKey = Exclude<keyof CliArgs, 'subcommand' | 'issue' | 'outputFormat' | 'cleanupFlag'>;
+
+const STRING_OPTIONS: Record<string, StringOptionKey> = {
+  '--repo-dir': 'repoDir',
+  '--branch': 'branch',
+  '--worktree': 'worktree',
+  '--commit': 'commit',
+  '--expected-head': 'expectedHead',
+  '--workspace-config': 'workspaceConfig',
+  '--base': 'base',
+  '--delivery-target': 'deliveryTarget',
+  '--base-remote': 'baseRemote',
+  '--push-remote': 'pushRemote',
+  '--worktree-container': 'worktreeContainer',
+  '--receipt-path': 'receiptPath',
+  '--input-envelope': 'inputEnvelope',
+  '--input': 'inputEnvelope', // documented alias of --input-envelope
+};
+
+function parseIssueNumber(value: string): number {
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new CliUsageError(`Invalid --issue value '${value}': expected a positive integer.`);
+  }
+  const issue = Number(value);
+  if (!Number.isSafeInteger(issue)) {
+    throw new CliUsageError(`Invalid --issue value '${value}': out of safe integer range.`);
+  }
+  return issue;
+}
+
+/**
+ * Strictly parse argv. Pure: no Git, filesystem, or process side effects.
+ * Returns `help: true` when -h/--help is present (help wins over other errors).
+ */
+function parseCliArgs(argv: string[]): { args: CliArgs; help: boolean } {
+  if (argv.includes('-h') || argv.includes('--help')) {
+    return { args: {}, help: true };
+  }
+
   const args: CliArgs = {};
+  const seen = new Set<string>();
   let i = 0;
 
-  // Check leading subcommand
-  if (argv.length > 0 && (argv[0] === 'prepare' || argv[0] === 'cleanup')) {
+  if (argv.length > 0 && !argv[0].startsWith('-')) {
+    if (argv[0] !== 'prepare' && argv[0] !== 'cleanup') {
+      throw new CliUsageError(`Unknown subcommand '${argv[0]}'. Expected 'prepare' or 'cleanup'.`);
+    }
     args.subcommand = argv[0];
     i = 1;
   }
 
   while (i < argv.length) {
     const arg = argv[i];
-    const next = argv[i + 1];
+    if (!arg.startsWith('-')) {
+      throw new CliUsageError(`Unexpected argument '${arg}'.`);
+    }
+
+    // Canonical identity for duplicate detection (aliases collapse together).
+    const canonical = arg === '--input' ? '--input-envelope' : arg;
 
     if (arg === '--cleanup') {
+      if (seen.has(canonical)) throw new CliUsageError(`Duplicate option '${arg}'.`);
+      seen.add(canonical);
       args.cleanupFlag = true;
       i++;
-    } else if (arg === '--repo-dir' && next !== undefined) {
-      args.repoDir = next;
-      i += 2;
-    } else if (arg === '--issue' && next !== undefined) {
-      args.issue = parseInt(next, 10);
-      i += 2;
-    } else if (arg === '--branch' && next !== undefined) {
-      args.branch = next;
-      i += 2;
-    } else if (arg === '--worktree' && next !== undefined) {
-      args.worktree = next;
-      i += 2;
-    } else if (arg === '--commit' && next !== undefined) {
-      args.commit = next;
-      i += 2;
-    } else if (arg === '--expected-head' && next !== undefined) {
-      args.expectedHead = next;
-      i += 2;
-    } else if (arg === '--workspace-config' && next !== undefined) {
-      args.workspaceConfig = next;
-      i += 2;
-    } else if (arg === '--base' && next !== undefined) {
-      args.base = next;
-      i += 2;
-    } else if (arg === '--delivery-target' && next !== undefined) {
-      args.deliveryTarget = next;
-      i += 2;
-    } else if (arg === '--base-remote' && next !== undefined) {
-      args.baseRemote = next;
-      i += 2;
-    } else if (arg === '--push-remote' && next !== undefined) {
-      args.pushRemote = next;
-      i += 2;
-    } else if (arg === '--worktree-container' && next !== undefined) {
-      args.worktreeContainer = next;
-      i += 2;
-    } else if (arg === '--receipt-path' && next !== undefined) {
-      args.receiptPath = next;
-      i += 2;
-    } else if (arg === '--output-format' && next !== undefined) {
-      if (next === 'raw' || next === 'compact') {
-        args.outputFormat = next;
-      }
-      i += 2;
-    } else if ((arg === '--input-envelope' || arg === '--input') && next !== undefined) {
-      args.inputEnvelope = next;
-      i += 2;
-    } else if (arg === '-h' || arg === '--help') {
-      printHelp();
-      process.exit(0);
-    } else {
-      i++;
+      continue;
     }
+
+    const isString = Object.prototype.hasOwnProperty.call(STRING_OPTIONS, arg);
+    if (!isString && arg !== '--issue' && arg !== '--output-format') {
+      throw new CliUsageError(`Unknown option '${arg}'.`);
+    }
+    if (seen.has(canonical)) {
+      throw new CliUsageError(`Duplicate or conflicting option '${arg}'.`);
+    }
+    seen.add(canonical);
+
+    const value = argv[i + 1];
+    if (value === undefined || value === '' || value.startsWith('--')) {
+      throw new CliUsageError(`Option '${arg}' requires a value.`);
+    }
+
+    if (arg === '--issue') {
+      args.issue = parseIssueNumber(value);
+    } else if (arg === '--output-format') {
+      if (value !== 'raw' && value !== 'compact') {
+        throw new CliUsageError(`Invalid --output-format '${value}': expected 'raw' or 'compact'.`);
+      }
+      args.outputFormat = value;
+    } else {
+      args[STRING_OPTIONS[arg]] = value;
+    }
+    i += 2;
   }
 
-  return args;
+  if (args.subcommand === 'prepare' && args.cleanupFlag) {
+    throw new CliUsageError("Conflicting arguments: 'prepare' subcommand with --cleanup.");
+  }
+
+  return { args, help: false };
 }
 
 function printHelp(): void {
@@ -145,7 +174,7 @@ Options:
 
 async function runPrepare(
   args: CliArgs,
-  envelope?: TaskInputEnvelope,
+  envelope?: WorkspaceTaskInput,
 ): Promise<number> {
   let mapped;
   try {
@@ -302,7 +331,7 @@ async function runPrepare(
 
 async function runCleanup(
   args: CliArgs,
-  envelope?: TaskInputEnvelope,
+  envelope?: WorkspaceTaskInput,
 ): Promise<number> {
   if (!envelope) {
     console.error('Cleanup requires --input-envelope with task inputs.');
@@ -403,9 +432,23 @@ async function runCleanup(
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
-  const args = parseCliArgs(argv);
+  let args: CliArgs;
+  try {
+    const parsed = parseCliArgs(argv);
+    if (parsed.help) {
+      printHelp();
+      return 0;
+    }
+    args = parsed.args;
+  } catch (err) {
+    if (err instanceof CliUsageError) {
+      console.error(`${err.message}\nRun 'pc-workspace --help' for usage.`);
+      return 2;
+    }
+    throw err;
+  }
 
-  let envelope: TaskInputEnvelope | undefined;
+  let envelope: WorkspaceTaskInput | undefined;
   if (args.inputEnvelope) {
     try {
       envelope = loadEnvelope(args.inputEnvelope);

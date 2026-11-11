@@ -15,8 +15,10 @@ import {
   mapToCleanupRequest,
   mapToPrepareRequest,
   normalizeIssue,
-  TaskInputEnvelope,
+  loadEnvelope,
+  WorkspaceTaskInput,
 } from '../src/task-io.js';
+import { loadEnvelope as loadOrchestratorEnvelope } from '../../orchestrator/src/lifecycle/envelope.js';
 import { resolvePath } from '../src/git.js';
 import { CleanupResult, PreparedWorkspace } from '../src/types.js';
 
@@ -53,7 +55,7 @@ describe('Workspace Task-IO', () => {
   });
 
   it('maps envelope to PrepareRequest with correct conflict checks', () => {
-    const envelope: TaskInputEnvelope = {
+    const envelope: WorkspaceTaskInput = {
       schema_version: '1.0',
       task: {
         logical_stage: 'workspace_prepare',
@@ -92,7 +94,7 @@ describe('Workspace Task-IO', () => {
   });
 
   it('maps envelope branch + commit to branch with expectedHead', () => {
-    const envelope: TaskInputEnvelope = {
+    const envelope: WorkspaceTaskInput = {
       task: { current_issue_id: 10 },
       environment: {
         working_directory: tmpDir,
@@ -112,7 +114,7 @@ describe('Workspace Task-IO', () => {
   });
 
   it('maps envelope to CleanupRequest with candidates and unresolved items', () => {
-    const envelope: TaskInputEnvelope = {
+    const envelope: WorkspaceTaskInput = {
       task: {
         root_issue_id: '50',
       },
@@ -141,6 +143,26 @@ describe('Workspace Task-IO', () => {
     expect(request.candidates.length).toBe(1);
     expect(request.unresolved).toEqual(['dirty branch issue-51']);
     expect(request.protectedPaths).toContain(resolvePath(path.join(tmpDir, 'cleanup-receipt.md')));
+  });
+
+  it('workspace and orchestrator accept/reject the same complete envelope', () => {
+    const complete = {
+      schema_version: '1.0',
+      task: { logical_stage: 'workspace_prepare', step_index: 1, attempt: 1, root_issue_id: '42', current_issue_id: '42' },
+      provider: { type: 'skill', target: 'pc-workspace' },
+      environment: { working_directory: tmpDir },
+      inputs: { objective: 'Prepare worktree' },
+      contract: { receipt_path: path.join(tmpDir, 'r.md') },
+      budgets: {},
+    };
+    const good = path.join(tmpDir, 'good.json');
+    const bad = path.join(tmpDir, 'bad.json');
+    fs.writeFileSync(good, JSON.stringify(complete));
+    fs.writeFileSync(bad, JSON.stringify({ ...complete, schema_version: '2.0' }));
+
+    expect(loadEnvelope(good)).toEqual(loadOrchestratorEnvelope(good));
+    expect(() => loadOrchestratorEnvelope(bad)).toThrow(/schema_version/);
+    expect(() => loadEnvelope(bad)).toThrow(/schema_version/);
   });
 
   it('maps PreparedWorkspace to external result format', () => {

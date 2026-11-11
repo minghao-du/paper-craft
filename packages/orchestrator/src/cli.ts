@@ -85,6 +85,7 @@ export async function main(
       "reason",
       "next-stage",
       "mark-landed",
+      "landing-dispatch-id",
       "field",
     ];
     const options: Record<
@@ -180,6 +181,7 @@ export async function main(
         plan: o.plan,
         current_issue: o.current_issue,
         mark_landed: o.mark_landed,
+        landing_dispatch_id: o.landing_dispatch_id,
         complete_sequence: o.complete_sequence,
       } as ResolveOptions);
     } else if (command === "inspect") {

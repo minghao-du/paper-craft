@@ -186,7 +186,7 @@ The receipt captures full execution logs, git status, environment verification, 
 ### Protocol Verification Gate
 The Orchestrator checks all 4 report fields (`execution_status`, `result`, `receipt_path`, `summary`) and verifies the
 physical presence of the receipt file. If the report is unparseable, missing, or contradictory, the Orchestrator
-immediately records the defect in `state.json` and halts to the Blocker Decision Board without guessing missing conclusions.
+immediately records the defect via the lifecycle kernel helper (`packages/orchestrator/src/cli.ts complete`) and halts to the Blocker Decision Board without guessing missing conclusions.
 
 ---
 

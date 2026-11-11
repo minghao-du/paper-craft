@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { loadEnvelope, validateEnvelope, isObject } from "./lifecycle/index.js";
+import { loadEnvelope } from "./lifecycle/index.js";
+import { isObject, validateTaskInputEnvelope } from "./protocol/index.js";
 
 export async function main(
   argv: string[] = process.argv.slice(2),
@@ -27,7 +28,7 @@ export async function main(
     const absolute = path.resolve(filename);
     const data = loadEnvelope(absolute, false);
     if (command === "validate") {
-      const errors = validateEnvelope(data);
+      const errors = validateTaskInputEnvelope(data);
       if (values.json) console.log(JSON.stringify(errors, null, 2));
       else if (errors.length)
         console.error(

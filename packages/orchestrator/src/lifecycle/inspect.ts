@@ -3,7 +3,18 @@
  */
 import path from "node:path";
 import { loadRun } from "../run-store/index.js";
-import type { InspectOptions, RuntimeState } from "./types.js";
+import type { DecisionRecord, InspectOptions, RuntimeState } from "./types.js";
+
+function lastDecisionReason(
+  decisions: DecisionRecord[],
+  decision: string,
+  fallback: string,
+): string {
+  return (
+    [...decisions].reverse().find((d) => d.decision === decision)?.reason ??
+    fallback
+  );
+}
 
 export function inspectState(o: InspectOptions): unknown {
   const root = path.resolve(o.receipt_root);
@@ -63,13 +74,13 @@ export function inspectState(o: InspectOptions): unknown {
     );
   }
 
-  if (state.stage_status === "halted") {
+  if (state.orchestrator_decision === "halt") {
     reasons.push(
-      `Workflow is halted: ${decisions.at(-1)?.reason ?? "Workflow halted"}`,
+      `Workflow is halted (new tasks blocked; a handed-off task can still be completed): ${lastDecisionReason(decisions, "halt", "Workflow halted")}`,
     );
-  } else if (state.stage_status === "blocked") {
+  } else if (state.orchestrator_decision === "wait_user") {
     reasons.push(
-      `Workflow is blocked: ${decisions.at(-1)?.reason ?? "Awaiting user input or prerequisite"}`,
+      `Workflow is waiting for user (new tasks blocked; a handed-off task can still be completed): ${lastDecisionReason(decisions, "wait_user", "Awaiting user input or prerequisite")}`,
     );
   } else if (state.stage_status === "needs_rework") {
     reasons.push(
@@ -83,6 +94,7 @@ export function inspectState(o: InspectOptions): unknown {
     current_issue_id: state.current_issue_id,
     current_stage: state.current_stage,
     stage_status: state.stage_status,
+    orchestrator_decision: state.orchestrator_decision ?? null,
     active_dispatch: active,
     last_decision: decisions.at(-1) ?? null,
     protocol_error: state.protocol_error ?? null,

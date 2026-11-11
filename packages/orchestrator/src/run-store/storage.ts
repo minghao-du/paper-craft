@@ -313,3 +313,80 @@ export function commitRun<TState = unknown>(
     fs.unlinkSync(pendingPath);
   }
 }
+
+/** Returns false only for ENOENT; any other stat failure (e.g. EACCES) throws. */
+function pathExists(filePath: string): boolean {
+  try {
+    fs.statSync(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw new StorageIOError(
+      `Cannot access ${filePath}: ${(error as Error).message}`,
+    );
+  }
+}
+
+/**
+ * Loads the run state if one exists, otherwise returns null.
+ * Null is returned only when neither state.json nor pending-commit.json
+ * exists. Pending-commit recovery still runs; malformed or unreadable
+ * storage throws instead of being treated as "no run".
+ *
+ * Operations on one run directory must be serialized by the caller; this
+ * module provides crash recovery, not cross-process locking.
+ */
+export function loadRunIfExists<TState = unknown>(root: string): TState | null {
+  const resolvedRoot = path.resolve(root);
+  if (
+    !pathExists(getStateFilePath(resolvedRoot)) &&
+    !pathExists(getPendingCommitPath(resolvedRoot))
+  ) {
+    return null;
+  }
+  return loadRun<TState>(resolvedRoot);
+}
+
+/**
+ * Explicitly replaces any existing run with target_state (force semantics).
+ * - Valid or recoverable old state is replaced through a normal commit.
+ * - Corrupt/inconsistent old state or pending files are preserved as
+ *   `<name>.corrupt-<timestamp>` evidence files before replacement.
+ * - I/O and permission errors are never treated as "not found"; if the old
+ *   files cannot be safely replaced a StorageError is thrown advising a new
+ *   run directory.
+ *
+ * Operations on one run directory must be serialized by the caller.
+ */
+export function replaceRun<TState = unknown>(
+  root: string,
+  targetState: TState,
+): void {
+  const resolvedRoot = path.resolve(root);
+  let existing: TState | null;
+  try {
+    existing = loadRunIfExists<TState>(resolvedRoot);
+  } catch (error) {
+    if (!(error instanceof StorageInconsistentError)) throw error;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    try {
+      for (const file of [
+        getStateFilePath(resolvedRoot),
+        getPendingCommitPath(resolvedRoot),
+      ]) {
+        if (pathExists(file)) fs.renameSync(file, `${file}.corrupt-${stamp}`);
+      }
+    } catch (renameError) {
+      throw new StorageError(
+        `Cannot safely replace corrupt run state in ${resolvedRoot}: ${(renameError as Error).message}. Use a new run directory.`,
+        "STORAGE_REPLACE_FAILED",
+      );
+    }
+    existing = null;
+  }
+  commitRun<TState>(resolvedRoot, {
+    is_initial: existing === null,
+    expected_previous_state: existing,
+    target_state: targetState,
+  });
+}
