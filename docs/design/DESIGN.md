@@ -66,12 +66,14 @@ This protocol establishes two operational invariants:
 Skill instructions guide agent judgment, routing, and recovery. Fixed helpers perform mechanical work and validate external JSON at runtime; TypeScript types alone do not validate files or agent output.
 
 - **Orchestrator helpers (`packages/orchestrator/`)**: Structured into three cohesive modules and thin CLI entry points:
-  - **Lifecycle**: owns dispatch identity, authorization, report correlation, envelope protocols, idempotency, and operation orchestration across `init`, `prepare`, `handoff`, `complete`, `resolve`, and `inspect`.
+  - **Lifecycle**: owns dispatch identity, authorization, report correlation, envelope protocols, idempotency, and operation orchestration across `init`, `dispatch`, `complete`, `resolve`, and `inspect`.
   - **Workflow**: owns domain delivery sequence, stage definition loading and validation, completion policies, retry/replan budgets, and evidence checks.
   - **RunStore**: owns run directory file layout, atomic commits (state and envelopes), and crash recovery via pending commit records.
   - **CLI (`cli.ts`, `envelope-cli.ts`)**: handles command arguments, input media, and terminal formatting without embedding workflow policies or direct file mutation.
 - **Configuration helpers (`packages/workspace-config/`)**: TypeScript modules resolve and validate the project configuration used by the orchestrator.
 - **Specialist helpers (`skills/<skill>/scripts/`)**: Existing professional-task helpers can remain alongside their skill, including Python scripts. Moving orchestrator code does not require rewriting every skill.
+
+A new `dispatch` commits the input envelope, attempt accounting, and `handed_off` state together, granting the skill one platform launch. Callers serialize operations on the same run. Each JSON request has a `request_id` unique within the run. An `init --force` reset starts a new run with fresh request history. The kernel checks request history before admitting new work. A replay of the original payload returns the existing dispatch or its completion without granting another launch. A different payload under the same ID is rejected. Pausing blocks new grants while existing grants and completions remain valid.
 
 The skill owns the external stage input and receipt contract. Helper modules implement deterministic operations without choosing the next professional stage; the Orchestrator makes that decision explicitly through `resolve`. Preserve lifecycle operation semantics, persisted JSON formats, recovery, and receipt checks when changing implementations.
 

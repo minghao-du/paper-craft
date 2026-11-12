@@ -9,10 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   completeDispatch,
-  handoffDispatch,
+  dispatchTask,
   initWorkflow,
   inspectState,
-  prepareTask,
   resolveDecision,
 } from '../src/lifecycle/index.js';
 import {
@@ -23,14 +22,14 @@ import {
 import {
   createTestDir,
   runLifecycleKernelCli,
-  runPrepareTaskCli,
+  runDispatchTaskCli,
 } from './helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
-  // T1: init -> prepare -> handoff -> complete -> inspect
+  // T1: init -> dispatch -> complete -> inspect
   it('T1: complete lifecycle execution allocates, authorizes, completes, and clears active dispatch', () => {
     const env = createTestDir('pc-t1-');
     try {
@@ -40,33 +39,34 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       });
       expect(state.root_issue_id).toBe('101');
 
-      const prepared = prepareTask({
+      const dispatched = dispatchTask({
         receipt_root: env.dir,
+        request_id: 'initial-workspace',
         stage: 'workspace_prepare',
         objective: 'Prepare initial workspace',
         provider: { type: 'skill', target: 'pc-workspace' },
         workdir: env.dir,
       });
-      expect(prepared.dispatch_id).toBeDefined();
-      expect(prepared.status).toBe('prepared');
-
-      const handoff = handoffDispatch({
-        receipt_root: env.dir,
-        dispatch_id: prepared.dispatch_id,
+      expect(dispatched).toMatchObject({
+        launch_granted: true,
+        status: 'handed_off',
+        provider: { type: 'skill', target: 'pc-workspace' },
       });
-      expect(handoff.authorized).toBe(true);
-      expect(handoff.status).toBe('handed_off');
+      expect(inspectState({ receipt_root: env.dir })).toMatchObject({
+        stage_status: 'in_progress',
+        active_dispatch: { dispatch_id: dispatched.dispatch_id, status: 'handed_off' },
+      });
 
       // Write valid receipt to disk
-      fs.writeFileSync(prepared.receipt_path, '# Workspace Receipt\nOutcome: prepared\n');
+      fs.writeFileSync(dispatched.receipt_path, '# Workspace Receipt\nOutcome: prepared\n');
 
       const completed = completeDispatch({
         receipt_root: env.dir,
-        dispatch_id: prepared.dispatch_id,
+        dispatch_id: dispatched.dispatch_id,
         report: {
           execution_status: 'succeeded',
           result: { outcome: 'prepared' },
-          receipt_path: prepared.receipt_path,
+          receipt_path: dispatched.receipt_path,
           summary: 'Workspace prepared successfully.',
         },
       });
@@ -82,98 +82,77 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
     }
   }, 20000);
 
-  // T2: prepare deduplication and semantic variation rejection
-  it('T2: prepare reuses ID on identical request but rejects reuse on semantic mutation', () => {
+  it('T2: grants launch once per request ID and rejects conflicting requests', () => {
     const env = createTestDir('pc-t2-');
     try {
-      initWorkflow({
+      initWorkflow({ receipt_root: env.dir, root_issue: 102 });
+      const request = {
         receipt_root: env.dir,
-        root_issue: 102,
-      });
-
-      const req1 = {
-        receipt_root: env.dir,
+        request_id: 'issue-plan',
         stage: 'stage_1_plan',
         objective: 'Plan task',
         provider: { type: 'skill' as const, target: 'pc-issue-plan' },
         workdir: env.dir,
         scope: 'initial scope',
-        parameters: { key: 'val1' },
+        parameters: { first: 'one', second: 'two' },
       };
 
-      const prep1 = prepareTask(req1);
-      expect(prep1.attempt).toBe(1);
+      const first = dispatchTask(request);
+      expect(first.launch_granted).toBe(true);
+      const statePath = getStateFilePath(env.dir);
+      const firstState = fs.readFileSync(statePath, 'utf8');
+      expect(JSON.parse(firstState).budgets.delivery_attempts_used).toBe(1);
 
-      // Identical request should reuse existing prepared dispatch
-      const prepDuplicate = prepareTask(req1);
-      expect(prepDuplicate.dispatch_id).toBe(prep1.dispatch_id);
+      const replay = dispatchTask({
+        ...request,
+        parameters: { second: 'two', first: 'one' },
+      });
+      expect(replay).toMatchObject({
+        dispatch_id: first.dispatch_id,
+        launch_granted: false,
+        status: 'handed_off',
+        provider: first.provider,
+        envelope_path: first.envelope_path,
+        receipt_path: first.receipt_path,
+      });
 
-      // Modifying scope should be rejected while an active dispatch exists with different semantics
-      expect(() => {
-        prepareTask({
-          ...req1,
-          scope: 'changed scope',
-        });
-      }).toThrow(/conflict|Cannot prepare task/i);
-
-      // Modifying parameters should be rejected similarly
-      expect(() => {
-        prepareTask({
-          ...req1,
-          parameters: { key: 'val2' },
-        });
-      }).toThrow(/conflict|Cannot prepare task/i);
+      expect(() => dispatchTask({ ...request, scope: 'changed scope' })).toThrow(/conflict/i);
+      expect(() => dispatchTask({
+        ...request,
+        parameters: { first: 'changed', second: 'two' },
+      })).toThrow(/conflict/i);
+      expect(() => dispatchTask({ ...request, request_id: 'another-plan' })).toThrow(/active dispatch/i);
+      expect(fs.readFileSync(statePath, 'utf8')).toBe(firstState);
     } finally {
       env.cleanup();
     }
   }, 20000);
 
-  // T3: handoff and complete duplicate, mismatch, and error ID enforcement
-  it('T3: enforces single authorization, idempotent completion, and rejects mismatched IDs', () => {
+  it('T3: preserves completion identity across later dispatches and run decisions', () => {
     const env = createTestDir('pc-t3-');
     try {
       initWorkflow({
         receipt_root: env.dir,
         root_issue: 103,
+        workflow: path.resolve(__dirname, 'fixtures/three-stage-fixture.json'),
       });
 
-      const prep = prepareTask({
+      const request = {
         receipt_root: env.dir,
-        stage: 'stage_1_plan',
-        objective: 'Plan task',
-        provider: { type: 'skill', target: 'pc-issue-plan' },
+        request_id: 'workspace',
+        stage: 'workspace_prepare',
+        objective: 'Prepare workspace',
+        provider: { type: 'skill' as const, target: 'pc-workspace' },
         workdir: env.dir,
-      });
+      };
+      const dispatched = dispatchTask(request);
 
-      // Wrong dispatch_id for handoff must throw
-      expect(() => {
-        handoffDispatch({
-          receipt_root: env.dir,
-          dispatch_id: 'wrong-dispatch-id',
-        });
-      }).toThrow(/does not match requested dispatch ID/i);
-
-      // First handoff succeeds with authorized: true
-      const h1 = handoffDispatch({
-        receipt_root: env.dir,
-        dispatch_id: prep.dispatch_id,
-      });
-      expect(h1.authorized).toBe(true);
-
-      // Second handoff returns authorized: false without throwing
-      const h2 = handoffDispatch({
-        receipt_root: env.dir,
-        dispatch_id: prep.dispatch_id,
-      });
-      expect(h2.authorized).toBe(false);
-
-      // Complete with wrong dispatch_id throws
-      fs.writeFileSync(prep.receipt_path, '# Plan Receipt\n');
+      fs.writeFileSync(dispatched.receipt_path, '# Workspace Receipt\n');
       const report = {
         execution_status: 'succeeded' as const,
-        result: { outcome: 'direct' },
-        receipt_path: prep.receipt_path,
-        summary: 'Direct plan established',
+        result: { outcome: 'prepared' },
+        receipt_path: dispatched.receipt_path,
+        summary: 'Workspace prepared',
       };
 
       expect(() => {
@@ -187,7 +166,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       // First complete succeeds
       const c1 = completeDispatch({
         receipt_root: env.dir,
-        dispatch_id: prep.dispatch_id,
+        dispatch_id: dispatched.dispatch_id,
         report,
       });
       expect(c1.execution_status).toBe('succeeded');
@@ -195,7 +174,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       // Repeated complete with identical report is idempotent and succeeds
       const c2 = completeDispatch({
         receipt_root: env.dir,
-        dispatch_id: prep.dispatch_id,
+        dispatch_id: dispatched.dispatch_id,
         report,
       });
       expect(c2.execution_status).toBe('succeeded');
@@ -204,20 +183,63 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       expect(() => {
         completeDispatch({
           receipt_root: env.dir,
-          dispatch_id: prep.dispatch_id,
+          dispatch_id: dispatched.dispatch_id,
           report: {
             ...report,
             execution_status: 'failed' as const,
           },
         });
       }).toThrow(/conflicting report/i);
+
+      const settled = {
+        dispatch_id: dispatched.dispatch_id,
+        launch_granted: false,
+        status: 'completed',
+        provider: dispatched.provider,
+        envelope_path: dispatched.envelope_path,
+        receipt_path: dispatched.receipt_path,
+        completion: expect.objectContaining({ execution_status: 'succeeded' }),
+      };
+      const next = dispatchTask({
+        ...request,
+        request_id: 'implementation',
+        stage: 'issue_work',
+        objective: 'Implement issue',
+        provider: { type: 'skill', target: 'pc-issue-work' },
+      });
+      expect(next.launch_granted).toBe(true);
+      expect(next.dispatch_id).not.toBe(dispatched.dispatch_id);
+      expect(dispatchTask(request)).toMatchObject(settled);
+      expect(() => dispatchTask({ ...request, objective: 'Changed workspace objective' })).toThrow(/conflict/i);
+
+      resolveDecision({ receipt_root: env.dir, decision: 'wait_user', reason: 'Review required' });
+      expect(dispatchTask(request)).toMatchObject(settled);
+      expect(inspectState({ receipt_root: env.dir })).toMatchObject({
+        active_dispatch: { dispatch_id: next.dispatch_id },
+      });
+
+      fs.writeFileSync(next.receipt_path, '# Work Receipt\n');
+      completeDispatch({
+        receipt_root: env.dir,
+        dispatch_id: next.dispatch_id,
+        report: {
+          execution_status: 'succeeded',
+          result: { outcome: 'implemented' },
+          receipt_path: next.receipt_path,
+          summary: 'Issue implemented',
+        },
+      });
+      resolveDecision({ receipt_root: env.dir, decision: 'finish', reason: 'Work complete' });
+      const finishedState = fs.readFileSync(getStateFilePath(env.dir), 'utf8');
+      expect(dispatchTask(request)).toMatchObject(settled);
+      expect(fs.readFileSync(getStateFilePath(env.dir), 'utf8')).toBe(finishedState);
     } finally {
       env.cleanup();
     }
   }, 20000);
 
-  // T4: prepare pending commit crash recovery
-  it('T4: recovers interrupted prepare commit from pending-commit record without duplicate budget consumption', () => {
+  // T4: dispatch pending commit crash recovery
+  it('T4: recovers interrupted dispatch commit from pending-commit record without duplicate budget consumption', () => {
     const env = createTestDir('pc-t4-');
     try {
       const state0 = initWorkflow({
@@ -225,9 +247,9 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         root_issue: 104,
       });
 
-      // Prepare normally
-      const prep = prepareTask({
+      const prep = dispatchTask({
         receipt_root: env.dir,
+        request_id: 'recovered-plan',
         stage: 'stage_1_plan',
         objective: 'Plan task',
         provider: { type: 'skill', target: 'pc-issue-plan' },
@@ -237,7 +259,6 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       const loadedState = loadRun<typeof state0>(env.dir);
       const envelopeContent = JSON.parse(fs.readFileSync(prep.envelope_path, 'utf8'));
 
-      // Simulate a crash right after writing pending-commit.json (with state reverted to state0)
       const pendingPath = getPendingCommitPath(env.dir);
       const pendingRecord = {
         version: '1.0',
@@ -249,7 +270,8 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         },
       };
 
-      // Revert state.json to state0 and write pending-commit.json
+      // Simulate interruption before the envelope and state were written.
+      fs.unlinkSync(prep.envelope_path);
       fs.writeFileSync(getStateFilePath(env.dir), JSON.stringify(state0));
       fs.writeFileSync(pendingPath, JSON.stringify(pendingRecord));
 
@@ -257,6 +279,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       const recoveredState = loadRun<typeof state0>(env.dir);
       expect(recoveredState.active_dispatch?.dispatch_id).toBe(prep.dispatch_id);
       expect(fs.existsSync(pendingPath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(prep.envelope_path, 'utf8'))).toEqual(envelopeContent);
 
       // A subsequent loadRun is consistent and produces no additional budget consumption
       const secondLoad = loadRun<typeof state0>(env.dir);
@@ -281,8 +304,9 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       expect(state1.budgets.delivery_attempts_used).toBe(0);
       expect(state1.budgets.replans_used).toBe(0);
 
-      const p1 = prepareTask({
+      const p1 = dispatchTask({
         receipt_root: env.dir,
+        request_id: 'initial-plan',
         stage: 'stage_1_plan',
         objective: 'Plan stage',
         provider: { type: 'skill', target: 'pc-issue-plan' },
@@ -292,7 +316,6 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       const state2 = loadRun<{ budgets: Record<string, unknown> }>(env.dir);
       expect(state2.budgets.delivery_attempts_used).toBe(1);
 
-      handoffDispatch({ receipt_root: env.dir, dispatch_id: p1.dispatch_id });
       fs.writeFileSync(p1.receipt_path, '# Plan\n');
       completeDispatch({
         receipt_root: env.dir,
@@ -392,7 +415,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       );
 
       // Attempt 1
-      const p1 = runPrepareTaskCli(env.dir, {
+      const p1 = runDispatchTaskCli(env.dir, {
         stage: 'stage_2_work',
         objective: 'Task 1',
         provider: {
@@ -401,7 +424,6 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         },
       });
       const p1Data = JSON.parse(p1.stdout);
-      runLifecycleKernelCli(['handoff', '--receipt-root', env.dir, '--dispatch-id', p1Data.dispatch_id]);
       fs.writeFileSync(p1Data.receipt_path, '# Receipt 1');
       runLifecycleKernelCli([
         'complete',
@@ -416,7 +438,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       ]);
 
       // Attempt 2
-      const p2 = runPrepareTaskCli(env.dir, {
+      const p2 = runDispatchTaskCli(env.dir, {
         stage: 'stage_2_work',
         objective: 'Task 1',
         provider: {
@@ -426,7 +448,6 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         attempt_intent: 'new',
       });
       const p2Data = JSON.parse(p2.stdout);
-      runLifecycleKernelCli(['handoff', '--receipt-root', env.dir, '--dispatch-id', p2Data.dispatch_id]);
       fs.writeFileSync(p2Data.receipt_path, '# Receipt 2');
       runLifecycleKernelCli([
         'complete',
@@ -441,7 +462,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       ]);
 
       // Attempt 3
-      const p3 = runPrepareTaskCli(env.dir, {
+      const p3 = runDispatchTaskCli(env.dir, {
         stage: 'stage_2_work',
         objective: 'Task 1',
         provider: {
@@ -451,7 +472,6 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         attempt_intent: 'new',
       });
       const p3Data = JSON.parse(p3.stdout);
-      runLifecycleKernelCli(['handoff', '--receipt-root', env.dir, '--dispatch-id', p3Data.dispatch_id]);
       fs.writeFileSync(p3Data.receipt_path, '# Receipt 3');
       runLifecycleKernelCli([
         'complete',

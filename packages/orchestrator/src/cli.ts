@@ -5,16 +5,13 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
   initWorkflow,
-  prepareTask,
-  handoffDispatch,
+  dispatchTask,
   completeDispatch,
   resolveDecision,
   inspectState,
-  parsePrepareRequest,
-  type NormalizedPrepareRequest,
+  parseDispatchRequest,
+  type NormalizedDispatchRequest,
   type InitOptions,
-  type PrepareOptions,
-  type HandoffOptions,
   type CompleteOptions,
   type ResolveOptions,
   type InspectOptions,
@@ -23,12 +20,14 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CliOptions = Record<string, any>;
 
-export function loadPrepareRequest(filename: string): NormalizedPrepareRequest {
+export function loadDispatchRequest(
+  filename: string,
+): NormalizedDispatchRequest {
   if (!path.isAbsolute(filename)) {
     throw new Error(`Request path must be absolute, received '${filename}'`);
   }
   const content = fs.readFileSync(filename, "utf8");
-  return parsePrepareRequest(content);
+  return parseDispatchRequest(content);
 }
 
 export function parseReportInput(raw: string): unknown {
@@ -77,9 +76,7 @@ export async function main(
       "base-branch",
       "worktree-container",
       "request",
-      "rework-issue",
       "dispatch-id",
-      "platform-handle",
       "report",
       "decision",
       "reason",
@@ -98,7 +95,10 @@ export async function main(
     options.option = { type: "string", multiple: true };
     const { values } = parseArgs({
       args,
-      options,
+      options:
+        command === "dispatch"
+          ? { "receipt-root": { type: "string" }, request: { type: "string" } }
+          : options,
       strict: true,
       allowPositionals: false,
     });
@@ -125,31 +125,17 @@ export async function main(
     if (command === "init") {
       if (!o.root_issue) throw new Error("--root-issue is required");
       result = initWorkflow({ ...o, root_issue: o.root_issue } as InitOptions);
-    } else if (command === "prepare") {
+    } else if (command === "dispatch") {
       if (!path.isAbsolute(o.receipt_root)) {
         throw new Error(
           `Receipt root must be absolute, received '${o.receipt_root}'`,
         );
       }
       if (!o.request) throw new Error("--request is required");
-      const request = loadPrepareRequest(o.request);
-      if (o.rework_issue) request.rework_issue = String(o.rework_issue).trim();
-      result = prepareTask({
+      result = dispatchTask({
         receipt_root: o.receipt_root,
-        ...request,
-        workdir: request.working_directory || undefined,
-        stage: request.stage,
-        objective: request.objective,
-      } as PrepareOptions);
-    } else if (command === "handoff") {
-      if (!o.dispatch_id) {
-        throw new Error("--dispatch-id is required for handoff");
-      }
-      result = handoffDispatch({
-        receipt_root: o.receipt_root,
-        dispatch_id: o.dispatch_id,
-        platform_handle: o.platform_handle,
-      } as HandoffOptions);
+        ...loadDispatchRequest(o.request),
+      });
     } else if (command === "complete") {
       if (!o.dispatch_id) {
         throw new Error("--dispatch-id is required for complete");
@@ -191,7 +177,7 @@ export async function main(
       } as InspectOptions);
     } else {
       throw new Error(
-        "Expected command: init | prepare | handoff | complete | resolve | inspect",
+        "Expected command: init | dispatch | complete | resolve | inspect",
       );
     }
 

@@ -24,7 +24,7 @@ exclusively by dedicated Specialist Subagents.
 The Orchestrator's sole responsibilities are:
 1. Receiving the root Issue and goal from the user.
 2. Maintaining workflow runtime state exclusively via the lifecycle kernel helper (`packages/orchestrator/src/cli.ts`), never editing `<receipt_root>/state.json` directly.
-3. Generating Task Input Envelopes (`<receipt_root>/<step>-input.json`) and dispatching execution environments, professional tasks, and cleanup through resolved Execution Providers (Specialist Subagents).
+3. Requesting Task Input Envelopes and launch authorization from the kernel and launching specialist subagents through the platform adapter.
 4. Checking compact execution reports and consuming professional conclusions.
 5. Routing to the next stage or dispatching repair subagents.
 6. Halting and presenting a Blocker Decision Board when blocked, failed, or when retry budgets expire. Request a concise blocker or decision-options summary from a specialist when needed for the board.
@@ -68,10 +68,8 @@ Every workflow maintains two issue identifiers:
 
 ### Task Input Envelope Standard
 
-The Orchestrator **never concatenates massive free-text prompts**. Before dispatching any provider,
-the Orchestrator uses the minimal dispatch lifecycle kernel (`packages/orchestrator/src/cli.ts prepare`)
-to atomically allocate the next `step_index`, write the structured Task Input Envelope to
-`<receipt_root>/<step_index>-input.json`, and assign the deterministic receipt path.
+The lifecycle kernel writes the structured Task Input Envelope to
+`<receipt_root>/<step_index>-input.json` and assigns its receipt path on each new dispatch.
 
 The Task Input Envelope schema contains 7 top-level sections:
 1. `schema_version`: Always `"1.0"`.
@@ -189,20 +187,15 @@ Before creating task worktrees or initializing workflow runtime state:
 For each stage defined in the loaded workflow:
 1. **Identify Stage Contract & Resolve Provider**: Read the stage's `logical_stage`, `provider` (`type: "skill"`, `target`, `args`), inputs, environment source, expected revision, predecessor receipts, expected `result`, and routing rules.
 2. **Prepare Environment**: Apply [Workspace lifecycle and dispatch](references/workspaces.md), verifying or creating the assigned workspace before professional execution.
-3. **Prepare Task Dispatch**:
-   - Write the [prepare request](#prepare-request) with a JSON serializer, then execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`.
-   - The kernel atomically allocates monotonically increasing `step_index`, generates `<step_index>-input.json`, assigns `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
-   - **Prepared Task Conflict Rule**: In-place replacement of a prepared task is not supported. If a different task is prepared while a prepared dispatch is already pending, either continue the original dispatch (`handoff` then `complete`) or, once verified it was never started, plan again in a new receipt root. Never use `resolve` to cancel or manually edit state.
-4. **Handoff Execution**:
-   - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>" --dispatch-id "<dispatch_id>"` to authorize execution launch.
-   - Handoff authorization semantics: Only the first valid call for an active prepared dispatch returns `"authorized": true`, granting launch authorization. Platform agent launch is performed by the Skill. Subsequent calls or queries return `"authorized": false` and do NOT grant new launch permission.
-   - **Pause Semantics**: When the workflow is paused (`halt` or `wait_user`), handoff of a prepared task is blocked until resumed via `resolve --decision continue`. Pausing stops new task launches but does *not* cancel an already handed-off task; handed-off tasks may still complete during a pause.
-   - Dispatch fresh specialist subagent using platform adapter with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
-5. **Complete Dispatch & Verify Receipt**:
+3. **Dispatch and Launch**:
+   - Write the [dispatch request](#dispatch-request) with a JSON serializer, then run the [`dispatch` operation](#lifecycle-operations).
+   - Launch one fresh specialist subagent only from a response with `"launch_granted": true`. Use the returned provider and paths with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
+   - If the response is lost or grants no launch, follow [Dispatch recovery](#dispatch-recovery).
+4. **Complete Dispatch & Verify Receipt**:
    - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --dispatch-id "<dispatch_id>" --report '<compact_json_report>'`.
    - The kernel validates report integrity (the 4 required fields), tags completion with the active dispatch's `issue_id`, and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
    - Completing a task preserves any existing pause decision (`halt`/`wait_user`). If execution outcome is unknown or in flight, verify against original execution rather than guessing or restarting.
-6. **Evaluate Routing & Resolve Decision**:
+5. **Evaluate Routing & Resolve Decision**:
    - Match the returned native `result` against the stage's routing table.
    - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <continue|wait_user|halt|finish> --reason "<reason>" [--next-stage <stage>] [--mark-landed <id> --landing-dispatch-id <dispatch_id>]`.
    - Orchestrator explicitly selects the next stage (via `--next-stage <stage>`) or records steering decisions; arbitrary stage names are rejected as `--decision`. `complete` solely records receipt verification and never auto-advances stages.
@@ -213,7 +206,7 @@ For each stage defined in the loaded workflow:
    - For human steering gates defined by the workflow (such as refactoring plan approval or planning decisions), halt and present the Decision Board to the user with the specialist's options summary before proceeding.
    - For scope reassessment, execute the workflow's replanning procedure within allowed replan budgets.
    - For `blocked`, `failed`, or exhausted retry budgets, invoke the [Halt & Escalation Protocol](#halt--escalation-protocol).
-7. **Completion Gate**: After the workflow's required professional gates succeed, finalize issue closure and reconcile the full issue-tree resource inventory, then dispatch workspace cleanup. Require a successful tree finalization receipt and cleanup with no retained targets before `resolve --decision finish`. Retained targets mean delivery complete / cleanup incomplete; retry only outstanding finalization work. `finish` is terminal: a finished workflow cannot be reopened via `continue`.
+6. **Completion Gate**: After the workflow's required professional gates succeed, finalize issue closure and reconcile the full issue-tree resource inventory, then dispatch workspace cleanup. Require a successful tree finalization receipt and cleanup with no retained targets before `resolve --decision finish`. Retained targets mean delivery complete / cleanup incomplete; retry only outstanding finalization work. `finish` is terminal: a finished workflow cannot be reopened via `continue`.
 
 ---
 
@@ -293,19 +286,24 @@ Wait for the human user's prompt instruction before proceeding.
     "last_updated": "<iso_timestamp>"
   }
   ```
-- **Lifecycle Kernel (`packages/orchestrator/src/cli.ts`)** — The authoritative controller for runtime state snapshots, task dispatches, and orchestrator decisions. The kernel provides 6 distinct operations:
+
+### Lifecycle Operations
+
+The lifecycle kernel (`packages/orchestrator/src/cli.ts`) provides five operations:
+
   - **`init`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" init --receipt-root "<receipt_root>" --root-issue <root_id> [--repo-dir <repo_dir>] [--require-config]`
     Creates workflow run state in `<receipt_root>/state.json`. Validates workspace configuration and populates root context.
-  - **`prepare`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" prepare --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`
-    Prepares a fixed task, allocates monotonically increasing `step_index`, generates Task Input Envelope `<step_index>-input.json`, assigns deterministic receipt path `<step_index>-<stage>-issue-<id>-try-<attempt>.md`, and manages delivery attempt budgets.
-  - **`handoff`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" handoff --receipt-root "<receipt_root>" --dispatch-id <id> [--platform-handle <handle>]`
-    Records boundary of external execution. Only the first valid call grants execution launch authorization (`"authorized": true`). Platform agent launch is performed by the Skill. Subsequent calls or queries return `"authorized": false` and do NOT grant new launch permission.
+  - **`dispatch`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" dispatch --receipt-root "<absolute_receipt_root>" --request "<absolute_request_path>"`
+    Allocates the step index and updates attempt budgets in one commit with the envelope and `handed_off` state. Returns `dispatch_id`, `status`, resolved `provider`, `envelope_path`, `receipt_path`, and `launch_granted`. The skill performs the platform launch.
   - **`complete`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --dispatch-id <id> --report '<compact_json|report_path>'`
     Registers compact execution report (validating `execution_status`, `result`, `receipt_path`, `summary`) and verifies physical non-empty receipt existence on disk.
   - **`resolve`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" resolve --receipt-root "<receipt_root>" --decision <wait_user|continue|halt|finish> --reason "<reason>" [--option "<option>"] [--next-stage <stage>] [--current-issue <id>] [--plan <plan>] [--child-issue <id>] [--mark-landed <id> --landing-dispatch-id <id>] [--complete-sequence]`
     Records orchestrator steering decisions. Execution facts (`completed_stages`) and orchestrator decisions (`decisions`) are stored separately. Decisions are strictly constrained to `wait_user`, `continue`, `halt`, or `finish`; transitions to a named stage must use `--decision continue --next-stage <stage>`. `--mark-landed` and `--landing-dispatch-id` must be passed together and reference valid landing evidence from completed stages.
   - **`inspect`**: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" inspect --receipt-root "<receipt_root>" [--json] [--field <path>]`
     Queries current state, active dispatch, orchestrator decisions, budgets, and reasons blocking progression.
+
+### Runtime References
+
 - **Task Input Envelope Helper (`packages/orchestrator/src/envelope-cli.ts`)** — Low-level validation and inspection:
   - Validate: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts" validate "<receipt_root>/<step>-input.json"`
   - Inspect: `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts" show "<receipt_root>/<step>-input.json" [--json]`
@@ -315,12 +313,13 @@ Wait for the human user's prompt instruction before proceeding.
   2. If state is missing or corrupted, halt to the Decision Board for human steering rather than guessing past states.
 - **External Dashboard**: A dashboard script may observe transcripts for human visibility; the Orchestrator does not query or depend on the dashboard.
 
-### Prepare Request
+### Dispatch Request
 
-Write a JSON object to an absolute file path using a JSON serializer. Required fields are non-empty strings `stage` and `objective`. Static stage configuration (fixed skill provider target, instructions/templates, configs) is extracted directly from the workflow snapshot, but an explicit `provider` (with `type: "skill"` and non-empty `target`) may be passed.
+Write a JSON object to an absolute file path using a JSON serializer. Required fields are non-empty strings `request_id`, `stage`, and `objective`. Assign a unique `request_id` within the run for each intended launch and retain the original request for retries. Static stage configuration (fixed skill provider target, instructions/templates, configs) is extracted directly from the workflow snapshot, but an explicit `provider` (with `type: "skill"` and non-empty `target`) may be passed.
 
 ```json
 {
+  "request_id": "<unique-request-id>",
   "stage": "workspace_prepare",
   "objective": "Prepare the assigned workspace",
   "provider": {
@@ -331,4 +330,12 @@ Write a JSON object to an absolute file path using a JSON serializer. Required f
 }
 ```
 
-Optional string arrays `provider.args`, `acceptance_criteria`, and `predecessor_receipts` default to empty lists. Each provider argument occupies one array element and retains its exact contents. Predecessor receipts must be explicitly specified; an empty predecessor list remains empty (`[]`). Explicitly referenced predecessor receipts must exist on disk and be non-empty. Optional `scope` is a string defaulting to `""`. Optional `workdir`, `branch`, `commit`, and `receipt_template` are non-empty strings, with workspace fields inherited from runtime context and the bundled receipt template used by default. `attempt_intent` accepts `same` (default) or `new`. Optional `rework_issue` designates an existing issue ID for targeted rework after parent acceptance or during delivery. Unknown fields and invalid values fail validation before workflow state is loaded. The kernel supplies issue context and allocates the step index, attempts, budgets and output paths.
+Optional string arrays `provider.args`, `acceptance_criteria`, and `predecessor_receipts` default to empty lists. Each provider argument occupies one array element and retains its exact contents. Predecessor receipts must be explicitly specified; an empty predecessor list remains empty (`[]`). Explicitly referenced predecessor receipts must exist on disk and be non-empty. Optional `scope` is a string defaulting to `""`. Optional `workdir`, `branch`, `commit`, and `receipt_template` are non-empty strings, with workspace fields inherited from runtime context and the bundled receipt template used by default. `attempt_intent` accepts `same` (default) or `new`. Optional `rework_issue` designates an existing issue ID for targeted rework after parent acceptance or during delivery. Pass all task parameters in the JSON request. Unknown fields and invalid values fail request validation. The kernel supplies issue context and allocates the step index, attempts, budgets and output paths.
+
+### Dispatch Recovery
+
+Serialize calls that operate on the same run. The kernel checks request history before checking whether a new dispatch can proceed. Reusing the same `request_id` and original payload returns the existing dispatch with `launch_granted: false`, including the completion record if completed. Changing the payload under the same ID is rejected. An `init --force` reset starts a new run with fresh request history.
+
+If a response is lost, use `inspect` or replay the original request and check the original platform execution. If completion is already recorded, use it to resume routing. Otherwise, use a verified report to complete the original dispatch, or escalate if the execution cannot be verified. A new request ID cannot recover an earlier launch grant. A pause (`halt` or `wait_user`) blocks new grants until `resolve --decision continue`. Previously granted dispatches can still execute and complete.
+
+If an older run has a pending `prepared` dispatch, finish it with the old checkout. Start with a new receipt root only after verifying that the old dispatch was never launched.

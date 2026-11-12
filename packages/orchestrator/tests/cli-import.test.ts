@@ -22,7 +22,7 @@ describe('Orchestrator CLI Import Isolation', () => {
 
       expect(cliModule).toBeDefined();
       expect(typeof cliModule.main).toBe('function');
-      expect(typeof cliModule.loadPrepareRequest).toBe('function');
+      expect(typeof cliModule.loadDispatchRequest).toBe('function');
       expect(typeof cliModule.parseReportInput).toBe('function');
 
       // Verify no side effects occurred on import

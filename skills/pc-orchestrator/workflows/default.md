@@ -106,7 +106,7 @@ Deliver the `current_issue_id` through an implementation and landing loop.
 - **Expected Result**: Verified implementation `commit` and verification conclusion in `result`. Accept only with the required checks and recorded environment.
 - **Routing**:
   - `succeeded`: Transition to `stage_2_land`, passing the implementation receipt to the landing provider. A single delivery attempt covers the paired `stage_2_work` and `stage_2_land`.
-  - `failed` or `rework_needed`: Execution stops and stays on `current_issue_id`. The orchestrator may explicitly initiate the next attempt for this issue via `prepare` with `attempt_intent="new"`, which consumes only that issue's independent delivery budget. Other issues in the delivery sequence are unaffected, and previous attempt history is preserved without zeroing.
+  - `failed` or `rework_needed`: Execution stops and stays on `current_issue_id`. The orchestrator may explicitly initiate the next attempt for this issue via a new `dispatch` request with `attempt_intent: "new"`, which consumes only that issue's independent delivery budget. Other issues in the delivery sequence are unaffected, and previous attempt history is preserved without zeroing.
 
 ### Stage 2.2 — Landing and Merge (`stage_2_land`)
 - **Stage ID**: `stage_2_land`
@@ -155,7 +155,7 @@ Accept delivery only for `landed` with verified merge evidence.
 - **Expected Result**: Native `result.outcome` and `evaluatedHead`.
 - **Routing**:
   - `verified`: Every original parent acceptance criterion has passing evidence for that integrated HEAD; transition to `stage_4_refactor_audit`. Missing evidence or unmet criteria keep parent acceptance incomplete, even when all children are closed.
-  - `rework_needed`: When parent acceptance identifies defects attributable to an existing issue, the orchestrator designates that issue for targeted rework via `prepare` with `--rework-issue <issue_id>` (or in the prepare request) and `attempt_intent="new"`. Targeted rework reuses the target issue's work/land loop and its own independent delivery budget, retaining previous attempt history without zeroing. When the targeted rework issue lands, the delivery sequence routes directly back to `stage_3_verify` for the root issue; other already landed issues are not re-executed, their budgets and records remain untouched, and sequence order is preserved. Gaps that cannot be attributed to an existing issue must be routed to replanning (`scope_replan`); the kernel rejects unattributable rework targets rather than guessing attribution or replacing the plan.
+  - `rework_needed`: When parent acceptance identifies defects attributable to an existing issue, the orchestrator designates that issue for targeted rework via a new `dispatch` request with `rework_issue` set to that issue ID and `attempt_intent: "new"`. Targeted rework reuses the target issue's work/land loop and its own independent delivery budget, retaining previous attempt history without zeroing. When the targeted rework issue lands, the delivery sequence routes directly back to `stage_3_verify` for the root issue; other already landed issues are not re-executed, their budgets and records remain untouched, and sequence order is preserved. Gaps that cannot be attributed to an existing issue must be routed to replanning (`scope_replan`); the kernel rejects unattributable rework targets rather than guessing attribution or replacing the plan.
 
 ---
 

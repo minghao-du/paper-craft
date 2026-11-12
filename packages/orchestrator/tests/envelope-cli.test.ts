@@ -13,7 +13,7 @@ import {
   createTestDir,
   runEnvelopeCli,
   runLifecycleKernelCli,
-  runPrepareTaskCli,
+  runDispatchTaskCli,
   type TaskInputEnvelope,
 } from './helpers.js';
 
@@ -37,7 +37,7 @@ describe('Task Input Envelope Core Features', () => {
       '--replans-max', '2',
     ]);
 
-    const result = runPrepareTaskCli(testEnv.dir, {
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'workspace_prepare',
       objective: 'Prepare feature worktree for issue 42',
       provider: {
@@ -91,7 +91,7 @@ describe('Task Input Envelope Core Features', () => {
       '--root-issue', '101',
     ]);
 
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_plan',
       objective: 'Formulate research plan',
       provider: {
@@ -119,7 +119,7 @@ describe('Task Input Envelope Core Features', () => {
       '--root-issue', '88',
     ]);
 
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_verify',
       objective: 'Run acceptance tests',
       provider: {
@@ -150,7 +150,7 @@ describe('Task Input Envelope Core Features', () => {
       '--root-issue', '99',
     ]);
 
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_4_refactor_execute',
       objective: 'Refactor snakemake rules',
       provider: {
@@ -196,7 +196,7 @@ describe('Task Input Envelope Core Features', () => {
       '--replans-max', '3',
     ]);
 
-    const result = runPrepareTaskCli(testEnv.dir, {
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_work',
       objective: 'Implement feature X',
       provider: {
@@ -223,7 +223,7 @@ describe('Task Input Envelope Core Features', () => {
       '--current-issue', '301',
     ]);
 
-    const prep1 = runPrepareTaskCli(testEnv.dir, {
+    const prep1 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       objective: 'Plan issue 301',
       provider: {
@@ -234,12 +234,6 @@ describe('Task Input Envelope Core Features', () => {
     });
     expect(prep1.status).toBe(0);
     const prepData1 = JSON.parse(prep1.stdout);
-
-    runLifecycleKernelCli([
-      'handoff',
-      '--receipt-root', testEnv.dir,
-      '--dispatch-id', prepData1.dispatch_id,
-    ]);
 
     fs.writeFileSync(prepData1.receipt_path, '# Plan Receipt\nStatus: completed');
 
@@ -256,7 +250,7 @@ describe('Task Input Envelope Core Features', () => {
     ]);
     expect(compRes.status).toBe(0);
 
-    const result = runPrepareTaskCli(testEnv.dir, {
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_work',
       objective: 'Implement child issue 301',
       provider: {
@@ -300,7 +294,7 @@ describe('Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '50',
     ]);
-    const result = runPrepareTaskCli(testEnv.dir, {
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace via skill',
       provider: {
@@ -324,7 +318,7 @@ describe('Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '50',
     ]);
-    const result = runPrepareTaskCli(testEnv.dir, {
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace via script kernel',
       provider: {
@@ -345,7 +339,7 @@ describe('Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '60',
     ]);
-    const result = runPrepareTaskCli(testEnv.dir, {
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_work',
       objective: 'Test invalid provider',
       provider: {
@@ -365,7 +359,7 @@ describe('Stage-Provider Decoupling Core Features', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '70',
     ]);
-    const result = runPrepareTaskCli(testEnv.dir, {
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_verify',
       objective: 'Run verification script',
       provider: {
@@ -391,7 +385,7 @@ describe('Stage-Provider Decoupling Core Features', () => {
   it('F2.5: envelope schema remains identical across skill targets and stages', () => {
     const rootSkill1 = path.join(testEnv.dir, 'skill-run-1');
     runLifecycleKernelCli(['init', '--receipt-root', rootSkill1, '--root-issue', '80']);
-    const prepSkill1 = runPrepareTaskCli(rootSkill1, {
+    const prepSkill1 = runDispatchTaskCli(rootSkill1, {
       stage: 'issue_plan',
       objective: 'Planning stage with skill',
       provider: {
@@ -404,7 +398,7 @@ describe('Stage-Provider Decoupling Core Features', () => {
 
     const rootSkill2 = path.join(testEnv.dir, 'skill-run-2');
     runLifecycleKernelCli(['init', '--receipt-root', rootSkill2, '--root-issue', '80']);
-    const prepSkill2 = runPrepareTaskCli(rootSkill2, {
+    const prepSkill2 = runDispatchTaskCli(rootSkill2, {
       stage: 'issue_work',
       objective: 'Working stage with skill',
       provider: {
@@ -488,7 +482,7 @@ describe('Envelope Boundary & Corner Cases (B2.1-B2.8)', () => {
   it('B2.4: rejects invalid schema version and bad numeric types', () => {
     const rootB24 = path.join(testEnv.dir, 'b24');
     runLifecycleKernelCli(['init', '--receipt-root', rootB24, '--root-issue', '1']);
-    const prepRes = runPrepareTaskCli(rootB24, {
+    const prepRes = runDispatchTaskCli(rootB24, {
       stage: 'stage_1_plan',
       objective: 'Version check test',
       provider: {
@@ -522,7 +516,7 @@ describe('Envelope Boundary & Corner Cases (B2.1-B2.8)', () => {
   it('B2.5: rejects empty string fields where non-empty string is required', () => {
     const rootB25 = path.join(testEnv.dir, 'b25');
     runLifecycleKernelCli(['init', '--receipt-root', rootB25, '--root-issue', '1']);
-    const prepRes = runPrepareTaskCli(rootB25, {
+    const prepRes = runDispatchTaskCli(rootB25, {
       stage: 'stage_1_plan',
       objective: 'Non-empty test',
       provider: {
@@ -557,7 +551,7 @@ describe('Envelope Boundary & Corner Cases (B2.1-B2.8)', () => {
     const criteria1 = '支持 --input-envelope 驱动脚本执行';
     const criteria2 = '输出回执符合 { execution_status, result, receipt_path, summary }';
 
-    const result = runPrepareTaskCli(rootB26, {
+    const result = runDispatchTaskCli(rootB26, {
       stage: 'workspace_prepare',
       objective: complexObjective,
       provider: {
@@ -583,7 +577,7 @@ describe('Envelope Boundary & Corner Cases (B2.1-B2.8)', () => {
   it('B2.7: creates parent directories automatically when output path is deeply nested', () => {
     const deepReceiptRoot = path.join(testEnv.dir, 'a/b/c/d');
     runLifecycleKernelCli(['init', '--receipt-root', deepReceiptRoot, '--root-issue', '404']);
-    const result = runPrepareTaskCli(deepReceiptRoot, {
+    const result = runDispatchTaskCli(deepReceiptRoot, {
       stage: 'issue_work',
       objective: 'Deep nested creation',
       provider: {
@@ -601,7 +595,7 @@ describe('Envelope Boundary & Corner Cases (B2.1-B2.8)', () => {
   it('B2.8: halts and returns non-zero when requesting non-existent field via show --field', () => {
     const rootB28 = path.join(testEnv.dir, 'b28');
     runLifecycleKernelCli(['init', '--receipt-root', rootB28, '--root-issue', '1']);
-    const prepRes = runPrepareTaskCli(rootB28, {
+    const prepRes = runDispatchTaskCli(rootB28, {
       stage: 'issue_plan',
       objective: 'Field check',
       provider: {

@@ -13,7 +13,7 @@ import {
   createTestDir,
   REPO_ROOT,
   runLifecycleKernelCli,
-  runPrepareTaskCli,
+  runDispatchTaskCli,
   runPython,
   type TaskInputEnvelope,
 } from './helpers.js';
@@ -92,7 +92,7 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '12',
     ]);
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace tree',
       provider: {
@@ -122,7 +122,7 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '15',
     ]);
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_work',
       objective: 'Run parameter-driven task',
       provider: {
@@ -152,7 +152,7 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '25',
     ]);
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_4_refactor_audit',
       objective: 'Audit pipeline rules',
       provider: {
@@ -191,7 +191,7 @@ if __name__ == "__main__":
       '--receipt-root', testEnv.dir,
       '--root-issue', '55',
     ]);
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_verify',
       objective: 'Cognitive wrapper test',
       provider: {
@@ -273,7 +273,7 @@ describe('Unified Receipt Contract Core Features (F4.1-F4.5)', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '100',
     ]);
-    const step1Prep = runPrepareTaskCli(testEnv.dir, {
+    const step1Prep = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       objective: 'Plan issue 100',
       provider: {
@@ -285,7 +285,6 @@ describe('Unified Receipt Contract Core Features (F4.1-F4.5)', () => {
     expect(step1Prep.status).toBe(0);
     const step1Data = JSON.parse(step1Prep.stdout);
     fs.writeFileSync(step1Data.receipt_path, '# Step 1 Plan Receipt\nOutcome: direct');
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', step1Data.dispatch_id]);
     runLifecycleKernelCli([
       'complete',
       '--receipt-root', testEnv.dir,
@@ -298,7 +297,7 @@ describe('Unified Receipt Contract Core Features (F4.1-F4.5)', () => {
       }),
     ]);
 
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Implement from step 1 plan',
       provider: {

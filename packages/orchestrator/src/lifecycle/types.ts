@@ -13,7 +13,8 @@ import type {
 
 export type { SkillProvider };
 
-export interface NormalizedPrepareRequest {
+export interface NormalizedDispatchRequest {
+  request_id: string;
   stage: string;
   objective: string;
   provider?: {
@@ -23,20 +24,15 @@ export interface NormalizedPrepareRequest {
   };
   acceptance_criteria: string[];
   predecessor_receipts: string[];
-  working_directory: string;
-  branch: string | null;
-  commit: string | null;
+  workdir?: string;
+  branch?: string | null;
+  commit?: string | null;
   scope: string;
   parameters: Record<string, unknown>;
   receipt_template?: string;
   attempt_intent: "same" | "new";
-  rework_issue?: string | null;
-  // Compatibility aliases
-  predecessors?: string[];
-  logical_stage?: string;
+  rework_issue: string | null;
 }
-
-export type DispatchRequest = NormalizedPrepareRequest;
 
 export interface Dispatch {
   dispatch_id: string;
@@ -48,10 +44,9 @@ export interface Dispatch {
   authorized: boolean;
   envelope_path: string;
   receipt_path: string;
-  stage_context?: Record<string, unknown>;
-  request: NormalizedPrepareRequest;
-  platform_handle?: string | null;
-  handed_off_at?: string;
+  // Older runs have no request identity or independently stored resolved provider.
+  request?: NormalizedDispatchRequest;
+  provider?: SkillProvider;
   [key: string]: unknown;
 }
 
@@ -70,6 +65,9 @@ export interface Completion {
   receipt_path: string;
   summary: string;
   completed_at: string;
+  request?: NormalizedDispatchRequest;
+  provider?: SkillProvider;
+  envelope_path?: string;
   [key: string]: unknown;
 }
 
@@ -140,8 +138,9 @@ export interface InitOptions {
   [key: string]: unknown;
 }
 
-export interface PrepareOptions {
+export interface DispatchOptions {
   receipt_root: string;
+  request_id: string;
   stage: string;
   objective: string;
   provider?: {
@@ -165,32 +164,21 @@ export interface PrepareOptions {
   [key: string]: unknown;
 }
 
-export interface PrepareResult {
+interface DispatchResultFields {
   dispatch_id: string;
   step_index: number;
   envelope_path: string;
   receipt_path: string;
   attempt: number;
-  status: string;
   stage: string;
-  stage_context: Record<string, unknown>;
+  provider: SkillProvider;
 }
 
-export interface HandoffOptions {
-  receipt_root: string;
-  dispatch_id: string;
-  platform_handle?: string | null;
-}
-
-export interface HandoffResult {
-  authorized: boolean;
-  dispatch_id: string;
-  status: string;
-  platform_handle: string | null;
-  envelope_path: string;
-  receipt_path: string;
-  message: string;
-}
+export type DispatchResult = DispatchResultFields &
+  (
+    | { status: "handed_off" | "running"; launch_granted: boolean }
+    | { status: "completed"; launch_granted: false; completion: CompletedDispatch }
+  );
 
 export interface CompleteOptions {
   receipt_root: string;

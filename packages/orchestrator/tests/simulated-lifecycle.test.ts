@@ -17,7 +17,7 @@ import {
   createTestDir,
   runEnvelopeCli,
   runLifecycleKernelCli,
-  runPrepareTaskCli,
+  runDispatchTaskCli,
   runPython,
   type TaskInputEnvelope,
 } from './helpers.js';
@@ -112,7 +112,7 @@ if __name__ == "__main__":
     // Phase 1: Workspace Preparation (Skill Provider)
     // ==========================================
     const kernelScript = createWorkspaceKernelScript();
-    const env1Res = runPrepareTaskCli(rootDir, {
+    const env1Res = runDispatchTaskCli(rootDir, {
       stage: 'workspace_prepare',
       objective: 'Prepare isolated worktree environment',
       provider: {
@@ -131,9 +131,6 @@ if __name__ == "__main__":
     // Validate envelope file before execution
     const val1 = runEnvelopeCli(['validate', step1EnvelopePath]);
     expect(val1.status).toBe(0);
-
-    // Handoff step 1
-    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir, '--dispatch-id', p1.dispatch_id]);
 
     // Execute script kernel
     const exec1 = runPython(kernelScript, ['--input-envelope', step1EnvelopePath]);
@@ -157,7 +154,7 @@ if __name__ == "__main__":
     // ==========================================
     // Phase 2: Implementation Stage (Skill Provider)
     // ==========================================
-    const env2Res = runPrepareTaskCli(rootDir, {
+    const env2Res = runDispatchTaskCli(rootDir, {
       stage: 'issue_work',
       objective: 'Implement features for issue 42',
       provider: {
@@ -179,7 +176,6 @@ if __name__ == "__main__":
     expect(env2.provider.type).toBe('skill');
     expect(env2.provider.target).toBe('pc-issue-work');
 
-    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir, '--dispatch-id', p2.dispatch_id]);
 
     // Simulate Subagent execution writing receipt and compact report
     fs.writeFileSync(
@@ -207,7 +203,7 @@ if __name__ == "__main__":
     // ==========================================
     // Phase 3: Verification Stage (Skill Provider)
     // ==========================================
-    const env3Res = runPrepareTaskCli(rootDir, {
+    const env3Res = runDispatchTaskCli(rootDir, {
       stage: 'issue_verify',
       objective: 'Run integrated acceptance verification',
       provider: {
@@ -225,7 +221,6 @@ if __name__ == "__main__":
     const env3: TaskInputEnvelope = JSON.parse(fs.readFileSync(step3EnvelopePath, 'utf-8'));
     expect(env3.inputs.predecessor_receipts).toContain(step2ReceiptPath);
 
-    runLifecycleKernelCli(['handoff', '--receipt-root', rootDir, '--dispatch-id', p3.dispatch_id]);
 
     fs.writeFileSync(step3ReceiptPath, '# Integrated Acceptance Receipt\nOutcome: verified\n');
 
@@ -284,7 +279,7 @@ sys.exit(1)
       '--root-issue', '99',
     ]);
 
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Run failing kernel script',
       provider: {
@@ -294,7 +289,6 @@ sys.exit(1)
       workdir: testEnv.dir,
     });
     const prepData = JSON.parse(prepRes.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', prepData.dispatch_id]);
 
     const execResult = runPython(failingScriptPath, []);
     expect(execResult.status).toBe(1);
@@ -324,7 +318,7 @@ sys.exit(1)
     expect(stateObj.stage_status).toBe('failed');
   }, 20000);
 
-  it('S4.3: guarantees state isolation when envelope generation fails', () => {
+  it('S4.3: rejects invalid dispatch input without changing run state', () => {
     runLifecycleKernelCli([
       'init',
       '--receipt-root', testEnv.dir,
@@ -334,8 +328,8 @@ sys.exit(1)
     const stateFile = path.join(testEnv.dir, 'state.json');
     const stateBefore = fs.readFileSync(stateFile, 'utf-8');
 
-    // Attempt invalid prepare (missing required objective)
-    const result = runPrepareTaskCli(testEnv.dir, {
+    // Attempt invalid dispatch (missing required objective)
+    const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       provider: {
         type: 'skill',
@@ -344,6 +338,30 @@ sys.exit(1)
     });
 
     expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/objective/i);
+
+    const validRequest = {
+      request_id: 'plan-100',
+      stage: 'stage_1_plan',
+      objective: 'Plan issue 100',
+      provider: { type: 'skill', target: 'pc-issue-plan' },
+    };
+    const missingId = runDispatchTaskCli(testEnv.dir, {
+      ...validRequest,
+      request_id: undefined,
+    });
+    expect(missingId.status).not.toBe(0);
+    expect(missingId.stderr).toMatch(/request_id/i);
+
+    const requestPath = path.join(testEnv.dir, 'request.json');
+    fs.writeFileSync(requestPath, JSON.stringify(validRequest));
+    const extraOption = runLifecycleKernelCli([
+      'dispatch', '--receipt-root', testEnv.dir, '--request', requestPath,
+      '--decision', 'continue',
+    ]);
+    expect(extraOption.status).not.toBe(0);
+    expect(extraOption.stderr).toMatch(/unknown option.*--decision/i);
+
     // Envelope 01-input.json should not exist
     expect(fs.existsSync(path.join(testEnv.dir, '01-input.json'))).toBe(false);
 

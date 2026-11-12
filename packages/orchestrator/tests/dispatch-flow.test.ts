@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createTestDir,
   runLifecycleKernelCli,
-  runPrepareTaskCli,
+  runDispatchTaskCli,
   type TaskInputEnvelope,
 } from './helpers.js';
 
@@ -39,12 +39,12 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
     expect(initRes.status).toBe(0);
 
-    // 2. Set environment context in prepare
+    // 2. Set environment context before dispatch
     const fakeWorkdir = path.join(testEnv.dir, 'worktree-777');
     fs.mkdirSync(fakeWorkdir, { recursive: true });
 
-    // 3. Generate envelope from prepare
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    // 3. Generate envelope through dispatch
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       objective: 'Formulate delivery plan for issue 777',
       provider: {
@@ -75,7 +75,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // 2. Complete stage 1 with receipt
-    const p1 = runPrepareTaskCli(testEnv.dir, {
+    const p1 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       objective: 'Plan stage 1',
       provider: {
@@ -85,7 +85,6 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
       workdir: testEnv.dir,
     });
     const p1Data = JSON.parse(p1.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p1Data.dispatch_id]);
     fs.writeFileSync(p1Data.receipt_path, '# Stage 1 Plan Receipt\nOutcome: direct');
     runLifecycleKernelCli([
       'complete',
@@ -100,7 +99,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // 3. Generate envelope for stage 2 without predecessor receipts: strictly empty []
-    const p2NoPre = runPrepareTaskCli(testEnv.dir, {
+    const p2NoPre = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Execute work for issue 888 without predecessors',
       provider: {
@@ -115,7 +114,6 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     expect(envNoPre.inputs.predecessor_receipts).toEqual([]);
 
     // Complete stage 2
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p2NoPreData.dispatch_id]);
     fs.writeFileSync(p2NoPreData.receipt_path, '# Stage 2 Work Receipt\nOutcome: implemented');
     runLifecycleKernelCli([
       'complete',
@@ -130,7 +128,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // 4. Reject invalid non-existent predecessor
-    const pBad = runPrepareTaskCli(testEnv.dir, {
+    const pBad = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_land',
       objective: 'Land with invalid predecessor',
       provider: {
@@ -143,7 +141,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     expect(pBad.status).not.toBe(0);
 
     // 5. Explicit predecessor receipts accepted and passed into envelope
-    const p3 = runPrepareTaskCli(testEnv.dir, {
+    const p3 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_land',
       objective: 'Land with explicit predecessors',
       provider: {
@@ -169,7 +167,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // Stage 1: Skill provider targeting pc-issue-plan
-    const p1 = runPrepareTaskCli(testEnv.dir, {
+    const p1 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_1_plan',
       objective: 'Plan with skill',
       provider: {
@@ -179,7 +177,6 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
       workdir: testEnv.dir,
     });
     const p1Data = JSON.parse(p1.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p1Data.dispatch_id]);
     fs.writeFileSync(p1Data.receipt_path, '# Receipt 1');
     runLifecycleKernelCli([
       'complete',
@@ -194,7 +191,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // Stage 2: Skill provider targeting pc-issue-work with args
-    const p2 = runPrepareTaskCli(testEnv.dir, {
+    const p2 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Work with skill',
       provider: {
@@ -233,7 +230,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // Attempt 1 fails
-    const p1 = runPrepareTaskCli(testEnv.dir, {
+    const p1 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Initial implementation attempt 1',
       provider: {
@@ -243,7 +240,6 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
       workdir: testEnv.dir,
     });
     const p1Data = JSON.parse(p1.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p1Data.dispatch_id]);
     fs.writeFileSync(p1Data.receipt_path, '# Attempt 1 Receipt');
     runLifecycleKernelCli([
       'complete',
@@ -258,7 +254,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // Attempt 2: rework cycle with --attempt-intent new
-    const p2 = runPrepareTaskCli(testEnv.dir, {
+    const p2 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Rework implementation attempt 2',
       provider: {
@@ -274,7 +270,6 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     expect(env2.task.attempt).toBe(2);
     expect(env2.budgets.delivery_attempts_used).toBe(2);
 
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p2Data.dispatch_id]);
     fs.writeFileSync(p2Data.receipt_path, '# Attempt 2 Receipt');
     runLifecycleKernelCli([
       'complete',
@@ -289,7 +284,7 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     ]);
 
     // Attempt 3: reached budget limit
-    const p3 = runPrepareTaskCli(testEnv.dir, {
+    const p3 = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Rework implementation attempt 3',
       provider: {
@@ -301,7 +296,6 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     });
     expect(p3.status).toBe(0);
     const p3Data = JSON.parse(p3.stdout);
-    runLifecycleKernelCli(['handoff', '--receipt-root', testEnv.dir, '--dispatch-id', p3Data.dispatch_id]);
     fs.writeFileSync(p3Data.receipt_path, '# Attempt 3 Receipt');
     runLifecycleKernelCli([
       'complete',

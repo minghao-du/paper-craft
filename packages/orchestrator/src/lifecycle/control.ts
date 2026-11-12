@@ -23,15 +23,14 @@ export function isPaused(state: RuntimeState): boolean {
 export function assertNotPaused(state: RuntimeState, action: string): void {
   if (isPaused(state)) {
     throw new Error(
-      `Cannot ${action}: workflow is paused by decision '${state.orchestrator_decision}'. Run 'resolve --decision continue' to resume (a paused run does not cancel an already handed-off task).`,
+      `Cannot ${action}: workflow is paused by decision '${state.orchestrator_decision}'. Run 'resolve --decision continue' to resume (a paused run does not cancel a task with existing launch authorization).`,
     );
   }
 }
 
 /**
  * An explicit `resolve --next-stage X` must not be silently overridden by a different
- * main task. It counts as consumed once any dispatch has been prepared after it
- * (prepare moves the run out of the `pending` status with no active dispatch).
+ * main task. A dispatch moves the run out of the pending stage selection.
  * Auxiliary tasks never consume or conflict with the selection.
  */
 export function assertMatchesPendingStageDecision(
@@ -53,7 +52,7 @@ export function assertMatchesPendingStageDecision(
     );
   if (unconsumed && selected.next_stage !== stage) {
     throw new Error(
-      `Cannot prepare stage '${stage}': the latest resolve decision selected next_stage '${selected.next_stage}'. Prepare that stage, or record a new 'resolve --decision continue --next-stage <stage>' first.`,
+      `Cannot dispatch stage '${stage}': the latest resolve decision selected next_stage '${selected.next_stage}'. Dispatch that stage, or record a new 'resolve --decision continue --next-stage <stage>' first.`,
     );
   }
 }

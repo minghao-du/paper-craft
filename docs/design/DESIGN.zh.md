@@ -66,12 +66,14 @@ Orchestrator 通过平台适配器启动新的专业 agent，加载 `skills/<tar
 技能指令指导 agent 进行判断、路由和恢复。固定辅助代码执行机械操作，并在运行时校验外部 JSON；TypeScript 类型本身不能校验文件或 agent 输出。
 
 - **Orchestrator 辅助代码（`packages/orchestrator/`）**：由三个高内聚核心模块及轻量 CLI 入口构成：
-  - **Lifecycle**：负责派发身份、授权语义、报告关联、信封协议、幂等性，以及 `init`、`prepare`、`handoff`、`complete`、`resolve` 和 `inspect` 六个生命周期操作的组织协调。
+  - **Lifecycle**：负责派发身份、授权语义、报告关联、信封协议、幂等性，以及 `init`、`dispatch`、`complete`、`resolve` 和 `inspect` 五个生命周期操作的组织协调。
   - **Workflow**：负责交付序列、阶段定义加载与校验、完成策略（completion policies）、重试/重规划预算以及验收证据检查。
   - **RunStore**：负责运行目录文件布局、原子提交（状态与信封）及通过 pending commit 记录进行中断恢复。
   - **CLI（`cli.ts`、`envelope-cli.ts`）**：负责参数解析、输入媒介处理与终端输出格式化，不承载交付规则，不直接修改底层文件。
 - **配置辅助代码（`packages/workspace-config/`）**：TypeScript 模块解析并校验 orchestrator 使用的项目配置。
 - **专业辅助脚本（`skills/<skill>/scripts/`）**：现有专业任务辅助代码可以继续与技能放在一起，包括 Python 脚本。迁移 orchestrator 代码不要求改写所有技能。
+
+新的 `dispatch` 将输入信封、尝试次数与 `handed_off` 状态一并提交，授予技能一次在平台上启动 agent 的权限。调用方须串行执行同一次运行内的操作。每个 JSON 请求的 `request_id` 在同一次运行内唯一。`init --force` 会开始一次新的运行，重新记录请求历史。内核在准许新工作前检查请求历史。重放原始请求内容会返回已有派发或其完成记录，且不会再次授予启动权限。内核拒绝使用同一 ID 提交不同内容。暂停会阻止授予新的启动权限，已有授权与完成记录仍然有效。
 
 技能负责对外履行阶段输入与回执契约。辅助模块实现确定性操作，不选择下一个专业阶段；Orchestrator 通过 `resolve` 显式作出该决策。更换实现时须保留生命周期操作语义、持久化 JSON 格式、中断恢复和回执校验行为。
 

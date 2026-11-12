@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createTestDir,
   runLifecycleKernelCli,
-  runPrepareTaskCli,
+  runDispatchTaskCli,
   runPrepareWorktreeCli,
   runWorkspaceConfigCli,
   type CompactReceiptReport,
@@ -151,7 +151,7 @@ describe('Issue #38: Workspace Config E2E', () => {
       '--root-issue', '38',
       '--repo-dir', repoDir,
     ]);
-    const prepResEnvelope = runPrepareTaskCli(receiptRoot, {
+    const prepResEnvelope = runDispatchTaskCli(receiptRoot, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace for Issue #38',
       provider: {
@@ -258,7 +258,7 @@ describe('Issue #38: Workspace Config E2E', () => {
       '--root-issue', '50',
       '--repo-dir', repoDir,
     ]);
-    const prepResEnvelope = runPrepareTaskCli(receiptRoot, {
+    const prepResEnvelope = runDispatchTaskCli(receiptRoot, {
       stage: 'workspace_prepare',
       objective: 'Custom container test',
       provider: {
@@ -314,7 +314,7 @@ describe('Issue #38: Workspace Config E2E', () => {
       '--root-issue', '39',
       '--repo-dir', repoDir,
     ]);
-    const prepResEnvelope = runPrepareTaskCli(receiptRoot, {
+    const prepResEnvelope = runDispatchTaskCli(receiptRoot, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace for fork issue #39',
       provider: {

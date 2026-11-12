@@ -17,7 +17,7 @@ import {
   REPO_ROOT,
   runEnvelopeCli,
   runLifecycleKernelCli,
-  runPrepareTaskCli,
+  runDispatchTaskCli,
   type TaskInputEnvelope,
 } from './helpers.js';
 
@@ -237,7 +237,7 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
         '--root-issue', '100',
       ]);
 
-      const res = runPrepareTaskCli(stageRoot, {
+      const res = runDispatchTaskCli(stageRoot, {
         stage: stage.id,
         objective: `Execute stage ${stage.id}`,
         provider: {
@@ -263,7 +263,7 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
     // Target A: pc-workspace
     const rootSkillA = path.join(testEnv.dir, 'skill-run-a');
     runLifecycleKernelCli(['init', '--receipt-root', rootSkillA, '--root-issue', '200']);
-    const prepSkillA = runPrepareTaskCli(rootSkillA, {
+    const prepSkillA = runDispatchTaskCli(rootSkillA, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace via pc-workspace',
       provider: {
@@ -277,7 +277,7 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
     // Target B: pc-issue-plan
     const rootSkillB = path.join(testEnv.dir, 'skill-run-b');
     runLifecycleKernelCli(['init', '--receipt-root', rootSkillB, '--root-issue', '200']);
-    const prepSkillB = runPrepareTaskCli(rootSkillB, {
+    const prepSkillB = runDispatchTaskCli(rootSkillB, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace via pc-issue-plan target',
       provider: {
@@ -304,7 +304,7 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '200',
     ]);
-    const prepRes = runPrepareTaskCli(testEnv.dir, {
+    const prepRes = runDispatchTaskCli(testEnv.dir, {
       stage: 'workspace_prepare',
       objective: 'Prepare workspace for issue 200',
       provider: {
@@ -314,12 +314,6 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
       workdir: testEnv.dir,
     });
     const prepData = JSON.parse(prepRes.stdout);
-    runLifecycleKernelCli([
-      'handoff',
-      '--receipt-root', testEnv.dir,
-      '--dispatch-id', prepData.dispatch_id,
-    ]);
-
     fs.writeFileSync(prepData.receipt_path, '# Receipt\nOutcome: prepared');
     const compRes = runLifecycleKernelCli([
       'complete',
@@ -345,7 +339,7 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
       '--receipt-root', testEnv.dir,
       '--root-issue', '300',
     ]);
-    const res = runPrepareTaskCli(testEnv.dir, {
+    const res = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Test bad provider type',
       provider: {
@@ -359,7 +353,7 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
     expect(res.stderr).toContain("Provider 'type' must be 'skill'");
 
     // Specifically verify deprecated 'script' provider is rejected
-    const resScript = runPrepareTaskCli(testEnv.dir, {
+    const resScript = runDispatchTaskCli(testEnv.dir, {
       stage: 'stage_2_work',
       objective: 'Test script provider rejection',
       provider: {

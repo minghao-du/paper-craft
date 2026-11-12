@@ -46,11 +46,11 @@ export function inspectState(o: InspectOptions): unknown {
   if (active) {
     if (active.status === "prepared") {
       reasons.push(
-        `Active dispatch '${active.dispatch_id}' is prepared but not yet handed off to execution.`,
+        `Active dispatch '${active.dispatch_id}' is a legacy prepared dispatch without launch authorization.`,
       );
     } else if (["handed_off", "running"].includes(active.status)) {
       reasons.push(
-        `Active dispatch '${active.dispatch_id}' was handed off and execution outcome is unconfirmed/in flight; awaiting completion report and durable receipt. Kernel will not auto-re-execute.`,
+        `Active dispatch '${active.dispatch_id}' has launch authorization and its execution outcome is unconfirmed. Verify the original execution and submit its completion report and durable receipt.`,
       );
     } else {
       reasons.push(
@@ -76,11 +76,11 @@ export function inspectState(o: InspectOptions): unknown {
 
   if (state.orchestrator_decision === "halt") {
     reasons.push(
-      `Workflow is halted (new tasks blocked; a handed-off task can still be completed): ${lastDecisionReason(decisions, "halt", "Workflow halted")}`,
+      `Workflow is halted (new tasks blocked; an authorized task can still be completed): ${lastDecisionReason(decisions, "halt", "Workflow halted")}`,
     );
   } else if (state.orchestrator_decision === "wait_user") {
     reasons.push(
-      `Workflow is waiting for user (new tasks blocked; a handed-off task can still be completed): ${lastDecisionReason(decisions, "wait_user", "Awaiting user input or prerequisite")}`,
+      `Workflow is waiting for user (new tasks blocked; an authorized task can still be completed): ${lastDecisionReason(decisions, "wait_user", "Awaiting user input or prerequisite")}`,
     );
   } else if (state.stage_status === "needs_rework") {
     reasons.push(

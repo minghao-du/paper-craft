@@ -1,16 +1,16 @@
 /**
  * Request parsing, validation, and comparison for Lifecycle operations.
  */
-import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parseReportInput } from "../protocol/index.js";
 import type {
   CompactReport,
-  NormalizedPrepareRequest,
+  NormalizedDispatchRequest,
   ResolveOptions,
 } from "./types.js";
 
-const PREPARE_ALLOWED_FIELDS = [
+const DISPATCH_ALLOWED_FIELDS = [
+  "request_id",
   "stage",
   "objective",
   "provider",
@@ -26,40 +26,40 @@ const PREPARE_ALLOWED_FIELDS = [
   "parameters",
 ];
 
-export function parsePrepareRequest(raw: unknown): NormalizedPrepareRequest {
+export function parseDispatchRequest(raw: unknown): NormalizedDispatchRequest {
   let parsed: unknown = raw;
   if (typeof parsed === "string") {
     try {
       parsed = JSON.parse(parsed);
     } catch (error) {
-      throw new Error(`Invalid prepare request JSON: ${String(error)}`, {
+      throw new Error(`Invalid dispatch request JSON: ${String(error)}`, {
         cause: error,
       });
     }
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Prepare request must be a JSON object");
+    throw new Error("Dispatch request must be a JSON object");
   }
 
   const record = parsed as Record<string, unknown>;
 
   const unknown = Object.keys(record).filter(
-    (k) => !PREPARE_ALLOWED_FIELDS.includes(k),
+    (k) => !DISPATCH_ALLOWED_FIELDS.includes(k),
   );
   if (unknown.length) {
     throw new Error(
-      `Unknown prepare request fields: ${unknown.sort().join(", ")}`,
+      `Unknown dispatch request fields: ${unknown.sort().join(", ")}`,
     );
   }
 
-  for (const key of ["stage", "objective"]) {
+  for (const key of ["request_id", "stage", "objective"]) {
     if (!(key in record)) {
-      throw new Error(`Prepare request missing required field '${key}'`);
+      throw new Error(`Dispatch request missing required field '${key}'`);
     }
   }
 
-  for (const key of ["stage", "objective"] as const) {
+  for (const key of ["request_id", "stage", "objective"] as const) {
     const val = record[key];
     if (typeof val !== "string" || !val.trim()) {
       throw new Error(
@@ -124,8 +124,7 @@ export function parsePrepareRequest(raw: unknown): NormalizedPrepareRequest {
   }
 
   let parsedProvider:
-    | { type: "skill"; target: string; args: string[] }
-    | undefined = undefined;
+    { type: "skill"; target: string; args: string[] } | undefined = undefined;
   if (record.provider != null) {
     const p = record.provider;
     if (typeof p !== "object" || Array.isArray(p)) {
@@ -135,9 +134,7 @@ export function parsePrepareRequest(raw: unknown): NormalizedPrepareRequest {
       (k) => !["type", "target", "args"].includes(k),
     );
     if (unknownP.length) {
-      throw new Error(
-        `Unknown provider fields: ${unknownP.sort().join(", ")}`,
-      );
+      throw new Error(`Unknown provider fields: ${unknownP.sort().join(", ")}`);
     }
     const pRec = p as Record<string, unknown>;
     if (pRec.type !== "skill") {
@@ -185,92 +182,49 @@ export function parsePrepareRequest(raw: unknown): NormalizedPrepareRequest {
     }
   }
 
-  const stage = (record.stage as string).trim();
-  const objective = (record.objective as string).trim();
-  const workdir = record.workdir
-    ? path.resolve((record.workdir as string).trim())
-    : "";
-  const scope = record.scope != null ? String(record.scope) : "";
-  const branch =
-    record.branch != null ? String(record.branch).trim() : null;
-  const commit =
-    record.commit != null ? String(record.commit).trim() : null;
-  const receiptTemplate =
-    record.receipt_template != null
-      ? String(record.receipt_template).trim()
-      : undefined;
-  const attemptIntent =
-    (record.attempt_intent as "same" | "new") ?? "same";
-  const reworkIssue =
-    record.rework_issue != null ? String(record.rework_issue).trim() : null;
-  const criteria = Array.isArray(record.acceptance_criteria)
-    ? [...record.acceptance_criteria]
-    : [];
-  const predecessors = Array.isArray(record.predecessor_receipts)
-    ? [...record.predecessor_receipts]
-    : [];
-  const parameters = record.parameters
-    ? { ...(record.parameters as Record<string, unknown>) }
+  // Match the JSON round trip used by the run store for object callers as well.
+  const parameters: Record<string, unknown> = record.parameters
+    ? JSON.parse(
+        JSON.stringify({ ...(record.parameters as Record<string, unknown>) }),
+      )
     : {};
+  const workdir = (record.workdir as string | null | undefined)?.trim();
+  const receiptTemplate = (
+    record.receipt_template as string | null | undefined
+  )?.trim();
+  // An explicit null overrides context, while an omitted field inherits it.
+  const branch =
+    record.branch === null
+      ? null
+      : (record.branch as string | undefined)?.trim();
+  const commit =
+    record.commit === null
+      ? null
+      : (record.commit as string | undefined)?.trim();
 
   return {
-    stage,
-    objective,
-    provider: parsedProvider,
-    acceptance_criteria: criteria,
-    predecessor_receipts: predecessors,
-    working_directory: workdir,
-    branch,
-    commit,
-    scope,
+    request_id: (record.request_id as string).trim(),
+    stage: (record.stage as string).trim(),
+    objective: (record.objective as string).trim(),
+    ...(parsedProvider ? { provider: parsedProvider } : {}),
+    acceptance_criteria: [
+      ...((record.acceptance_criteria as string[] | undefined) ?? []),
+    ],
+    predecessor_receipts: [
+      ...((record.predecessor_receipts as string[] | undefined) ?? []),
+    ],
+    ...(workdir !== undefined ? { workdir } : {}),
+    ...(branch !== undefined ? { branch } : {}),
+    ...(commit !== undefined ? { commit } : {}),
+    scope: (record.scope as string | null | undefined) ?? "",
     parameters,
-    receipt_template: receiptTemplate,
-    attempt_intent: attemptIntent,
-    rework_issue: reworkIssue,
-    predecessors,
-    logical_stage: stage,
+    ...(receiptTemplate !== undefined
+      ? { receipt_template: receiptTemplate }
+      : {}),
+    attempt_intent: (record.attempt_intent as "same" | "new") ?? "same",
+    rework_issue:
+      record.rework_issue != null ? String(record.rework_issue).trim() : null,
   };
-}
-
-export function compareNormalizedRequests(
-  a: NormalizedPrepareRequest,
-  b: NormalizedPrepareRequest,
-): boolean {
-  const aStage = a.stage ?? a.logical_stage ?? "";
-  const bStage = b.stage ?? b.logical_stage ?? "";
-  if (aStage !== bStage) return false;
-
-  if (a.objective !== b.objective) return false;
-
-  if (!isDeepStrictEqual(a.provider ?? null, b.provider ?? null)) return false;
-
-  const aCriteria = a.acceptance_criteria ?? [];
-  const bCriteria = b.acceptance_criteria ?? [];
-  if (!isDeepStrictEqual(aCriteria, bCriteria)) return false;
-
-  const aReceipts = a.predecessor_receipts ?? a.predecessors ?? [];
-  const bReceipts = b.predecessor_receipts ?? b.predecessors ?? [];
-  if (!isDeepStrictEqual(aReceipts, bReceipts)) return false;
-
-  if ((a.working_directory ?? "") !== (b.working_directory ?? "")) return false;
-
-  if ((a.branch ?? null) !== (b.branch ?? null)) return false;
-
-  if ((a.commit ?? null) !== (b.commit ?? null)) return false;
-
-  if ((a.scope ?? "") !== (b.scope ?? "")) return false;
-
-  if (!isDeepStrictEqual(a.parameters ?? {}, b.parameters ?? {})) return false;
-
-  if ((a.receipt_template ?? null) !== (b.receipt_template ?? null)) return false;
-
-  if ((a.attempt_intent ?? "same") !== (b.attempt_intent ?? "same")) return false;
-
-  const aRework = a.rework_issue == null ? null : String(a.rework_issue).trim();
-  const bRework = b.rework_issue == null ? null : String(b.rework_issue).trim();
-  if (aRework !== bRework) return false;
-
-  return true;
 }
 
 export const parseCompleteReport = parseReportInput;
@@ -318,10 +272,13 @@ export function parseResolveOptions(
   }
 
   return {
-    receipt_root: typeof raw.receipt_root === "string" ? raw.receipt_root.trim() : "",
+    receipt_root:
+      typeof raw.receipt_root === "string" ? raw.receipt_root.trim() : "",
     decision,
     reason: reason.trim(),
-    ...(raw.next_stage ? { next_stage: (raw.next_stage as string).trim() } : {}),
+    ...(raw.next_stage
+      ? { next_stage: (raw.next_stage as string).trim() }
+      : {}),
     ...(Array.isArray(raw.options) ? { options: raw.options as string[] } : {}),
     ...(raw.child_issues ? { child_issues: raw.child_issues as string[] } : {}),
     ...(raw.plan ? { plan: raw.plan } : {}),

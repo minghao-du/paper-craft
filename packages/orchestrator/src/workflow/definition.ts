@@ -192,7 +192,7 @@ export function resolveTaskIntent(
   if (!stageDef) {
     if (!providerOverride?.target) {
       throw new Error(
-        `Cannot prepare task: Stage '${stage}' is not defined in workflow snapshot and no provider was specified.`,
+        `Cannot dispatch task: Stage '${stage}' is not defined in workflow snapshot and no provider was specified.`,
       );
     }
     stageDef = {

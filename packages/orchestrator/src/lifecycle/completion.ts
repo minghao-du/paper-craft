@@ -1,86 +1,17 @@
 /**
- * Handoff and Completion lifecycle operations.
+ * Completion lifecycle operation.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { commitRun, loadRun } from "../run-store/index.js";
 import { compareCompleteReports } from "./requests.js";
 import { parseReportInput, ProtocolError } from "../protocol/index.js";
-import { assertNotPaused } from "./control.js";
 import type {
   CompactReport,
   CompletedDispatch,
   CompleteOptions,
-  HandoffOptions,
-  HandoffResult,
   RuntimeState,
 } from "./types.js";
-
-export function handoffDispatch(o: HandoffOptions): HandoffResult {
-  if (!o.dispatch_id || !o.dispatch_id.trim()) {
-    throw new Error("--dispatch-id is required for handoff");
-  }
-
-  const root = path.resolve(o.receipt_root);
-  const state = loadRun<RuntimeState>(root);
-  const expectedPreviousState = JSON.parse(JSON.stringify(state));
-
-  const active = state.active_dispatch;
-  if (!active) {
-    throw new Error(
-      "No active dispatch found to hand off. Run 'prepare' first.",
-    );
-  }
-
-  if (active.dispatch_id !== o.dispatch_id) {
-    throw new Error(
-      `Active dispatch ID '${active.dispatch_id}' does not match requested dispatch ID '${o.dispatch_id}'.`,
-    );
-  }
-
-  const authorized = active.status === "prepared" && !active.authorized;
-  if (authorized) {
-    assertNotPaused(state, "hand off a dispatch");
-    const now = new Date().toISOString();
-    const updatedActive = {
-      ...active,
-      status: "handed_off" as const,
-      authorized: true,
-      platform_handle: o.platform_handle ?? active.platform_handle ?? null,
-      handed_off_at: now,
-    };
-    const nextState: RuntimeState = {
-      ...state,
-      active_dispatch: updatedActive,
-      stage_status: "in_progress",
-      last_updated: now,
-    };
-    commitRun(root, {
-      expected_previous_state: expectedPreviousState,
-      target_state: nextState,
-    });
-    return {
-      authorized: true,
-      dispatch_id: active.dispatch_id,
-      status: "handed_off",
-      platform_handle: updatedActive.platform_handle ?? null,
-      envelope_path: active.envelope_path,
-      receipt_path: active.receipt_path,
-      message: "Execution launch authorized.",
-    };
-  }
-
-  return {
-    authorized: false,
-    dispatch_id: active.dispatch_id,
-    status: active.status ?? "unknown",
-    platform_handle: active.platform_handle ?? null,
-    envelope_path: active.envelope_path,
-    receipt_path: active.receipt_path,
-    message:
-      "Dispatch was already authorized previously. New launch authorization not granted.",
-  };
-}
 
 export function completeDispatch(o: CompleteOptions): CompletedDispatch {
   if (!o.dispatch_id || !o.dispatch_id.trim()) {
@@ -154,10 +85,10 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
     );
   }
 
-  if (active.status !== "handed_off") {
+  if (active.status !== "handed_off" && active.status !== "running") {
     return reject(
       "not_handed_off",
-      `Cannot complete dispatch '${active.dispatch_id}': task has not been handed off to execution. Run 'handoff' first.`,
+      `Cannot complete dispatch '${active.dispatch_id}': legacy prepared state has no launch authorization. Finish it with the previous version or verify it was never launched and start a new run.`,
     );
   }
 
@@ -195,6 +126,9 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
     receipt_path: assignedReceipt,
     summary: report.summary,
     completed_at: completedAt,
+    ...(active.request?.request_id ? { request: active.request } : {}),
+    ...(active.provider ? { provider: active.provider } : {}),
+    envelope_path: active.envelope_path,
   };
 
   const nextStatus =

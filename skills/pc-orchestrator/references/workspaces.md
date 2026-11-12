@@ -70,8 +70,7 @@ The `workspace_prepare` stage is executed via a specialized skill subagent:
     }
   }
   ```
-  The Orchestrator writes `<receipt_root>/<step_index>-input.json` and dispatches `pc-workspace` with the
-  Standardized Slim Prompt (~15 lines). The subagent validates source checkout, creates or reuses the target
+  The Orchestrator uses the [dispatch and launch step](../SKILL.md#3-execution-loop) to start `pc-workspace`. The subagent validates source checkout, creates or reuses the target
   worktree, writes the receipt, and returns the compact JSON report.
 
 ### State Persistence & Acceptance Gate
@@ -107,8 +106,7 @@ allowing cleanup. Professional tasks proceed only after accepted preparation.
 ## Task Input Envelope & binding execution
 
 Context passing is fully structured and file-based. The Orchestrator NEVER concatenates large natural language prompts.
-Instead, the Orchestrator generates a Task Input Envelope file (`<receipt_root>/<step_index>-input.json`) using
-the TypeScript envelope helper at `<paper-craft-root>/packages/orchestrator/src/envelope-cli.ts` before every dispatch.
+The [lifecycle dispatch operation](../SKILL.md#lifecycle-operations) writes the Task Input Envelope before granting launch authorization.
 
 ### Task Input Envelope Schema (v1.0)
 The envelope encapsulates 7 mandatory sections:
