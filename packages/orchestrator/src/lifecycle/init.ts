@@ -94,17 +94,27 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     receipt_root: root,
   };
 
-  const snapshot = loadAndValidateWorkflow(o.workflow || config.workflow, repo);
-
   const existing = o.force ? null : loadRunIfExists<RuntimeState>(root);
   if (existing) {
+    if (existing.schema_version === "1.0") {
+      throw new Error(
+        "Cannot restore or write to legacy schema_version '1.0' run. Finish it with the previous version or inspect read-only, or start a new run in a new receipt root.",
+      );
+    }
+    if (existing.schema_version !== "1.1") {
+      throw new Error(
+        `Unsupported schema_version '${existing.schema_version}'. This version of the orchestrator only supports schema_version '1.1'.`,
+      );
+    }
+    // Strict structural validation of existing saved snapshot without reading external files
+    loadAndValidateWorkflow(existing.workflow_snapshot, undefined, "snapshot");
+
     const oldRepo =
       existing.config_snapshot?.repo_checkout ??
       (existing.context?.repo_checkout as string | undefined);
     if (
       String(existing.root_issue_id) !== rootIssue ||
-      (existing.workflow !== config.workflow &&
-        existing.workflow !== snapshot.name) ||
+      (o.workflow && existing.workflow !== o.workflow) ||
       (oldRepo && path.resolve(String(oldRepo)) !== path.resolve(config.repo_checkout))
     ) {
       throw new Error(
@@ -114,6 +124,8 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     return existing;
   }
 
+  const snapshot = loadAndValidateWorkflow(o.workflow || config.workflow, repo, "source");
+
   const stage = snapshot.initial_stage || snapshot.stages[0]?.id;
   if (!stage) {
     throw new Error(
@@ -122,7 +134,7 @@ export function initWorkflow(o: InitOptions): RuntimeState {
   }
 
   const state: RuntimeState = {
-    schema_version: "1.0",
+    schema_version: "1.1",
     root_issue_id: rootIssue,
     current_issue_id: rootIssue,
     workflow: snapshot.name,
@@ -133,6 +145,7 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     active_dispatch: null,
     completed_stages: [],
     decisions: [],
+    pending_stage_selection: null,
     budgets: {
       delivery_attempts_used: 0,
       delivery_attempts_max: config.delivery_attempts_max,

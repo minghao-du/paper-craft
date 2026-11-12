@@ -8,7 +8,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { commitRun, loadRun } from "../run-store/index.js";
-import { applyDeliveryDecision, assertCanFinish } from "../workflow/index.js";
+import {
+  applyDeliveryDecision,
+  assertCanFinish,
+  resolveCanonicalStage,
+} from "../workflow/index.js";
+import { toDeliveryState, applyNextDeliveryState } from "./domain-state.js";
 import { isFinished } from "./control.js";
 import { parseResolveOptions } from "./requests.js";
 import type {
@@ -104,6 +109,16 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
   const options = parseResolveOptions(o as unknown as Record<string, unknown>);
   const root = path.resolve(o.receipt_root);
   const state = loadRun<RuntimeState>(root);
+  if (state.schema_version === "1.0") {
+    throw new Error(
+      "Cannot resolve decision: legacy schema_version '1.0' run does not support writes. Finish it with the previous version or inspect read-only, or start a new run in a new receipt root.",
+    );
+  }
+  if (state.schema_version !== "1.1") {
+    throw new Error(
+      `Unsupported schema_version '${state.schema_version}'. This version only supports '1.1'.`,
+    );
+  }
   const expectedPreviousState = JSON.parse(JSON.stringify(state));
 
   if (isFinished(state)) {
@@ -293,55 +308,46 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
       );
     }
 
-    // Validate next_stage exists in snapshot
-    const nextStageDef = state.workflow_snapshot.stages.find(
-      (s) => s.id === options.next_stage,
-    );
-    if (!nextStageDef) {
-      throw new Error(
-        `next_stage '${options.next_stage}' is not a stage of workflow '${state.workflow_snapshot.name}'.`,
-      );
+    if (!options.next_stage || typeof options.next_stage !== "string" || !options.next_stage.trim()) {
+      throw new Error("Plan acceptance requires an explicit 'next_stage'.");
     }
+
+    const canonicalNextStage = resolveCanonicalStage(
+      state.workflow_snapshot,
+      options.next_stage,
+    ).id;
 
     const deliveryResult = applyDeliveryDecision({
       workflow: state.workflow_snapshot,
-      deliverySequence: state.delivery_sequence,
-      budgets: state.budgets,
-      currentIssueId: state.current_issue_id,
-      rootIssueId: state.root_issue_id,
-      decision: "continue",
-      action: "continue",
-      nextStage: options.next_stage,
-      planningSource: {
-        dispatch_id: source.dispatch_id,
-        issue_id:
-          source.issue_id != null ? String(source.issue_id).trim() : rootIssueId,
-        stage: source.stage,
-        step_index: source.step_index,
-        execution_status: source.execution_status,
-        provider: actualProvider,
-        result: res as Record<string, unknown>,
-        receipt_path: source.receipt_path,
+      deliveryState: toDeliveryState(state),
+      decision: {
+        kind: "accept_plan",
+        planDispatchId: targetPlanId,
+        nextStage: canonicalNextStage,
       },
+      completedStages: state.completed_stages ?? [],
     });
 
     const now = new Date().toISOString();
+    const decisionIndex = (state.decisions ?? []).length;
     const record: DecisionRecord = {
       decision: "continue",
       action: "continue",
       reason: options.reason,
       plan_dispatch_id: targetPlanId,
-      next_stage: options.next_stage!,
+      next_stage: canonicalNextStage,
       timestamp: now,
     };
 
     const nextState: RuntimeState = {
       ...state,
-      current_issue_id: deliveryResult.currentIssueId,
-      current_stage: options.next_stage!,
+      ...applyNextDeliveryState(state, deliveryResult.nextDeliveryState),
+      current_stage: canonicalNextStage,
       stage_status: "pending",
-      budgets: deliveryResult.budgets,
-      delivery_sequence: deliveryResult.deliverySequence,
+      pending_stage_selection: {
+        stage: canonicalNextStage,
+        decision_index: decisionIndex,
+      },
       decisions: [...(state.decisions ?? []), record],
       orchestrator_decision: "continue",
       last_updated: now,
@@ -361,6 +367,7 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
   if (options.decision === "finish") {
     assertCanFinish({
       workflow: state.workflow_snapshot,
+      deliveryState: toDeliveryState(state),
       completedStages: state.completed_stages ?? [],
       activeDispatch: state.active_dispatch,
       protocolError: state.protocol_error,
@@ -373,29 +380,50 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
       ? String(options.landing_dispatch_id).trim()
       : null;
 
-  const deliveryResult = applyDeliveryDecision({
-    workflow: state.workflow_snapshot,
-    deliverySequence: state.delivery_sequence,
-    budgets: state.budgets,
-    currentIssueId: state.current_issue_id,
-    rootIssueId: state.root_issue_id,
-    decision: options.decision,
-    action: options.decision,
-    nextStage: options.next_stage,
-    currentIssue:
-      options.current_issue != null ? String(options.current_issue) : null,
-    markLanded:
-      options.mark_landed != null ? String(options.mark_landed) : null,
-    landingDispatchId: landingId,
-    completeSequence: options.complete_sequence,
-    completedStages: withRecoveredIssueIds(
-      root,
-      state.completed_stages ?? [],
-      landingId,
-    ),
-  });
+  const canonicalNextStage = options.next_stage
+    ? resolveCanonicalStage(state.workflow_snapshot, options.next_stage).id
+    : undefined;
+
+  let nextDeliveryState = toDeliveryState(state);
+  const hasDomainUpdates =
+    canonicalNextStage !== undefined ||
+    options.current_issue != null ||
+    options.mark_landed != null ||
+    options.complete_sequence;
+
+  if (hasDomainUpdates) {
+    const landing =
+      options.mark_landed != null
+        ? {
+            issueId: String(options.mark_landed).trim(),
+            dispatchId: landingId!,
+          }
+        : undefined;
+
+    const deliveryResult = applyDeliveryDecision({
+      workflow: state.workflow_snapshot,
+      deliveryState: toDeliveryState(state),
+      decision: {
+        kind: "update_delivery",
+        nextStage: canonicalNextStage,
+        currentIssueId:
+          options.current_issue != null
+            ? String(options.current_issue).trim()
+            : undefined,
+        landing,
+        completeSequence: options.complete_sequence,
+      },
+      completedStages: withRecoveredIssueIds(
+        root,
+        state.completed_stages ?? [],
+        landingId,
+      ),
+    });
+    nextDeliveryState = deliveryResult.nextDeliveryState;
+  }
 
   const now = new Date().toISOString();
+  const decisionIndex = (state.decisions ?? []).length;
   const record: DecisionRecord = {
     decision: options.decision,
     action: options.decision,
@@ -403,7 +431,7 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     options: options.options ?? [],
     timestamp: now,
   };
-  if (options.next_stage) record.next_stage = options.next_stage;
+  if (canonicalNextStage) record.next_stage = canonicalNextStage;
   if (options.current_issue != null) {
     record.current_issue = String(options.current_issue);
   }
@@ -430,18 +458,22 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     stageStatus = activeRunning ? "in_progress" : "pending";
   }
 
-  if (options.next_stage) {
-    currentStage = options.next_stage;
+  let nextPendingSelection = state.pending_stage_selection ?? null;
+  if (canonicalNextStage) {
+    currentStage = canonicalNextStage;
     stageStatus = "pending";
+    nextPendingSelection = {
+      stage: canonicalNextStage,
+      decision_index: decisionIndex,
+    };
   }
 
   const nextState: RuntimeState = {
     ...state,
-    current_issue_id: deliveryResult.currentIssueId,
+    ...applyNextDeliveryState(state, nextDeliveryState),
     current_stage: currentStage,
     stage_status: stageStatus,
-    budgets: deliveryResult.budgets,
-    delivery_sequence: deliveryResult.deliverySequence,
+    pending_stage_selection: nextPendingSelection,
     decisions: [...(state.decisions ?? []), record],
     orchestrator_decision: options.decision,
     last_updated: now,

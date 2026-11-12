@@ -5,6 +5,8 @@
   "stages": [
     {
       "id": "workspace_prepare",
+      "logical_task": "workspace_prepare",
+      "auxiliary": true,
       "provider": {
         "type": "skill",
         "target": "pc-workspace",
@@ -14,6 +16,7 @@
     },
     {
       "id": "issue_work",
+      "logical_task": "issue_work",
       "provider": {
         "type": "skill",
         "target": "pc-issue-work",
@@ -23,6 +26,7 @@
     },
     {
       "id": "issue_verify",
+      "logical_task": "issue_verify",
       "provider": {
         "type": "skill",
         "target": "pc-issue-verify",

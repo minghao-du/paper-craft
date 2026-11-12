@@ -119,3 +119,5 @@ its environments. Runtime state preserves assignments, preparation receipts, own
 ## Workflow decoupling
 
 Specific execution sequences (such as issue delivery, hotfixes, or refactoring) live in JSON workflow files under `skills/pc-orchestrator/workflows/`. The Orchestrator owns workflow policy and routing. TypeScript helpers implement fixed lifecycle operations; workflow definitions and receipt templates remain skill resources. Resolve resources from the installed skill's real checkout so calls work through installation symlinks and from other working directories.
+
+RuntimeState follows schema_version `1.1`. Lifecycle coordinates execution authorization, active dispatch tracking, report correlation, and atomic storage commits, while Workflow centrally evaluates stage semantics, task parameters, per-issue delivery/replan budgets, landing evidence freshness, and completion policy assertions. Legacy 1.0 runs remain read-only under inspect and reject writes or restoration.

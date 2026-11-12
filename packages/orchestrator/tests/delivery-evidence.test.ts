@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applyDeliveryDecision } from "../src/workflow/delivery.js";
+import {
+  applyDeliveryDecision,
+  assertCanFinish,
+  calculateDeliveryDispatch,
+  inspectDelivery,
+} from "../src/workflow/index.js";
 import type {
   ApplyDeliveryDecisionParams,
+  CompletionRecordView,
   DeliverySequence,
+  DeliveryState,
   PlanningSource,
   WorkflowDefinition,
 } from "../src/workflow/types.js";
@@ -13,9 +20,52 @@ const workflow: WorkflowDefinition = {
   stages: [
     {
       id: "stage_2_work",
+      logical_task: "issue_work",
       provider: { type: "skill", target: "pc-issue-work" },
     },
-    { id: "stage_2_land", provider: { type: "skill", target: "pc-pr-land" } },
+    {
+      id: "stage_2_land",
+      logical_task: "issue_land",
+      provider: { type: "skill", target: "pc-pr-land" },
+    },
+    {
+      id: "custom_work_stage",
+      logical_task: "custom_work_stage",
+      provider: { type: "skill", target: "pc-issue-work" },
+    },
+    {
+      id: "stage_1_plan",
+      logical_task: "issue_plan",
+      provider: { type: "skill", target: "pc-issue-plan" },
+    },
+    {
+      id: "scope_replan",
+      logical_task: "scope_replan",
+      replan: true,
+      provider: { type: "skill", target: "pc-issue-plan" },
+    },
+    {
+      id: "workspace_prepare",
+      logical_task: "workspace_prepare",
+      auxiliary: true,
+      provider: { type: "skill", target: "pc-workspace" },
+    },
+    {
+      id: "issue_verify",
+      logical_task: "issue_verify",
+      provider: { type: "skill", target: "pc-issue-verify" },
+    },
+    {
+      id: "issue_finalize",
+      logical_task: "issue_finalize",
+      provider: { type: "skill", target: "pc-issue-finalize" },
+    },
+    {
+      id: "workspace_cleanup",
+      logical_task: "workspace_cleanup",
+      auxiliary: true,
+      provider: { type: "skill", target: "pc-workspace" },
+    },
   ],
 };
 
@@ -29,7 +79,13 @@ function makeTestDeliverySequence(
       issue_id,
       stage,
       status: "pending",
-      budgets: { delivery_attempts_used: 0, delivery_attempts_max: max },
+      budgets: {
+        delivery_attempts_used: 0,
+        delivery_attempts_max: max,
+        replans_used: 0,
+        replans_max: 2,
+        replans_by_stage: {},
+      },
       landed: false,
     })),
     current_index: 0,
@@ -106,7 +162,7 @@ describe("delivery landing evidence", () => {
     expect(p.deliverySequence).toEqual(before);
   });
 
-  it("rejects different evidence for an already-landed issue", () => {
+  it("rejects different evidence for an already-landed issue in same attempt", () => {
     const first = applyDeliveryDecision(params());
     expect(() =>
       applyDeliveryDecision(
@@ -116,6 +172,60 @@ describe("delivery landing evidence", () => {
         ),
       ),
     ).toThrow(/already landed/);
+  });
+
+  it("allows new landing evidence after explicitly starting new rework attempt (W05)", () => {
+    const first = applyDeliveryDecision(params());
+    const deliveryState: DeliveryState = {
+      rootIssueId: "0",
+      currentIssueId: "1",
+      rootBudgets: first.budgets,
+      sequence: first.deliverySequence,
+    };
+
+    // Starting new rework attempt requires attempt_intent: "new"
+    const reworkDispatch = calculateDeliveryDispatch(
+      workflow,
+      deliveryState,
+      workflow.stages[0], // stage_2_work
+      { rework_issue: "1", attempt_intent: "new" },
+    );
+
+    const reworkedItem = reworkDispatch.nextDeliveryState.sequence!.items[0];
+    expect(reworkedItem.landed).toBe(false);
+    expect(reworkedItem.landed_attempt).toBeUndefined();
+    expect(reworkDispatch.nextDeliveryState.sequence!.active_rework_issue_id).toBe("1");
+    expect(reworkedItem.budgets.delivery_attempts_used).toBe(1);
+
+    // Old attempt evidence (with delivery_attempt: 0) is rejected because current attempt is 1
+    expect(() =>
+      applyDeliveryDecision({
+        ...params({ deliverySequence: reworkDispatch.nextDeliveryState.sequence }),
+        landingDispatchId: "d1",
+        completedStages: [{ ...landed, dispatch_id: "d1", delivery_attempt: 0 }],
+      }),
+    ).toThrow(/delivery attempt/);
+
+    // New attempt landing evidence succeeds
+    const secondLand = applyDeliveryDecision({
+      ...params({ deliverySequence: reworkDispatch.nextDeliveryState.sequence }),
+      landingDispatchId: "d2",
+      completedStages: [
+        {
+          ...landed,
+          dispatch_id: "d2",
+          delivery_attempt: 1,
+          receipt_path: "/r/d2.json",
+        },
+      ],
+    });
+
+    const secondItem = secondLand.deliverySequence!.items[0];
+    expect(secondItem.landed).toBe(true);
+    expect(secondItem.land_dispatch_id).toBe("d2");
+    expect(secondItem.land_receipt_path).toBe("/r/d2.json");
+    // active_rework_issue_id is cleared
+    expect(secondLand.deliverySequence!.active_rework_issue_id).toBeNull();
   });
 
   it("completes only when every item landed; completion is idempotent", () => {
@@ -201,6 +311,7 @@ describe("planning source acceptance in applyDeliveryDecision", () => {
       decision: "continue",
       action: "continue",
       workflow,
+      nextStage: "stage_2_work",
       ...over,
     };
   }
@@ -233,12 +344,13 @@ describe("planning source acceptance in applyDeliveryDecision", () => {
     expect(res.budgets.replans_used).toBe(1);
   });
 
-  it("accepts direct planning with default stage fallback when nextStage not specified", () => {
+  it("rejects plan acceptance when nextStage is omitted", () => {
     const ps = makePlanningSource({ outcome: "direct" });
-    const res = applyDeliveryDecision(
-      basePlanningParams({ planningSource: ps }),
-    );
-    expect(res.deliverySequence!.items[0].stage).toBe("stage_2_work");
+    expect(() =>
+      applyDeliveryDecision(
+        basePlanningParams({ planningSource: ps, nextStage: undefined }),
+      ),
+    ).toThrow(/requires an explicit non-empty 'nextStage'/);
   });
 
   it("rejects direct planning outcome if non-empty tasks are present", () => {
@@ -298,7 +410,6 @@ describe("planning source acceptance in applyDeliveryDecision", () => {
     expect(res.deliverySequence!.completed).toBe(false);
     expect(res.budgets.delivery_attempts_used).toBe(0);
 
-    // Each child item has fresh budgets
     for (const item of res.deliverySequence!.items) {
       expect(item.budgets.delivery_attempts_used).toBe(0);
       expect(item.budgets.delivery_attempts_max).toBe(3);
@@ -426,11 +537,226 @@ describe("planning source acceptance in applyDeliveryDecision", () => {
     });
 
     const res = applyDeliveryDecision(p);
-    // Returned budgets has delivery_attempts_used reset to 0
     expect(res.budgets.delivery_attempts_used).toBe(0);
-    // Original inputBudgets is untouched
     expect(inputBudgets).toEqual(clonedBudgets);
     expect(inputBudgets.delivery_attempts_used).toBe(2);
     expect(res.budgets).not.toBe(inputBudgets);
+  });
+});
+
+describe("calculateDeliveryDispatch and Domain Rules (W04, W05, W06, W10)", () => {
+  it("maintains calculation input immutability in calculateDeliveryDispatch (W04)", () => {
+    const state: DeliveryState = {
+      rootIssueId: "0",
+      currentIssueId: "1",
+      rootBudgets: {
+        delivery_attempts_used: 1,
+        delivery_attempts_max: 3,
+        replans_used: 0,
+        replans_max: 2,
+        replans_by_stage: {},
+      },
+      sequence: makeTestDeliverySequence(["1", "2"], 3),
+    };
+
+    const stateClone = structuredClone(state);
+    const result = calculateDeliveryDispatch(
+      workflow,
+      state,
+      workflow.stages[0],
+      { attempt_intent: "new" },
+    );
+
+    expect(state).toEqual(stateClone);
+    expect(result.nextDeliveryState).not.toBe(state);
+    expect(result.nextDeliveryState.sequence).not.toBe(state.sequence);
+    expect(result.nextDeliveryState.sequence!.items[0].budgets.delivery_attempts_used).toBe(1);
+    expect(state.sequence!.items[0].budgets.delivery_attempts_used).toBe(0);
+  });
+
+  it("attributes replan budgets to child issue and not root budgets (W06)", () => {
+    const sequence = makeTestDeliverySequence(["101", "102"], 3);
+    const state: DeliveryState = {
+      rootIssueId: "0",
+      currentIssueId: "101",
+      rootBudgets: {
+        delivery_attempts_used: 1,
+        delivery_attempts_max: 3,
+        replans_used: 0,
+        replans_max: 2,
+        replans_by_stage: {},
+      },
+      sequence,
+    };
+
+    const replanStage = workflow.stages.find((s) => s.id === "scope_replan")!;
+    const res = calculateDeliveryDispatch(
+      workflow,
+      state,
+      replanStage,
+      { originating_stage: "stage_2_work" },
+    );
+
+    // Root replans_used must remain 0
+    expect(res.nextDeliveryState.rootBudgets.replans_used).toBe(0);
+    // Child item budgets received the replan increment
+    const item101 = res.nextDeliveryState.sequence!.items[0];
+    expect(item101.budgets.replans_used).toBe(1);
+    expect(item101.budgets.replans_by_stage?.stage_2_work).toBe(1);
+  });
+
+  it("auxiliary success cannot clear rework_needed (W10)", () => {
+    const completedStages: CompletionRecordView[] = [
+      {
+        dispatch_id: "w1",
+        stage: "stage_2_work",
+        issue_id: "1",
+        execution_status: "succeeded",
+        result: { outcome: "rework_needed" },
+        step_index: 1,
+      },
+      {
+        dispatch_id: "c1",
+        stage: "workspace_cleanup",
+        issue_id: "0",
+        execution_status: "succeeded",
+        result: { outcome: "cleaned", retained_paths: [], retained_branches: [] },
+        step_index: 2,
+      },
+    ];
+
+    const basicWorkflow: WorkflowDefinition = {
+      ...workflow,
+      completion_policy: "basic",
+    };
+
+    expect(() =>
+      assertCanFinish({
+        workflow: basicWorkflow,
+        completedStages,
+        rootIssueId: "0",
+      }),
+    ).toThrow(/rework_needed/);
+
+    const inspection = inspectDelivery({
+      workflow: basicWorkflow,
+      deliveryState: {
+        rootIssueId: "0",
+        currentIssueId: "1",
+        rootBudgets: { delivery_attempts_used: 1, delivery_attempts_max: 3 },
+      },
+      completedStages,
+    });
+    expect(inspection.reworkNeeded).toBe(true);
+    expect(inspection.canFinish).toBe(false);
+    expect(inspection.blockingReasons.length).toBeGreaterThan(0);
+
+    // Later business success for the same issue and stage clears rework_needed
+    const resolvedStages: CompletionRecordView[] = [
+      ...completedStages,
+      {
+        dispatch_id: "w2",
+        stage: "stage_2_work",
+        issue_id: "1",
+        execution_status: "succeeded",
+        result: { outcome: "completed" },
+        step_index: 3,
+      },
+    ];
+
+    expect(() =>
+      assertCanFinish({
+        workflow: basicWorkflow,
+        completedStages: resolvedStages,
+        rootIssueId: "0",
+      }),
+    ).not.toThrow();
+  });
+
+  it("enforces issue_delivery policy: sequence, landings, verify, finalize, cleanup", () => {
+    const seq = makeTestDeliverySequence(["1", "2"], 3);
+    seq.items[0].landed = true;
+    seq.items[0].land_dispatch_id = "d1";
+    seq.items[0].land_receipt_path = "/r/d1.json";
+    seq.items[1].landed = true;
+    seq.items[1].land_dispatch_id = "d2";
+    seq.items[1].land_receipt_path = "/r/d2.json";
+    seq.completed = true;
+
+    const deliveryState: DeliveryState = {
+      rootIssueId: "0",
+      currentIssueId: "0",
+      rootBudgets: { delivery_attempts_used: 1, delivery_attempts_max: 3 },
+      sequence: seq,
+    };
+
+    const verifyRecord: CompletionRecordView = {
+      dispatch_id: "v1",
+      stage: "issue_verify",
+      issue_id: "0",
+      execution_status: "succeeded",
+      result: { outcome: "verified", evaluatedHead: "commit-abc" },
+      receipt_path: "/r/verify.json",
+      step_index: 10,
+    };
+
+    const finalizeRecord: CompletionRecordView = {
+      dispatch_id: "f1",
+      stage: "issue_finalize",
+      issue_id: "0",
+      execution_status: "succeeded",
+      result: {
+        outcome: "finalized",
+        scope: "tree",
+        root_issue_id: "0",
+        issues: [
+          { number: "0", state: "CLOSED", repository: "repo", acceptance_receipt: "/r/verify.json" },
+          { number: "1", state: "CLOSED", repository: "repo", acceptance_receipt: "/r/verify.json" },
+          { number: "2", state: "CLOSED", repository: "repo", acceptance_receipt: "/r/verify.json" },
+        ],
+        unresolved: [],
+        candidates: [{ branch: "b1", worktree: "/wt/1", push_remote: "origin" }],
+      },
+      step_index: 11,
+    };
+
+    const cleanupRecord: CompletionRecordView = {
+      dispatch_id: "c1",
+      stage: "workspace_cleanup",
+      issue_id: "0",
+      execution_status: "succeeded",
+      result: {
+        outcome: "cleaned",
+        retained_paths: [],
+        retained_branches: [],
+        removed_paths: ["/wt/1"],
+        removed_branches: [
+          { branch: "b1", scope: "local", remote: null },
+          { branch: "b1", scope: "remote", remote: "origin" },
+        ],
+      },
+      step_index: 12,
+    };
+
+    const completedStages = [verifyRecord, finalizeRecord, cleanupRecord];
+
+    expect(() =>
+      assertCanFinish({
+        workflow,
+        deliveryState,
+        completedStages,
+        rootIssueId: "0",
+      }),
+    ).not.toThrow();
+
+    const inspection = inspectDelivery({
+      workflow,
+      deliveryState,
+      completedStages,
+    });
+    expect(inspection.canFinish).toBe(true);
+    expect(inspection.blockingReasons).toEqual([]);
+    expect(inspection.sequenceCompleted).toBe(true);
+    expect(inspection.reworkNeeded).toBe(false);
   });
 });

@@ -139,6 +139,7 @@
       "id": "scope_replan",
       "logical_task": "scope_replan",
       "name": "Replanning for Scope Boundaries",
+      "replan": true,
       "provider": {
         "type": "skill",
         "target": "pc-issue-plan",

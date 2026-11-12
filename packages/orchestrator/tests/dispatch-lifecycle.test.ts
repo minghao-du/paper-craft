@@ -503,4 +503,165 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       env.cleanup();
     }
   }, 20000);
+
+  it('V6: auxiliary completion preserves pending-stage constraint (W09)', () => {
+    const env = createTestDir('pc-v6-');
+    try {
+      runLifecycleKernelCli(['init', '--receipt-root', env.dir, '--root-issue', '106']);
+
+      // 1. Resolve sets next_stage to stage_2_work
+      const resolveRes = runLifecycleKernelCli([
+        'resolve',
+        '--receipt-root', env.dir,
+        '--decision', 'continue',
+        '--reason', 'Select stage_2_work as next stage',
+        '--next-stage', 'stage_2_work',
+      ]);
+      expect(resolveRes.status).toBe(0);
+
+      // 2. Dispatch and complete auxiliary task: workspace_prepare
+      const auxDispatch = runDispatchTaskCli(env.dir, {
+        stage: 'workspace_prepare',
+        objective: 'Prepare workspace',
+        workdir: env.dir,
+      });
+      expect(auxDispatch.status).toBe(0);
+      const auxData = JSON.parse(auxDispatch.stdout);
+      fs.writeFileSync(auxData.receipt_path, '# Prepared\n');
+
+      const auxComplete = runLifecycleKernelCli([
+        'complete',
+        '--receipt-root', env.dir,
+        '--dispatch-id', auxData.dispatch_id,
+        '--report', JSON.stringify({
+          execution_status: 'succeeded',
+          result: { outcome: 'prepared' },
+          receipt_path: auxData.receipt_path,
+          summary: 'Workspace prepared',
+        }),
+      ]);
+      expect(auxComplete.status).toBe(0);
+
+      // 3. Attempting to dispatch a conflicting primary stage (stage_3_verify) MUST be rejected
+      const conflictDispatch = runDispatchTaskCli(env.dir, {
+        stage: 'stage_3_verify',
+        objective: 'Wrong stage',
+        workdir: env.dir,
+      });
+      expect(conflictDispatch.status).not.toBe(0);
+      expect(conflictDispatch.stderr).toMatch(/selected next_stage 'stage_2_work'/i);
+
+      // 4. Dispatching the selected stage (stage_2_work) SUCCEEDS and consumes pending selection
+      const correctDispatch = runDispatchTaskCli(env.dir, {
+        stage: 'stage_2_work',
+        objective: 'Work on stage 2',
+        workdir: env.dir,
+      });
+      expect(correctDispatch.status).toBe(0);
+    } finally {
+      env.cleanup();
+    }
+  }, 20000);
+
+  it('V9: restoration uses snapshot when workflow file deleted, and rejects 1.0 writes', () => {
+    const env = createTestDir('pc-v9-');
+    try {
+      const customWfPath = path.join(env.dir, 'custom-workflow.json');
+      fs.writeFileSync(
+        customWfPath,
+        JSON.stringify({
+          name: 'custom-wf',
+          completion_policy: 'basic',
+          initial_stage: 's1',
+          stages: [
+            {
+              id: 's1',
+              logical_task: 'task_s1',
+              provider: { type: 'skill', target: 'pc-workspace', args: [] },
+            },
+          ],
+        }),
+      );
+
+      const runDir = path.join(env.dir, 'run');
+      // Initialize run with custom workflow
+      const initRes = runLifecycleKernelCli([
+        'init',
+        '--receipt-root', runDir,
+        '--root-issue', '109',
+        '--workflow', customWfPath,
+      ]);
+      expect(initRes.status).toBe(0);
+
+      // Delete the external workflow file
+      fs.unlinkSync(customWfPath);
+      expect(fs.existsSync(customWfPath)).toBe(false);
+
+      // Re-init (restoration) succeeds because it loads from snapshot, not external file
+      const restoreRes = runLifecycleKernelCli([
+        'init',
+        '--receipt-root', runDir,
+        '--root-issue', '109',
+      ]);
+      expect(restoreRes.status).toBe(0);
+
+      // Now create a legacy 1.0 state.json to test 1.0 rejection
+      const legacyDir = path.join(env.dir, 'legacy-run');
+      fs.mkdirSync(legacyDir, { recursive: true });
+      const legacyState = {
+        schema_version: '1.0',
+        root_issue_id: '110',
+        current_issue_id: '110',
+        workflow: 'default',
+        workflow_snapshot: {
+          name: 'default',
+          completion_policy: 'basic',
+          initial_stage: 's1',
+          stages: [{ id: 's1', logical_task: 't1', provider: { type: 'skill', target: 'pc-workspace' } }],
+        },
+        current_stage: 's1',
+        stage_status: 'pending',
+        next_step_index: 1,
+        active_dispatch: null,
+        completed_stages: [],
+        decisions: [],
+        budgets: { delivery_attempts_used: 0, delivery_attempts_max: 3, replans_used: 0, replans_max: 2 },
+        context: {},
+        config_snapshot: { receipt_root: legacyDir },
+        last_updated: new Date().toISOString(),
+      };
+      fs.writeFileSync(path.join(legacyDir, 'state.json'), JSON.stringify(legacyState, null, 2));
+
+      // init restoration rejects 1.0 write
+      const legacyInit = runLifecycleKernelCli([
+        'init',
+        '--receipt-root', legacyDir,
+        '--root-issue', '110',
+      ]);
+      expect(legacyInit.status).not.toBe(0);
+      expect(legacyInit.stderr).toMatch(/legacy schema_version '1.0'/i);
+
+      // dispatch rejects 1.0 write
+      const legacyDispatch = runDispatchTaskCli(legacyDir, {
+        stage: 's1',
+        objective: 'Test 1.0 dispatch',
+        workdir: env.dir,
+      });
+      expect(legacyDispatch.status).not.toBe(0);
+      expect(legacyDispatch.stderr).toMatch(/legacy schema_version '1.0'/i);
+
+      // inspect on 1.0 succeeds with legacy: true
+      const legacyInspect = runLifecycleKernelCli([
+        'inspect',
+        '--receipt-root', legacyDir,
+        '--json',
+      ]);
+      expect(legacyInspect.status).toBe(0);
+      const inspectJson = JSON.parse(legacyInspect.stdout);
+      expect(inspectJson.legacy).toBe(true);
+      expect(inspectJson.schema_version).toBe('1.0');
+    } finally {
+      env.cleanup();
+    }
+  }, 20000);
 });

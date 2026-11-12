@@ -9,9 +9,10 @@ import type {
   WorkflowDefinition,
   DeliverySequence,
   SkillProvider,
+  LandingEvidence,
 } from "../workflow/types.js";
 
-export type { SkillProvider };
+export type { SkillProvider, LandingEvidence };
 
 export interface NormalizedDispatchRequest {
   request_id: string;
@@ -40,6 +41,8 @@ export interface Dispatch {
   task_name: string;
   issue_id?: string;
   attempt: number;
+  delivery_attempt?: number;
+  originating_stage?: string;
   status: "prepared" | "handed_off" | "running";
   authorized: boolean;
   envelope_path: string;
@@ -58,6 +61,8 @@ export interface Completion {
   step_index: number;
   stage: string;
   attempt: number;
+  delivery_attempt?: number;
+  originating_stage?: string;
   /** Issue the dispatch worked on; taken from the active dispatch, not mutable current_issue_id. */
   issue_id?: string;
   execution_status: ExecutionStatus;
@@ -109,6 +114,11 @@ export interface RuntimeState {
   decisions: DecisionRecord[];
   budgets: WorkflowBudgets;
   delivery_sequence?: DeliverySequence;
+  pending_stage_selection?: null | {
+    stage: string;
+    decision_index: number;
+  };
+  root_landing_evidence?: LandingEvidence;
   protocol_error?: ProtocolError | null;
   orchestrator_decision?: string;
   originating_stage_for_replan?: string | null;

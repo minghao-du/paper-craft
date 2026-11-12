@@ -1,17 +1,26 @@
 /**
- * Workflow Stage-Provider Decoupling & Schema Verification Tests (W1.1-W1.6).
+ * Workflow Stage-Provider Decoupling & Schema Verification Tests (W1.1-W1.6 + Refactor Invariants).
  *
  * Verifies that:
  * 1. skills/pc-orchestrator/workflows/default.json contains decoupled logical stages and providers.
  * 2. Every stage's provider is strictly "skill", targeting existing codebase skills.
  * 3. Every stage definition successfully maps to a valid Task Input Envelope.
  * 4. Substituting an execution provider target preserves state machine invariance (zero-perception).
- * 5. Corrupted provider definitions and deprecated "script" providers are reliably rejected by envelope schema validation.
+ * 5. Corrupted provider definitions and deprecated "script" providers are reliably rejected.
+ * 6. loadAndValidateWorkflow enforces strict domain rules (W01, W02, W03, snapshot mode).
+ * 7. evaluateDispatch enforces provider override limits for evidence-sensitive stages and scope/template contracts.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  DEFAULT_RECEIPT_TEMPLATE,
+  evaluateDispatch,
+  loadAndValidateWorkflow,
+  resolveCanonicalStage,
+} from '../src/workflow/index.js';
+import type { DeliveryState, WorkflowDefinition } from '../src/workflow/types.js';
 import {
   createTestDir,
   REPO_ROOT,
@@ -21,147 +30,24 @@ import {
   type TaskInputEnvelope,
 } from './helpers.js';
 
-/**
- * Parsed stage representation from workflow file.
- */
 export interface ParsedWorkflowStage {
   id: string;
   logicalTask: string;
   providerType: 'skill';
   providerTarget: string;
   providerArgs: string[];
+  replan?: boolean;
 }
 
-/**
- * Stage definition in declarative JSON workflow manifest.
- */
-export interface WorkflowManifestStage {
-  id: string;
-  logical_task: string;
-  name?: string;
-  provider: {
-    type: string;
-    target: string;
-    args?: string[];
-  };
-}
-
-/**
- * Top-level declarative JSON workflow manifest.
- */
-export interface WorkflowManifest {
-  name: string;
-  version: string;
-  initial_stage: string;
-  target?: string;
-  description?: string;
-  stages: WorkflowManifestStage[];
-}
-
-/**
- * Strict validator for declarative workflow manifest JSON content.
- */
-export function parseAndValidateJsonManifest(content: string): WorkflowManifest {
-  const parsed = JSON.parse(content);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Manifest root must be an object');
-  }
-
-  const raw = (parsed as Record<string, unknown>).workflow ?? parsed;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('Missing required workflow object');
-  }
-
-  const wf = raw as Record<string, unknown>;
-
-  if (!wf.name || typeof wf.name !== 'string' || !wf.name.trim()) {
-    throw new Error("Missing required field 'name'");
-  }
-
-  if (!wf.version || typeof wf.version !== 'string' || !wf.version.trim()) {
-    throw new Error("Missing required field 'version'");
-  }
-
-  if (!wf.initial_stage || typeof wf.initial_stage !== 'string' || !wf.initial_stage.trim()) {
-    throw new Error("Missing required field 'initial_stage'");
-  }
-
-  if (!Array.isArray(wf.stages) || wf.stages.length === 0) {
-    throw new Error("Field 'stages' must be a non-empty array");
-  }
-
-  const stages: WorkflowManifestStage[] = [];
-  for (let i = 0; i < wf.stages.length; i++) {
-    const stage = wf.stages[i];
-    const prefix = `stages[${i}]`;
-
-    if (!stage || typeof stage !== 'object' || Array.isArray(stage)) {
-      throw new Error(`${prefix} must be an object`);
-    }
-
-    const s = stage as Record<string, unknown>;
-
-    if (!s.id || typeof s.id !== 'string' || !s.id.trim()) {
-      throw new Error(`${prefix} missing required string 'id'`);
-    }
-
-    if (!s.logical_task || typeof s.logical_task !== 'string' || !s.logical_task.trim()) {
-      throw new Error(`${prefix} missing required string 'logical_task'`);
-    }
-
-    if (!s.provider || typeof s.provider !== 'object' || Array.isArray(s.provider)) {
-      throw new Error(`${prefix} missing required object 'provider'`);
-    }
-
-    const p = s.provider as Record<string, unknown>;
-    const pType = p.type;
-    if (pType !== 'skill') {
-      throw new Error(`${prefix}.provider.type must be 'skill', got '${String(pType)}'`);
-    }
-
-    const pTarget = p.target;
-    if (!pTarget || typeof pTarget !== 'string' || !pTarget.trim()) {
-      throw new Error(`${prefix}.provider.target must be a non-empty string`);
-    }
-
-    if (p.args !== undefined && !Array.isArray(p.args)) {
-      throw new Error(`${prefix}.provider.args must be an array of strings if provided`);
-    }
-
-    stages.push({
-      id: s.id as string,
-      logical_task: s.logical_task as string,
-      name: s.name as string | undefined,
-      provider: {
-        type: p.type as string,
-        target: p.target as string,
-        args: (p.args as string[]) ?? [],
-      },
-    });
-  }
-
-  return {
-    name: wf.name as string,
-    version: wf.version as string,
-    initial_stage: wf.initial_stage as string,
-    target: wf.target as string | undefined,
-    description: wf.description as string | undefined,
-    stages,
-  };
-}
-
-/**
- * Helper to parse stage definitions and provider blocks from default.json.
- */
 export function parseWorkflowStages(workflowPath: string): ParsedWorkflowStage[] {
-  const content = fs.readFileSync(workflowPath, 'utf-8');
-  const manifest = parseAndValidateJsonManifest(content);
+  const manifest = loadAndValidateWorkflow(workflowPath);
   return manifest.stages.map((s) => ({
     id: s.id,
-    logicalTask: s.logical_task,
+    logicalTask: s.logical_task!,
     providerType: 'skill',
-    providerTarget: s.provider.target,
-    providerArgs: s.provider.args ?? [],
+    providerTarget: s.provider!.target,
+    providerArgs: s.provider!.args ?? [],
+    replan: Boolean(s.replan),
   }));
 }
 
@@ -201,8 +87,7 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
   });
 
   it('W1.2: validates declarative JSON manifest stages and ensures all provider targets exist', () => {
-    const content = fs.readFileSync(defaultWorkflowJsonPath, 'utf-8');
-    const manifest = parseAndValidateJsonManifest(content);
+    const manifest = loadAndValidateWorkflow(defaultWorkflowJsonPath);
     const stages = parseWorkflowStages(defaultWorkflowJsonPath);
 
     expect(manifest.name).toBe('default');
@@ -240,6 +125,9 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
       const res = runDispatchTaskCli(stageRoot, {
         stage: stage.id,
         objective: `Execute stage ${stage.id}`,
+        parameters: stage.replan
+          ? { originating_stage: 'stage_1_plan' }
+          : undefined,
         provider: {
           type: stage.providerType,
           target: stage.providerTarget,
@@ -367,18 +255,430 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
     expect(resScript.stderr).toContain("Provider 'type' must be 'skill'");
   });
 
-  it('W1.6: JSON manifest parsing actively rejects malformed manifests', () => {
-    const syntaxErrorJson = '{"name": [unclosed';
-    expect(() => parseAndValidateJsonManifest(syntaxErrorJson)).toThrow();
+  it('W1.6: loadAndValidateWorkflow actively rejects malformed manifests', () => {
+    expect(() => loadAndValidateWorkflow('{"name": [unclosed')).toThrow();
 
-    const missingNameJson = JSON.stringify({ version: '1.0.0', initial_stage: 's1', stages: [] });
-    expect(() => parseAndValidateJsonManifest(missingNameJson)).toThrow(/Missing required field 'name'/i);
+    expect(() =>
+      loadAndValidateWorkflow({
+        version: '1.0.0',
+        completion_policy: 'issue_delivery',
+        initial_stage: 's1',
+        stages: [],
+      }),
+    ).toThrow(/name/i);
 
-    const emptyStagesJson = JSON.stringify({ name: 'default', version: '1.0.0', initial_stage: 's1', stages: [] });
-    expect(() => parseAndValidateJsonManifest(emptyStagesJson)).toThrow(/Field 'stages' must be a non-empty array/i);
+    expect(() =>
+      loadAndValidateWorkflow({
+        name: 'default',
+        version: '1.0.0',
+        completion_policy: 'issue_delivery',
+        initial_stage: 's1',
+        stages: [],
+      }),
+    ).toThrow(/stages/i);
 
-    const badTypeJson =
-      JSON.stringify({ name: 'default', version: '1.0.0', initial_stage: 's1', stages: [{ id: 's1', logical_task: 't1', provider: { type: 'script', target: 'pc-workspace' } }] });
-    expect(() => parseAndValidateJsonManifest(badTypeJson)).toThrow(/provider\.type must be 'skill'/i);
+    expect(() =>
+      loadAndValidateWorkflow({
+        name: 'default',
+        version: '1.0.0',
+        completion_policy: 'issue_delivery',
+        initial_stage: 's1',
+        stages: [
+          {
+            id: 's1',
+            logical_task: 't1',
+            provider: { type: 'script', target: 'pc-workspace' },
+          },
+        ],
+      }),
+    ).toThrow(/provider.*'skill'/i);
+  });
+});
+
+describe('Workflow Stage Resolution & Validation Domain Rules (W01, W02, W03)', () => {
+  const baseWf: WorkflowDefinition = {
+    name: 'test-wf',
+    version: '1.0.0',
+    completion_policy: 'issue_delivery',
+    initial_stage: 's1',
+    stages: [
+      {
+        id: 's1',
+        logical_task: 'plan',
+        provider: { type: 'skill', target: 'pc-issue-plan' },
+      },
+      {
+        id: 's2',
+        logical_task: 'work',
+        provider: { type: 'skill', target: 'pc-issue-work' },
+      },
+      {
+        id: 'plan',
+        logical_task: 'alias_collision_target',
+        provider: { type: 'skill', target: 'pc-issue-plan' },
+      },
+      {
+        id: 'dupe_task_1',
+        logical_task: 'shared_task',
+        provider: { type: 'skill', target: 'pc-workspace' },
+      },
+      {
+        id: 'dupe_task_2',
+        logical_task: 'shared_task',
+        provider: { type: 'skill', target: 'pc-workspace' },
+      },
+    ],
+  };
+
+  it('W01: exact id takes priority over logical_task collision', () => {
+    // Stage id 'plan' collides with Stage s1's logical_task 'plan'.
+    // Exact id 'plan' must win.
+    const resolved = resolveCanonicalStage(baseWf, 'plan');
+    expect(resolved.id).toBe('plan');
+    expect(resolved.logical_task).toBe('alias_collision_target');
+
+    // Looking up 's1' returns s1
+    const resolvedS1 = resolveCanonicalStage(baseWf, 's1');
+    expect(resolvedS1.id).toBe('s1');
+    expect(resolvedS1.logical_task).toBe('plan');
+  });
+
+  it('W01: unambiguous logical_task alias resolves to canonical stage', () => {
+    const resolved = resolveCanonicalStage(baseWf, 'work');
+    expect(resolved.id).toBe('s2');
+  });
+
+  it('W01: ambiguous logical_task alias matching multiple stages is rejected with candidate ids', () => {
+    expect(() => resolveCanonicalStage(baseWf, 'shared_task')).toThrowError(
+      /Ambiguous stage reference 'shared_task': matches multiple stages \('dupe_task_1', 'dupe_task_2'\)/,
+    );
+  });
+
+  it('W01: completely unknown stage reference throws and never invents a stage', () => {
+    expect(() => resolveCanonicalStage(baseWf, 'non_existent_stage')).toThrowError(
+      /Stage 'non_existent_stage' is not defined in workflow 'test-wf'/,
+    );
+  });
+
+  it('W01: duplicate stage IDs are rejected at workflow load time', () => {
+    expect(() =>
+      loadAndValidateWorkflow({
+        name: 'duplicate-test',
+        completion_policy: 'issue_delivery',
+        stages: [
+          { id: 'same_id', logical_task: 't1', provider: { type: 'skill', target: 'p1' } },
+          { id: 'same_id', logical_task: 't2', provider: { type: 'skill', target: 'p2' } },
+        ],
+      }),
+    ).toThrowError(/Duplicate stage ID 'same_id'/);
+  });
+
+  it('W02: replan attribute is consistently determined from definition regardless of lookup method', () => {
+    const replanWf = loadAndValidateWorkflow({
+      name: 'replan-test',
+      completion_policy: 'issue_delivery',
+      stages: [
+        {
+          id: 'custom_replan_id',
+          logical_task: 'scope_replan',
+          replan: true,
+          provider: { type: 'skill', target: 'pc-issue-plan' },
+        },
+        {
+          id: 'scope_replan_name_only',
+          logical_task: 'not_a_replan',
+          replan: false,
+          provider: { type: 'skill', target: 'pc-issue-plan' },
+        },
+      ],
+    });
+
+    const byId = resolveCanonicalStage(replanWf, 'custom_replan_id');
+    const byAlias = resolveCanonicalStage(replanWf, 'scope_replan');
+    expect(byId.replan).toBe(true);
+    expect(byAlias.replan).toBe(true);
+    expect(byId.id).toBe('custom_replan_id');
+
+    // A stage that has id containing replan or name containing replan but replan: false is NOT replan
+    const notReplan = resolveCanonicalStage(replanWf, 'scope_replan_name_only');
+    expect(notReplan.replan).toBe(false);
+  });
+
+  it('W03: rejects string "false" for boolean auxiliary/replan and rejects co-declaring both', () => {
+    // auxiliary: "false" must be rejected
+    expect(() =>
+      loadAndValidateWorkflow({
+        name: 'bool-test',
+        completion_policy: 'issue_delivery',
+        stages: [
+          {
+            id: 's1',
+            logical_task: 't1',
+            auxiliary: 'false',
+            provider: { type: 'skill', target: 'p' },
+          },
+        ],
+      }),
+    ).toThrowError(/field 'auxiliary' must be a boolean/);
+
+    // replan: "false" must be rejected
+    expect(() =>
+      loadAndValidateWorkflow({
+        name: 'bool-test-2',
+        completion_policy: 'issue_delivery',
+        stages: [
+          {
+            id: 's1',
+            logical_task: 't1',
+            replan: 'false',
+            provider: { type: 'skill', target: 'p' },
+          },
+        ],
+      }),
+    ).toThrowError(/field 'replan' must be a boolean/);
+
+    // Declaring both auxiliary: true and replan: true must be rejected
+    expect(() =>
+      loadAndValidateWorkflow({
+        name: 'bool-test-3',
+        completion_policy: 'issue_delivery',
+        stages: [
+          {
+            id: 's1',
+            logical_task: 't1',
+            auxiliary: true,
+            replan: true,
+            provider: { type: 'skill', target: 'p' },
+          },
+        ],
+      }),
+    ).toThrowError(/cannot declare both auxiliary: true and replan: true/);
+  });
+
+  it('rejects conflicting depends_on and dependencies declarations', () => {
+    expect(() =>
+      loadAndValidateWorkflow({
+        name: 'deps-conflict',
+        completion_policy: 'issue_delivery',
+        stages: [
+          { id: 's1', logical_task: 't1', provider: { type: 'skill', target: 'p' } },
+          {
+            id: 's2',
+            logical_task: 't2',
+            provider: { type: 'skill', target: 'p' },
+            depends_on: ['s1'],
+            dependencies: ['non_existent'],
+          },
+        ],
+      }),
+    ).toThrowError(/conflicting 'depends_on' and 'dependencies'/);
+  });
+
+  it('snapshot mode strictly validates without modifying defaults or reading files', () => {
+    const rawSnapshot = {
+      name: 'snap',
+      completion_policy: 'issue_delivery',
+      stages: [
+        {
+          id: 's1',
+          logical_task: 't1',
+          provider: { type: 'skill', target: 'p1' },
+          // initial_stage is omitted, auxiliary & replan omitted
+        },
+      ],
+    };
+
+    const validated = loadAndValidateWorkflow(rawSnapshot, undefined, 'snapshot');
+    expect(validated.name).toBe('snap');
+    expect(validated.initial_stage).toBeUndefined(); // Snapshot mode does NOT default initial_stage!
+    expect(validated.stages[0].auxiliary).toBeUndefined(); // Snapshot mode does NOT default auxiliary!
+
+    // Snapshot mode rejects non-object input
+    expect(() => loadAndValidateWorkflow('default', undefined, 'snapshot')).toThrowError(
+      /Workflow snapshot must be a valid plain object/,
+    );
+  });
+});
+
+describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () => {
+  const workflow = loadAndValidateWorkflow(); // Loads default.json
+  const initialDeliveryState: DeliveryState = {
+    rootIssueId: '100',
+    currentIssueId: '100',
+    rootBudgets: {
+      delivery_attempts_used: 1,
+      delivery_attempts_max: 3,
+      replans_used: 0,
+      replans_max: 2,
+    },
+  };
+
+  it('rejects provider override for evidence-sensitive stages', () => {
+    const sensitiveStages = [
+      'stage_1_plan',
+      'stage_2_land',
+      'stage_5_redeliver',
+      'issue_finalize',
+      'workspace_cleanup',
+      'scope_replan',
+    ];
+
+    for (const stage of sensitiveStages) {
+      expect(() =>
+        evaluateDispatch({
+          workflow,
+          deliveryState: initialDeliveryState,
+          request: {
+            stage,
+            provider: {
+              type: 'skill',
+              target: 'custom-unauthorized-skill',
+            },
+          },
+        }),
+      ).toThrowError(new RegExp(`Cannot override provider for evidence-sensitive stage '${stage}'`));
+    }
+  });
+
+  it('allows provider override for ordinary stages and defaults args to empty array', () => {
+    const evaluation = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'workspace_prepare',
+        provider: {
+          type: 'skill',
+          target: 'custom-workspace-provider',
+        },
+      },
+    });
+
+    expect(evaluation.task.provider.target).toBe('custom-workspace-provider');
+    expect(evaluation.task.provider.args).toEqual([]);
+    expect(evaluation.task.auxiliary).toBe(true);
+    expect(evaluation.task.replan).toBe(false);
+  });
+
+  it('handles scope overrides and explicit empty string vs null correctly', () => {
+    // Explicit null rejected
+    expect(() =>
+      evaluateDispatch({
+        workflow,
+        deliveryState: initialDeliveryState,
+        request: {
+          stage: 'stage_2_work',
+          scope: null as unknown as string,
+        },
+      }),
+    ).toThrowError(/Dispatch request 'scope' cannot be null/);
+
+    // Explicit empty string clears scope
+    const cleared = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'stage_2_work',
+        scope: '',
+      },
+    });
+    expect(cleared.task.scope).toBe('');
+
+    // Omitted scope inherits stage scope (or empty string if undefined)
+    const inherited = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'stage_2_work',
+      },
+    });
+    expect(inherited.task.scope).toBe('');
+  });
+
+  it('handles receipt_template overrides and rejects null or empty string', () => {
+    // Null rejected
+    expect(() =>
+      evaluateDispatch({
+        workflow,
+        deliveryState: initialDeliveryState,
+        request: {
+          stage: 'stage_2_work',
+          receipt_template: null as unknown as string,
+        },
+      }),
+    ).toThrowError(/Dispatch request 'receipt_template' cannot be null/);
+
+    // Empty string rejected
+    expect(() =>
+      evaluateDispatch({
+        workflow,
+        deliveryState: initialDeliveryState,
+        request: {
+          stage: 'stage_2_work',
+          receipt_template: '   ',
+        },
+      }),
+    ).toThrowError(/Dispatch request 'receipt_template' cannot be empty string/);
+
+    // Omitted falls back to DEFAULT_RECEIPT_TEMPLATE
+    const omitted = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'stage_2_work',
+      },
+    });
+    expect(omitted.task.receiptTemplate).toBe(DEFAULT_RECEIPT_TEMPLATE);
+
+    // Explicit custom template preserved
+    const custom = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'stage_2_work',
+        receipt_template: '/custom/path/receipt.md',
+      },
+    });
+    expect(custom.task.receiptTemplate).toBe('/custom/path/receipt.md');
+  });
+
+  it('shallow merges parameters and enforces identity parameter agreement', () => {
+    // Conflicting repository environment default throws
+    expect(() =>
+      evaluateDispatch({
+        workflow,
+        deliveryState: initialDeliveryState,
+        environmentDefaults: {
+          delivery_target: 'repo/original',
+        },
+        request: {
+          stage: 'stage_2_work',
+          parameters: {
+            delivery_target: 'repo/conflicting',
+          },
+        },
+      }),
+    ).toThrowError(/Conflicting parameter 'delivery_target'/);
+
+    // Parameter shallow override with explicit null preserved
+    const evalRes = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      environmentDefaults: {
+        delivery_target: 'repo/main',
+        base_remote: 'origin',
+      },
+      request: {
+        stage: 'stage_2_work',
+        parameters: {
+          feature_flag: true,
+          nullable_param: null,
+        },
+      },
+    });
+
+    expect(evalRes.task.parameters.delivery_target).toBe('repo/main');
+    expect(evalRes.task.parameters.base_remote).toBe('origin');
+    expect(evalRes.task.parameters.feature_flag).toBe(true);
+    expect(evalRes.task.parameters.nullable_param).toBeNull();
   });
 });

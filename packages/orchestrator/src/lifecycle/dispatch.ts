@@ -3,10 +3,11 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { commitRun, loadRun } from "../run-store/index.js";
 import {
-  calculateDeliveryChange,
-  resolveTaskIntent,
+  evaluateDispatch,
+  resolveCanonicalStage,
 } from "../workflow/index.js";
 import { createEnvelope } from "./envelope.js";
+import { toDeliveryState, applyNextDeliveryState } from "./domain-state.js";
 import {
   assertNotPaused,
   assertMatchesPendingStageDecision,
@@ -37,6 +38,16 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
         : undefined),
   });
   const state = loadRun<RuntimeState>(root);
+  if (state.schema_version === "1.0") {
+    throw new Error(
+      "Cannot dispatch task: legacy schema_version '1.0' run does not support writes. Finish it with the previous version or inspect read-only, or start a new run in a new receipt root.",
+    );
+  }
+  if (state.schema_version !== "1.1") {
+    throw new Error(
+      `Unsupported schema_version '${state.schema_version}'. This version only supports '1.1'.`,
+    );
+  }
   const active = state.active_dispatch;
   const activeReplay = active?.request?.request_id === request.request_id;
   const completed = activeReplay
@@ -124,24 +135,6 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
     request.commit !== undefined
       ? request.commit
       : ((context.commit as string | null | undefined) ?? null);
-  const intent = resolveTaskIntent(
-    state.workflow_snapshot,
-    request.stage,
-    request.provider,
-    {
-      template: request.receipt_template,
-      scope: request.scope,
-      parameters: request.parameters,
-      configSnapshot: state.config_snapshot,
-      context: state.context,
-    },
-  );
-  assertMatchesPendingStageDecision(
-    state,
-    intent.canonical_stage,
-    intent.auxiliary,
-  );
-
   for (const item of request.predecessor_receipts) {
     if (typeof item !== "string" || !item.trim()) {
       throw new Error("Predecessor receipt path must be a non-empty string.");
@@ -171,21 +164,44 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
     }
   }
 
-  const deliveryChange = calculateDeliveryChange({
-    intent,
-    deliverySequence: structuredClone(state.delivery_sequence),
-    budgets: structuredClone(state.budgets),
-    currentIssueId: state.current_issue_id,
-    rootIssueId: state.root_issue_id,
-    reworkIssue: request.rework_issue,
-    attemptIntent: request.attempt_intent,
-    originatingStageForReplan: state.originating_stage_for_replan,
-    parameters: intent.parameters,
+  const evaluation = evaluateDispatch({
+    workflow: state.workflow_snapshot,
+    deliveryState: toDeliveryState(state),
+    request: {
+      stage: request.stage,
+      objective: request.objective,
+      provider: request.provider,
+      scope: request.scope,
+      parameters: request.parameters,
+      receipt_template: request.receipt_template,
+      attempt_intent: request.attempt_intent,
+      rework_issue: request.rework_issue,
+      originating_stage: request.parameters?.originating_stage as string | undefined,
+    },
+    environmentDefaults: {
+      delivery_target:
+        (state.config_snapshot?.delivery_target as string | undefined) ||
+        (context.delivery_target as string | undefined) ||
+        (context.repository as string | undefined),
+      base_remote:
+        (state.config_snapshot?.base_remote as string | undefined) ||
+        (context.base_remote as string | undefined),
+      push_remote:
+        (state.config_snapshot?.push_remote as string | undefined) ||
+        (context.push_remote as string | undefined),
+      worktree_container:
+        (state.config_snapshot?.worktree_container as string | undefined) ||
+        (context.worktree_container as string | undefined),
+    },
+    completedStages: state.completed_stages ?? [],
   });
+  const task = evaluation.task;
+
+  assertMatchesPendingStageDecision(state, task.stage, task.auxiliary);
 
   const step = state.next_step_index ?? 1;
   const prefix = String(step).padStart(2, "0");
-  const dispatchId = `${prefix}-${intent.canonical_stage}-issue-${deliveryChange.current_issue_id}-try-${deliveryChange.attempt}`;
+  const dispatchId = `${prefix}-${task.stage}-issue-${task.issueId}-try-${task.attempt}`;
   const receiptPath = path.join(root, `${dispatchId}.md`);
   const envelopeFilename = `${prefix}-input.json`;
   const envelopePath = path.join(root, envelopeFilename);
@@ -203,13 +219,13 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
   const envelope = createEnvelope({
     schema_version: "1.0",
     task: {
-      logical_stage: intent.canonical_stage,
+      logical_stage: task.stage,
       step_index: step,
-      attempt: deliveryChange.attempt,
+      attempt: task.attempt,
       root_issue_id: String(state.root_issue_id ?? "0"),
-      current_issue_id: String(deliveryChange.current_issue_id),
+      current_issue_id: String(task.issueId),
     },
-    provider: intent.provider,
+    provider: task.provider,
     environment: {
       working_directory: workingDirectory,
       repository,
@@ -219,43 +235,48 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
     },
     inputs: {
       objective: request.objective,
-      scope: intent.scope,
+      scope: task.scope,
       acceptance_criteria: request.acceptance_criteria,
       predecessor_receipts: request.predecessor_receipts,
-      parameters: intent.parameters,
+      parameters: task.parameters,
     },
     contract: {
       receipt_path: receiptPath,
-      receipt_template: intent.template,
+      receipt_template: task.receiptTemplate,
     },
     budgets: {
-      delivery_attempts_used: deliveryChange.delivery_attempts_used,
-      delivery_attempts_max: deliveryChange.delivery_attempts_max,
-      replans_used: deliveryChange.replan_attempts_used,
-      replans_max: deliveryChange.replan_attempts_max,
+      delivery_attempts_used: task.budgets.delivery_attempts_used,
+      delivery_attempts_max: task.budgets.delivery_attempts_max,
+      replans_used: task.budgets.replans_used,
+      replans_max: task.budgets.replans_max,
     },
   });
 
+  const nextPendingSelection = task.auxiliary
+    ? (state.pending_stage_selection ?? null)
+    : null;
+
   const nextState: RuntimeState = {
     ...state,
-    current_issue_id: deliveryChange.current_issue_id,
-    current_stage: intent.canonical_stage,
+    ...applyNextDeliveryState(state, evaluation.nextDeliveryState),
+    current_stage: task.stage,
     stage_status: "in_progress",
     next_step_index: step + 1,
-    budgets: deliveryChange.budgets,
-    delivery_sequence: deliveryChange.delivery_sequence,
-    originating_stage_for_replan: deliveryChange.originating_stage_for_replan,
+    pending_stage_selection: nextPendingSelection,
+    originating_stage_for_replan: task.originatingStage ?? null,
     active_dispatch: {
       dispatch_id: dispatchId,
       step_index: step,
-      task_name: intent.canonical_stage,
-      issue_id: String(deliveryChange.current_issue_id),
-      attempt: deliveryChange.attempt,
+      task_name: task.stage,
+      issue_id: String(task.issueId),
+      attempt: task.attempt,
+      delivery_attempt: task.deliveryAttempt,
+      originating_stage: task.originatingStage,
       status: "handed_off",
       authorized: true,
       envelope_path: envelopePath,
       receipt_path: receiptPath,
-      provider: intent.provider,
+      provider: task.provider,
       request,
     },
     last_updated: new Date().toISOString(),
@@ -275,10 +296,10 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
     step_index: step,
     envelope_path: envelopePath,
     receipt_path: receiptPath,
-    attempt: deliveryChange.attempt,
+    attempt: task.attempt,
     status: "handed_off",
     launch_granted: true,
-    stage: intent.canonical_stage,
-    provider: intent.provider,
+    stage: task.stage,
+    provider: task.provider,
   };
 }

@@ -39,6 +39,15 @@ export function assertMatchesPendingStageDecision(
   auxiliary: boolean,
 ): void {
   if (auxiliary) return;
+  if (state.pending_stage_selection) {
+    if (state.pending_stage_selection.stage !== stage) {
+      throw new Error(
+        `Cannot dispatch stage '${stage}': the latest resolve decision selected next_stage '${state.pending_stage_selection.stage}'. Dispatch that stage, or record a new 'resolve --decision continue --next-stage <stage>' first.`,
+      );
+    }
+    return;
+  }
+  // Fallback for legacy state without pending_stage_selection
   const selected = [...(state.decisions ?? [])]
     .reverse()
     .find((d) => typeof d.next_stage === "string");

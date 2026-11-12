@@ -36,9 +36,10 @@ The Orchestrator's sole responsibilities are:
 Workflow stages are executed through modular Execution Providers resolved at runtime. In accordance
 with the pure-skill architecture, execution providers are strictly skill-based:
 
-### 1. Execution Provider Resolution
+### 1. Execution Provider Resolution & Override Boundaries
 For every stage, the Orchestrator evaluates `stage.provider`:
 - **`skill` Provider** (`type: "skill"`): Dispatches an autonomous LLM Specialist Subagent via platform adapter (`invoke_subagent`), loading the designated skill (`target: "<skill-name>"`) with a standardized slim prompt pointing to the Task Input Envelope file.
+- **Provider Override Boundaries**: Ordinary execution stages (e.g. `workspace_prepare`, `stage_2_work`, `stage_3_verify`) allow explicit runtime provider overrides. However, evidence-sensitive stages (`stage_1_plan`/`scope_replan`, `stage_2_land`/`stage_5_redeliver`, `issue_finalize`, and `workspace_cleanup`) strictly require their dispatch provider `type` and `target` to match the validated workflow definition snapshot. Unauthorized overrides on evidence-sensitive stages are rejected at dispatch time to safeguard critical delivery and acceptance integrity.
 
 ### 2. Antigravity Adapter (Default)
 In Antigravity:

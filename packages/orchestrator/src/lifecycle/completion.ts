@@ -20,6 +20,16 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
 
   const root = path.resolve(o.receipt_root);
   const state = loadRun<RuntimeState>(root);
+  if (state.schema_version === "1.0") {
+    throw new Error(
+      "Cannot complete dispatch: legacy schema_version '1.0' run does not support writes. Finish it with the previous version or inspect read-only, or start a new run in a new receipt root.",
+    );
+  }
+  if (state.schema_version !== "1.1") {
+    throw new Error(
+      `Unsupported schema_version '${state.schema_version}'. This version only supports '1.1'.`,
+    );
+  }
   const expectedPreviousState = JSON.parse(JSON.stringify(state));
 
   const dispatchId = o.dispatch_id.trim();
@@ -120,6 +130,8 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
     step_index: active.step_index,
     stage: active.task_name,
     attempt: active.attempt,
+    delivery_attempt: active.delivery_attempt ?? active.attempt,
+    originating_stage: active.originating_stage,
     ...(active.issue_id ? { issue_id: String(active.issue_id) } : {}),
     execution_status: report.execution_status,
     result: report.result,
