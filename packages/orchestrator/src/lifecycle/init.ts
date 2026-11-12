@@ -5,15 +5,39 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveWorkspaceConfig } from "../../../workspace-config/src/index.js";
 import { commitRun, loadRunIfExists, replaceRun } from "../run-store/index.js";
-import {
-  loadAndValidateWorkflow,
-  makeDeliverySequence,
-  readPlan,
-  validatePlanOrder,
-} from "../workflow/index.js";
+import { loadAndValidateWorkflow } from "../workflow/index.js";
 import type { InitOptions, RuntimeState } from "./types.js";
 
+const DEPRECATED_INIT_OPTIONS = [
+  "plan",
+  "child_issues",
+  "child_issue",
+  "child-issues",
+  "child-issue",
+  "current_issue",
+  "current-issue",
+  "initial_stage",
+  "initial-stage",
+] as const;
+
 export function initWorkflow(o: InitOptions): RuntimeState {
+  for (const key of DEPRECATED_INIT_OPTIONS) {
+    if (key in o && (o as Record<string, unknown>)[key] !== undefined) {
+      throw new Error(
+        `Init option '${key}' has been removed and is no longer supported.`,
+      );
+    }
+  }
+
+  if (
+    o.root_issue === undefined ||
+    o.root_issue === null ||
+    String(o.root_issue).trim() === ""
+  ) {
+    throw new Error("Init option 'root_issue' is required.");
+  }
+  const rootIssue = String(o.root_issue).trim();
+
   const repo = path.resolve(o.repo_dir ?? ".");
   if (!fs.existsSync(repo)) {
     throw new Error(`Repository directory does not exist: ${repo}`);
@@ -45,7 +69,7 @@ export function initWorkflow(o: InitOptions): RuntimeState {
         config.worktree_container_resolved,
         ".paper-craft",
         "receipts",
-        `issue-${o.root_issue ?? 0}`,
+        `issue-${rootIssue}`,
       ),
   );
 
@@ -71,7 +95,6 @@ export function initWorkflow(o: InitOptions): RuntimeState {
   };
 
   const snapshot = loadAndValidateWorkflow(o.workflow || config.workflow, repo);
-  const rootIssue = String(o.root_issue ?? 0);
 
   const existing = o.force ? null : loadRunIfExists<RuntimeState>(root);
   if (existing) {
@@ -91,33 +114,17 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     return existing;
   }
 
-  const children = o.child_issues?.length
-    ? validatePlanOrder(o.child_issues)
-    : o.plan
-      ? readPlan(o.plan)
-      : null;
-
-  const ids = new Set(snapshot.stages.map((s) => s.id));
-  if (o.initial_stage && !ids.has(o.initial_stage)) {
+  const stage = snapshot.initial_stage || snapshot.stages[0]?.id;
+  if (!stage) {
     throw new Error(
-      `Requested initial_stage '${o.initial_stage}' not found in workflow snapshot.`,
+      `Workflow snapshot '${snapshot.name}' contains no stages.`,
     );
   }
-
-  const stage =
-    o.initial_stage ||
-    (children
-      ? ids.has("stage_2_work")
-        ? "stage_2_work"
-        : snapshot.stages[0].id
-      : snapshot.initial_stage || snapshot.stages[0].id);
-
-  const current = String(o.current_issue || children?.[0] || rootIssue);
 
   const state: RuntimeState = {
     schema_version: "1.0",
     root_issue_id: rootIssue,
-    current_issue_id: current,
+    current_issue_id: rootIssue,
     workflow: snapshot.name,
     workflow_snapshot: snapshot,
     current_stage: stage,
@@ -144,21 +151,6 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     config_snapshot: configSnapshot,
     last_updated: new Date().toISOString(),
   };
-
-  if (children) {
-    state.delivery_sequence = makeDeliverySequence(
-      children,
-      config.delivery_attempts_max,
-    );
-  } else if (
-    ["stage_2_work", "issue_work"].includes(o.initial_stage ?? "") ||
-    (o.current_issue && String(o.current_issue) !== rootIssue)
-  ) {
-    state.delivery_sequence = makeDeliverySequence(
-      [current],
-      config.delivery_attempts_max,
-    );
-  }
 
   if (o.force) {
     replaceRun(root, state);

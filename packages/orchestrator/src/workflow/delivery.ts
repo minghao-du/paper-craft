@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import type {
   ApplyDeliveryDecisionParams,
   ApplyDeliveryDecisionResult,
@@ -8,38 +6,79 @@ import type {
   DeliveryCalculationResult,
   DeliveryItem,
   DeliverySequence,
+  WorkflowBudgets,
 } from "./types.js";
 
 const LANDING_PROVIDER = "pc-pr-land";
 
-export function validatePlanOrder(tasks: unknown[]): string[] {
-  if (!Array.isArray(tasks) || !tasks.length) {
-    throw new Error("Plan must contain at least one task.");
+function parsePositiveIntegerId(raw: unknown, label: string): string {
+  if (typeof raw === "number") {
+    if (!Number.isSafeInteger(raw) || raw <= 0) {
+      throw new Error(`${label} must be a positive integer, got ${raw}.`);
+    }
+    return String(raw);
   }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!/^[1-9]\d*$/.test(trimmed)) {
+      throw new Error(`${label} must be a positive integer, got '${raw}'.`);
+    }
+    return trimmed;
+  }
+  throw new Error(`${label} must be a positive integer, got ${typeof raw}.`);
+}
+
+function validatePlanOrder(tasks: unknown[], rootIssueId?: string): string[] {
+  if (!Array.isArray(tasks) || tasks.length < 2) {
+    throw new Error(
+      "Decomposed plan must contain an array of at least 2 tasks.",
+    );
+  }
+  const rootStr = rootIssueId != null ? String(rootIssueId).trim() : null;
   const seen = new Set<string>();
-  const items = tasks.map((item, idx) => {
-    const t = item as Record<string, unknown> | string | number;
-    const object =
-      t && typeof t === "object" ? (t as Record<string, unknown>) : null;
-    const raw = object ? (object.number ?? object.id ?? object.issue_id) : t;
-    if (!["string", "number"].includes(typeof raw) || !String(raw).trim()) {
+  const parsedItems: Array<{ id: string; deps: string[] }> = [];
+
+  for (let idx = 0; idx < tasks.length; idx++) {
+    const item = tasks[idx];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`Task at index ${idx} must be an object.`);
+    }
+    const t = item as Record<string, unknown>;
+    const rawId =
+      t.number !== undefined
+        ? t.number
+        : t.issue_id !== undefined
+          ? t.issue_id
+          : t.id;
+    if (rawId === undefined || rawId === null) {
       throw new Error(`Task at index ${idx} is missing issue ID/number.`);
     }
-    const id = String(raw).trim();
+    const id = parsePositiveIntegerId(rawId, `Task at index ${idx} issue ID`);
+    if (rootStr !== null && id === rootStr) {
+      throw new Error(`Task '${id}' cannot be the root issue ID.`);
+    }
     if (seen.has(id)) {
       throw new Error(`Duplicate issue ID '${id}' in plan.`);
     }
     seen.add(id);
-    const rawDeps = object?.blockedBy ?? object?.blocked_by ?? [];
-    return {
-      id,
-      deps: (Array.isArray(rawDeps) ? rawDeps : []).map((b: unknown) =>
-        String(b).trim(),
-      ),
-    };
-  });
+
+    let deps: string[] = [];
+    const hasBlockedBy =
+      t.blockedBy !== undefined || t.blocked_by !== undefined;
+    if (hasBlockedBy) {
+      const rawDeps = t.blockedBy !== undefined ? t.blockedBy : t.blocked_by;
+      if (!Array.isArray(rawDeps)) {
+        throw new Error(`Task '${id}' blockedBy must be an array.`);
+      }
+      deps = rawDeps.map((d, dIdx) =>
+        parsePositiveIntegerId(d, `Task '${id}' dependency at index ${dIdx}`),
+      );
+    }
+    parsedItems.push({ id, deps });
+  }
+
   const resolved = new Set<string>();
-  for (const { id, deps } of items) {
+  for (const { id, deps } of parsedItems) {
     for (const dep of deps) {
       if (dep === id) {
         throw new Error(`Task '${id}' cannot depend on itself.`);
@@ -57,33 +96,19 @@ export function validatePlanOrder(tasks: unknown[]): string[] {
     }
     resolved.add(id);
   }
-  return items.map((t) => t.id);
+
+  return parsedItems.map((item) => item.id);
 }
 
-export function readPlan(plan: unknown): string[] {
-  const data =
-    typeof plan === "string"
-      ? JSON.parse(
-          plan.trim().startsWith("{") || plan.trim().startsWith("[")
-            ? plan
-            : fs.readFileSync(path.resolve(plan), "utf8"),
-        )
-      : plan;
-  return validatePlanOrder(
-    Array.isArray(data)
-      ? data
-      : (((data as Record<string, unknown>)?.tasks as unknown[]) ?? []),
-  );
-}
-
-export function makeDeliverySequence(
+function makeDeliverySequence(
   ids: string[],
   max: number,
+  initialStage: string,
 ): DeliverySequence {
   return {
     items: ids.map((issue_id) => ({
       issue_id,
-      stage: "stage_2_work",
+      stage: initialStage,
       status: "pending",
       budgets: { delivery_attempts_used: 0, delivery_attempts_max: max },
       landed: false,
@@ -294,21 +319,98 @@ export function applyDeliveryDecision(
     ? structuredClone(params.deliverySequence)
     : undefined;
   let currentIssueId = params.currentIssueId;
-  const budgets = structuredClone(params.budgets);
+  const budgets: WorkflowBudgets = structuredClone(params.budgets);
 
-  const children = params.childIssues?.length
-    ? validatePlanOrder(params.childIssues)
-    : params.plan
-      ? readPlan(params.plan)
-      : null;
+  if (params.planningSource) {
+    if (deliverySequence) {
+      throw new Error("Cannot accept plan: delivery sequence already exists.");
+    }
+    if (params.currentIssue != null) {
+      throw new Error("Cannot combine planningSource with currentIssue.");
+    }
+    if (
+      params.markLanded != null ||
+      params.landingDispatchId != null ||
+      params.completeSequence
+    ) {
+      throw new Error(
+        "Cannot combine planningSource with landing or sequence completion.",
+      );
+    }
 
-  if (children) {
-    deliverySequence = makeDeliverySequence(
-      children,
-      budgets.delivery_attempts_max ?? 3,
-    );
-    currentIssueId = children[0];
-    budgets.delivery_attempts_used = 0;
+    const ps = params.planningSource;
+    if (
+      !ps.result ||
+      typeof ps.result !== "object" ||
+      Array.isArray(ps.result)
+    ) {
+      throw new Error("Planning result must be an object.");
+    }
+    const outcome = ps.result.outcome;
+    if (outcome !== "direct" && outcome !== "decomposed") {
+      throw new Error(
+        `Planning outcome must be 'direct' or 'decomposed', got '${String(outcome)}'.`,
+      );
+    }
+
+    const initialStage = params.nextStage || "stage_2_work";
+
+    if (outcome === "direct") {
+      const planObj = ps.result.plan as Record<string, unknown> | undefined;
+      const directTasks =
+        planObj?.tasks ??
+        (Array.isArray(ps.result.plan) ? ps.result.plan : undefined) ??
+        ps.result.tasks;
+      if (Array.isArray(directTasks) && directTasks.length > 0) {
+        throw new Error("Direct planning outcome cannot contain tasks.");
+      }
+
+      const rootId = String(params.rootIssueId ?? "0").trim();
+      deliverySequence = makeDeliverySequence(
+        [rootId],
+        budgets.delivery_attempts_max ?? 3,
+        initialStage,
+      );
+      const rootItem = deliverySequence.items[0];
+      rootItem.budgets.delivery_attempts_used = 0;
+      rootItem.budgets.delivery_attempts_max =
+        budgets.delivery_attempts_max ?? 3;
+      rootItem.budgets.replans_used = budgets.replans_used ?? 0;
+      rootItem.budgets.replans_max = budgets.replans_max ?? 2;
+      if (budgets.replans_by_stage) {
+        rootItem.budgets.replans_by_stage = structuredClone(
+          budgets.replans_by_stage,
+        );
+      }
+      budgets.delivery_attempts_used = 0;
+      currentIssueId = rootId;
+      deliverySequence.current_index = 0;
+      deliverySequence.completed = false;
+    } else {
+      const planObj = ps.result.plan;
+      if (!planObj || typeof planObj !== "object" || Array.isArray(planObj)) {
+        throw new Error(
+          "Decomposed planning result must contain a 'plan' object.",
+        );
+      }
+      const rawTasks = (planObj as Record<string, unknown>).tasks;
+      if (!Array.isArray(rawTasks) || rawTasks.length < 2) {
+        throw new Error(
+          "Decomposed plan must contain an array of at least 2 tasks.",
+        );
+      }
+
+      const taskIds = validatePlanOrder(rawTasks, params.rootIssueId);
+      deliverySequence = makeDeliverySequence(
+        taskIds,
+        budgets.delivery_attempts_max ?? 3,
+        initialStage,
+      );
+      budgets.delivery_attempts_used = 0;
+      currentIssueId = taskIds[0];
+      deliverySequence.current_index = 0;
+      deliverySequence.completed = false;
+    }
   }
 
   if (params.currentIssue != null) {
@@ -396,11 +498,10 @@ export function applyDeliveryDecision(
     }
   }
 
-  Object.assign(params.budgets, budgets);
   return {
     deliverySequence,
     currentIssueId,
-    budgets: params.budgets,
+    budgets,
   };
 }
 

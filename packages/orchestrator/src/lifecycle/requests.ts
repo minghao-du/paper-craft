@@ -239,11 +239,45 @@ export function compareCompleteReports(
   return true;
 }
 
+const DEPRECATED_RESOLVE_KEYS = [
+  "plan",
+  "child_issues",
+  "child_issue",
+  "child-issues",
+  "child-issue",
+] as const;
+
+const FORBIDDEN_PLAN_ACCEPTANCE_KEYS = [
+  "current_issue",
+  "current-issue",
+  "mark_landed",
+  "mark-landed",
+  "landing_dispatch_id",
+  "landing-dispatch-id",
+  "complete_sequence",
+  "complete-sequence",
+  "options",
+  "option",
+  "plan",
+  "child_issues",
+  "child_issue",
+  "child-issues",
+  "child-issue",
+] as const;
+
 export function parseResolveOptions(
   raw: Record<string, unknown>,
 ): ResolveOptions {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("Resolve options must be a JSON object");
+  }
+
+  for (const key of DEPRECATED_RESOLVE_KEYS) {
+    if (key in raw && raw[key] !== undefined) {
+      throw new Error(
+        `Resolve option '${key}' has been removed and is no longer supported.`,
+      );
+    }
   }
 
   const decision = raw.decision;
@@ -263,7 +297,39 @@ export function parseResolveOptions(
     throw new Error("Field 'reason' must be a non-empty string.");
   }
 
-  if (raw.next_stage !== undefined && raw.next_stage !== null) {
+  let planDispatchId: string | undefined = undefined;
+  const rawPlanId = raw.plan_dispatch_id ?? raw["plan-dispatch-id"];
+  if (rawPlanId !== undefined) {
+    if (typeof rawPlanId !== "string" || !rawPlanId.trim()) {
+      throw new Error("Field 'plan_dispatch_id' must be a non-empty string.");
+    }
+    planDispatchId = rawPlanId.trim();
+  }
+
+  if (planDispatchId) {
+    if (decision !== "continue") {
+      throw new Error(
+        `Decision must be 'continue' when accepting a plan, got '${decision}'.`,
+      );
+    }
+
+    if (
+      raw.next_stage === undefined ||
+      raw.next_stage === null ||
+      typeof raw.next_stage !== "string" ||
+      !raw.next_stage.trim()
+    ) {
+      throw new Error("Field 'next_stage' is required when accepting a plan.");
+    }
+
+    for (const key of FORBIDDEN_PLAN_ACCEPTANCE_KEYS) {
+      if (key in raw && raw[key] !== undefined) {
+        throw new Error(
+          `Field '${key}' cannot be combined with 'plan_dispatch_id'.`,
+        );
+      }
+    }
+  } else if (raw.next_stage !== undefined && raw.next_stage !== null) {
     if (typeof raw.next_stage !== "string" || !raw.next_stage.trim()) {
       throw new Error(
         "Field 'next_stage' must be a non-empty string if provided.",
@@ -279,9 +345,8 @@ export function parseResolveOptions(
     ...(raw.next_stage
       ? { next_stage: (raw.next_stage as string).trim() }
       : {}),
+    ...(planDispatchId ? { plan_dispatch_id: planDispatchId } : {}),
     ...(Array.isArray(raw.options) ? { options: raw.options as string[] } : {}),
-    ...(raw.child_issues ? { child_issues: raw.child_issues as string[] } : {}),
-    ...(raw.plan ? { plan: raw.plan } : {}),
     ...(raw.current_issue != null
       ? { current_issue: raw.current_issue as string | number }
       : {}),

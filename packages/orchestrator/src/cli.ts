@@ -54,51 +54,80 @@ export function parseReportInput(raw: string): unknown {
   }
 }
 
+type ArgOption = { type: "string" | "boolean"; multiple?: boolean };
+
+const INIT_OPTIONS: Record<string, ArgOption> = {
+  "receipt-root": { type: "string" },
+  "root-issue": { type: "string" },
+  "repo-dir": { type: "string" },
+  workflow: { type: "string" },
+  force: { type: "boolean" },
+  "require-config": { type: "boolean" },
+  "delivery-attempts-max": { type: "string" },
+  "replans-max": { type: "string" },
+  "delivery-target": { type: "string" },
+  "base-remote": { type: "string" },
+  "push-remote": { type: "string" },
+  "base-branch": { type: "string" },
+  "worktree-container": { type: "string" },
+  json: { type: "boolean" },
+};
+
+const DISPATCH_OPTIONS: Record<string, ArgOption> = {
+  "receipt-root": { type: "string" },
+  request: { type: "string" },
+  json: { type: "boolean" },
+};
+
+const COMPLETE_OPTIONS: Record<string, ArgOption> = {
+  "receipt-root": { type: "string" },
+  "dispatch-id": { type: "string" },
+  report: { type: "string" },
+  json: { type: "boolean" },
+};
+
+const RESOLVE_OPTIONS: Record<string, ArgOption> = {
+  "receipt-root": { type: "string" },
+  decision: { type: "string" },
+  reason: { type: "string" },
+  "next-stage": { type: "string" },
+  "plan-dispatch-id": { type: "string" },
+  "current-issue": { type: "string" },
+  "mark-landed": { type: "string" },
+  "landing-dispatch-id": { type: "string" },
+  "complete-sequence": { type: "boolean" },
+  option: { type: "string", multiple: true },
+  json: { type: "boolean" },
+};
+
+const INSPECT_OPTIONS: Record<string, ArgOption> = {
+  "receipt-root": { type: "string" },
+  field: { type: "string" },
+  json: { type: "boolean" },
+};
+
+const COMMAND_OPTIONS: Record<string, Record<string, ArgOption>> = {
+  init: INIT_OPTIONS,
+  dispatch: DISPATCH_OPTIONS,
+  complete: COMPLETE_OPTIONS,
+  resolve: RESOLVE_OPTIONS,
+  inspect: INSPECT_OPTIONS,
+};
+
 export async function main(
   argv: string[] = process.argv.slice(2),
 ): Promise<number> {
   try {
     const [command, ...args] = argv;
-    const bools = ["force", "require-config", "complete-sequence", "json"];
-    const strings = [
-      "receipt-root",
-      "root-issue",
-      "current-issue",
-      "workflow",
-      "initial-stage",
-      "repo-dir",
-      "delivery-attempts-max",
-      "replans-max",
-      "plan",
-      "delivery-target",
-      "base-remote",
-      "push-remote",
-      "base-branch",
-      "worktree-container",
-      "request",
-      "dispatch-id",
-      "report",
-      "decision",
-      "reason",
-      "next-stage",
-      "mark-landed",
-      "landing-dispatch-id",
-      "field",
-    ];
-    const options: Record<
-      string,
-      { type: "string" | "boolean"; multiple?: boolean }
-    > = {};
-    for (const name of bools) options[name] = { type: "boolean" };
-    for (const name of strings) options[name] = { type: "string" };
-    options["child-issue"] = { type: "string", multiple: true };
-    options.option = { type: "string", multiple: true };
+    if (!command || !COMMAND_OPTIONS[command]) {
+      throw new Error(
+        "Expected command: init | dispatch | complete | resolve | inspect",
+      );
+    }
+
     const { values } = parseArgs({
       args,
-      options:
-        command === "dispatch"
-          ? { "receipt-root": { type: "string" }, request: { type: "string" } }
-          : options,
+      options: COMMAND_OPTIONS[command],
       strict: true,
       allowPositionals: false,
     });
@@ -106,8 +135,9 @@ export async function main(
     for (const [key, value] of Object.entries(values)) {
       o[key.replaceAll("-", "_")] = value;
     }
-    o.child_issues = o.child_issue;
-    o.options = o.option;
+    if (command === "resolve") {
+      o.options = o.option;
+    }
     for (const key of ["delivery_attempts_max", "replans_max"]) {
       if (o[key] != null) {
         if (!/^-?\d+$/.test(String(o[key]))) {
@@ -163,8 +193,7 @@ export async function main(
         reason: o.reason,
         options: o.options,
         next_stage: o.next_stage ?? null,
-        child_issues: o.child_issues,
-        plan: o.plan,
+        plan_dispatch_id: o.plan_dispatch_id,
         current_issue: o.current_issue,
         mark_landed: o.mark_landed,
         landing_dispatch_id: o.landing_dispatch_id,
@@ -175,10 +204,6 @@ export async function main(
         receipt_root: o.receipt_root,
         field: o.field,
       } as InspectOptions);
-    } else {
-      throw new Error(
-        "Expected command: init | dispatch | complete | resolve | inspect",
-      );
     }
 
     console.log(

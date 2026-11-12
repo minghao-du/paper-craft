@@ -86,6 +86,7 @@ export interface DecisionRecord {
   reason: string;
   options?: string[];
   next_stage?: string;
+  plan_dispatch_id?: string;
   current_issue?: string;
   mark_landed?: string;
   landing_dispatch_id?: string | null;
@@ -122,10 +123,6 @@ export interface InitOptions {
   receipt_root?: string;
   repo_dir?: string;
   workflow?: string;
-  initial_stage?: string;
-  current_issue?: string | number;
-  child_issues?: string[];
-  plan?: unknown;
   force?: boolean;
   require_config?: boolean;
   delivery_attempts_max?: number;
@@ -192,8 +189,7 @@ export interface ResolveOptions {
   reason: string;
   options?: string[];
   next_stage?: string | null;
-  child_issues?: string[];
-  plan?: unknown;
+  plan_dispatch_id?: string;
   current_issue?: string | number | null;
   mark_landed?: string | number | null;
   /** Dispatch id of the completed pc-pr-land record that proves mark_landed. */

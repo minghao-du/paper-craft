@@ -220,7 +220,6 @@ describe('Task Input Envelope Core Features', () => {
       'init',
       '--receipt-root', testEnv.dir,
       '--root-issue', '300',
-      '--current-issue', '301',
     ]);
 
     const prep1 = runDispatchTaskCli(testEnv.dir, {
@@ -243,12 +242,30 @@ describe('Task Input Envelope Core Features', () => {
       '--dispatch-id', prepData1.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
-        result: { outcome: 'planned' },
+        result: {
+          outcome: 'decomposed',
+          plan: {
+            tasks: [
+              { number: 301, blockedBy: [] },
+              { number: 302, blockedBy: [301] },
+            ],
+          },
+        },
         receipt_path: prepData1.receipt_path,
-        summary: 'Planned child issue 301',
+        summary: 'Decomposed root issue into 301 and 302',
       }),
     ]);
     expect(compRes.status).toBe(0);
+
+    const resolveRes = runLifecycleKernelCli([
+      'resolve',
+      '--receipt-root', testEnv.dir,
+      '--decision', 'continue',
+      '--reason', 'Accept planned decomposed sequence',
+      '--plan-dispatch-id', prepData1.dispatch_id,
+      '--next-stage', 'stage_2_work',
+    ]);
+    expect(resolveRes.status).toBe(0);
 
     const result = runDispatchTaskCli(testEnv.dir, {
       stage: 'issue_work',

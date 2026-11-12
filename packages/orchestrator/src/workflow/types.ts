@@ -12,6 +12,17 @@ export interface SkillProvider {
   args?: string[];
 }
 
+export interface PlanningSource {
+  dispatch_id: string;
+  issue_id?: string;
+  stage: string;
+  step_index: number;
+  execution_status: string;
+  provider?: SkillProvider;
+  result: Record<string, unknown>;
+  receipt_path: string;
+}
+
 export interface WorkflowStage {
   id: string;
   logical_task?: string;
@@ -141,8 +152,7 @@ export interface ApplyDeliveryDecisionParams {
   decision: string;
   action: string;
   nextStage?: string | null;
-  childIssues?: string[] | null;
-  plan?: unknown;
+  planningSource?: PlanningSource;
   currentIssue?: string | null;
   markLanded?: string | null;
   landingDispatchId?: string | null;

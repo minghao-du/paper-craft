@@ -66,8 +66,8 @@ This protocol establishes two operational invariants:
 Skill instructions guide agent judgment, routing, and recovery. Fixed helpers perform mechanical work and validate external JSON at runtime; TypeScript types alone do not validate files or agent output.
 
 - **Orchestrator helpers (`packages/orchestrator/`)**: Structured into three cohesive modules and thin CLI entry points:
-  - **Lifecycle**: owns dispatch identity, authorization, report correlation, envelope protocols, idempotency, and operation orchestration across `init`, `dispatch`, `complete`, `resolve`, and `inspect`.
-  - **Workflow**: owns domain delivery sequence, stage definition loading and validation, completion policies, retry/replan budgets, and evidence checks.
+  - **Lifecycle**: owns dispatch identity, authorization, report correlation, envelope protocols, idempotency, and operation orchestration across `init`, `dispatch`, `complete`, `resolve`, and `inspect`. `init` is strictly narrowed to run creation and resumption with shortcut plan inputs removed; `resolve` accepts planning results by referencing recorded completions via `plan_dispatch_id`, enforcing request identity, freshness, and idempotent replay.
+  - **Workflow**: owns domain delivery sequence construction, stage definition loading and validation, completion policies, retry/replan budgets, and evidence checks. When accepting plans, it internally validates order and constructs direct or decomposed delivery sequences, keeping planning helpers as internal unexported implementations without mutating caller inputs.
   - **RunStore**: owns run directory file layout, atomic commits (state and envelopes), and crash recovery via pending commit records.
   - **CLI (`cli.ts`, `envelope-cli.ts`)**: handles command arguments, input media, and terminal formatting without embedding workflow policies or direct file mutation.
 - **Configuration helpers (`packages/workspace-config/`)**: TypeScript modules resolve and validate the project configuration used by the orchestrator.
@@ -75,7 +75,7 @@ Skill instructions guide agent judgment, routing, and recovery. Fixed helpers pe
 
 A new `dispatch` commits the input envelope, attempt accounting, and `handed_off` state together, granting the skill one platform launch. Callers serialize operations on the same run. Each JSON request has a `request_id` unique within the run. An `init --force` reset starts a new run with fresh request history. The kernel checks request history before admitting new work. A replay of the original payload returns the existing dispatch or its completion without granting another launch. A different payload under the same ID is rejected. Pausing blocks new grants while existing grants and completions remain valid.
 
-The skill owns the external stage input and receipt contract. Helper modules implement deterministic operations without choosing the next professional stage; the Orchestrator makes that decision explicitly through `resolve`. Preserve lifecycle operation semantics, persisted JSON formats, recovery, and receipt checks when changing implementations.
+The skill owns the external stage input and receipt contract. Helper modules implement deterministic operations without choosing the next professional stage; the Orchestrator makes that decision explicitly through `resolve`. `init` strictly creates or resumes runs, rejecting shortcut plan inputs. Plan acceptance is explicitly routed through `resolve` via `plan_dispatch_id`: Lifecycle manages request identity, freshness, and idempotent replay (replays return historic decision records without mutating control states or rolling back stages), while Workflow internally validates dependencies and constructs direct or decomposed sequences without exporting planning helpers. Preserve lifecycle operation semantics, persisted JSON formats, recovery, and receipt checks when changing implementations.
 
 ## Unified receipt contract
 

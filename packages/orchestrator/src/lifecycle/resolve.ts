@@ -21,15 +21,12 @@ import type {
 const ADVANCE_FIELDS = [
   "next_stage",
   "current_issue",
-  "plan",
-  "child_issues",
   "mark_landed",
   "complete_sequence",
 ] as const;
 
 function hasValue(options: ResolveOptions, field: string): boolean {
   const value = options[field];
-  if (field === "child_issues") return Array.isArray(value) && value.length > 0;
   return value !== undefined && value !== null && value !== false;
 }
 
@@ -45,12 +42,7 @@ function assertResolveShape(
       `Decision '${options.decision}' only controls the run and cannot carry ${[...supplied, ...(landingGiven ? ["landing_dispatch_id"] : [])].join(", ")}. Apply delivery updates with 'continue' first${options.decision === "finish" ? ", then finish" : ""}.`,
     );
   }
-  if (hasValue(options, "plan") && hasValue(options, "child_issues")) {
-    throw new Error("Provide either plan or child_issues, not both.");
-  }
-  if (
-    (options.mark_landed != null) !== landingGiven
-  ) {
+  if ((options.mark_landed != null) !== landingGiven) {
     throw new Error(
       "mark_landed and landing_dispatch_id must be provided together.",
     );
@@ -76,7 +68,7 @@ function assertResolveShape(
     const inSequence = items.some((i) => String(i.issue_id) === issue);
     if (!inSequence && issue !== String(state.root_issue_id)) {
       throw new Error(
-        `current_issue '${issue}' is not in the delivery sequence and is not the root issue; declare it with plan/child_issues first.`,
+        `current_issue '${issue}' is not in the delivery sequence and is not the root issue.`,
       );
     }
   }
@@ -124,6 +116,246 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     );
   }
 
+  // --- Plan Acceptance Branch ---
+  if (options.plan_dispatch_id) {
+    const targetPlanId = options.plan_dispatch_id;
+
+    // 1. Look for existing acceptance record for this exact plan_dispatch_id
+    const accepted = (state.decisions ?? []).find(
+      (d) => d.plan_dispatch_id === targetPlanId,
+    );
+
+    if (accepted) {
+      if (
+        accepted.decision !== options.decision ||
+        accepted.next_stage !== options.next_stage
+      ) {
+        throw new Error(
+          `Conflicting plan acceptance retry: original accepted decision was '${accepted.decision}' with next_stage '${accepted.next_stage}', received '${options.decision}' with next_stage '${options.next_stage}'.`,
+        );
+      }
+      if (!state.delivery_sequence || !state.delivery_sequence.items?.length) {
+        throw new Error(
+          "Inconsistent state: plan acceptance record exists but delivery sequence is missing.",
+        );
+      }
+      // Return original record without modifying state or updating timestamps
+      return accepted;
+    }
+
+    // 2. First acceptance checks
+    if (state.active_dispatch) {
+      throw new Error(
+        `Cannot accept plan while dispatch '${state.active_dispatch.dispatch_id}' is active. Complete it first.`,
+      );
+    }
+    if (state.protocol_error) {
+      throw new Error(
+        `Cannot accept plan while protocol error '${state.protocol_error.error_type}' is present.`,
+      );
+    }
+    if (state.delivery_sequence) {
+      throw new Error(
+        "Cannot accept plan: a delivery sequence already exists for this workflow run.",
+      );
+    }
+    const otherAccepted = (state.decisions ?? []).find(
+      (d) => Boolean(d.plan_dispatch_id),
+    );
+    if (otherAccepted) {
+      throw new Error(
+        `Cannot accept plan '${targetPlanId}': plan '${otherAccepted.plan_dispatch_id}' has already been accepted.`,
+      );
+    }
+
+    if (state.workflow_snapshot.completion_policy === "basic") {
+      throw new Error(
+        "Workflow with 'basic' completion policy does not accept planning results.",
+      );
+    }
+
+    // Locate source completion in state.completed_stages
+    const source = (state.completed_stages ?? []).find(
+      (c) => c.dispatch_id === targetPlanId,
+    );
+    if (!source) {
+      throw new Error(
+        `Planning dispatch '${targetPlanId}' not found in completed stages.`,
+      );
+    }
+
+    const rootIssueId = String(state.root_issue_id);
+    if (
+      source.issue_id != null &&
+      String(source.issue_id).trim() !== rootIssueId
+    ) {
+      throw new Error(
+        `Planning dispatch '${targetPlanId}' belongs to issue '${source.issue_id}', expected root issue '${rootIssueId}'.`,
+      );
+    }
+
+    if (source.execution_status !== "succeeded") {
+      throw new Error(
+        `Planning dispatch '${targetPlanId}' execution status is '${source.execution_status}', expected 'succeeded'.`,
+      );
+    }
+
+    const stageDef = state.workflow_snapshot.stages.find(
+      (s) => s.id === source.stage,
+    );
+    if (!stageDef) {
+      throw new Error(
+        `Planning dispatch stage '${source.stage}' not found in workflow snapshot.`,
+      );
+    }
+
+    const isInitialPlanStage =
+      (stageDef.logical_task === "issue_plan" ||
+        stageDef.provider?.target === "pc-issue-plan" ||
+        source.stage === "stage_1_plan") &&
+      !stageDef.replan &&
+      stageDef.logical_task !== "scope_replan";
+    if (!isInitialPlanStage) {
+      throw new Error(
+        `Dispatch '${targetPlanId}' stage '${source.stage}' is not an initial planning stage.`,
+      );
+    }
+
+    const expectedProvider = stageDef.provider;
+    const actualProvider = source.provider ?? expectedProvider;
+    if (
+      expectedProvider &&
+      actualProvider &&
+      (expectedProvider.target !== actualProvider.target ||
+        expectedProvider.type !== actualProvider.type)
+    ) {
+      throw new Error(
+        `Planning dispatch provider mismatch: expected '${expectedProvider.target}', got '${actualProvider.target}'.`,
+      );
+    }
+
+    const res = source.result;
+    if (!res || typeof res !== "object" || Array.isArray(res)) {
+      throw new Error(
+        `Planning dispatch '${targetPlanId}' result must be an object.`,
+      );
+    }
+    const outcome = (res as Record<string, unknown>).outcome;
+    if (outcome !== "direct" && outcome !== "decomposed") {
+      throw new Error(
+        `Planning dispatch '${targetPlanId}' outcome must be 'direct' or 'decomposed', got '${String(outcome)}'.`,
+      );
+    }
+
+    if (
+      !source.receipt_path ||
+      typeof source.receipt_path !== "string" ||
+      !source.receipt_path.trim()
+    ) {
+      throw new Error(
+        `Planning dispatch '${targetPlanId}' has no valid receipt_path.`,
+      );
+    }
+    const resolvedReceipt = path.resolve(source.receipt_path);
+    if (!fs.existsSync(resolvedReceipt) || fs.statSync(resolvedReceipt).size === 0) {
+      throw new Error(
+        `Planning receipt at '${resolvedReceipt}' does not exist or is empty.`,
+      );
+    }
+
+    // Freshness check: no later planning attempt for same root issue with step_index > source.step_index
+    const laterPlanning = (state.completed_stages ?? []).some((c) => {
+      if (c.dispatch_id === targetPlanId) return false;
+      if (c.step_index <= source.step_index) return false;
+      const cStageDef = state.workflow_snapshot.stages.find((s) => s.id === c.stage);
+      const isCPlan =
+        cStageDef?.logical_task === "issue_plan" ||
+        cStageDef?.provider?.target === "pc-issue-plan" ||
+        c.stage === "stage_1_plan";
+      const cIssue = c.issue_id != null ? String(c.issue_id).trim() : rootIssueId;
+      return isCPlan && cIssue === rootIssueId;
+    });
+    if (laterPlanning) {
+      throw new Error(
+        `Planning dispatch '${targetPlanId}' is superseded by a later planning dispatch.`,
+      );
+    }
+
+    // No non-auxiliary business stage completed after this planning dispatch
+    const laterNonAuxStage = (state.completed_stages ?? []).some((c) => {
+      if (c.step_index <= source.step_index) return false;
+      const cStageDef = state.workflow_snapshot.stages.find((s) => s.id === c.stage);
+      return cStageDef && !cStageDef.auxiliary && c.stage !== source.stage;
+    });
+    if (laterNonAuxStage) {
+      throw new Error(
+        `Cannot accept plan '${targetPlanId}': a subsequent non-auxiliary stage has already completed.`,
+      );
+    }
+
+    // Validate next_stage exists in snapshot
+    const nextStageDef = state.workflow_snapshot.stages.find(
+      (s) => s.id === options.next_stage,
+    );
+    if (!nextStageDef) {
+      throw new Error(
+        `next_stage '${options.next_stage}' is not a stage of workflow '${state.workflow_snapshot.name}'.`,
+      );
+    }
+
+    const deliveryResult = applyDeliveryDecision({
+      workflow: state.workflow_snapshot,
+      deliverySequence: state.delivery_sequence,
+      budgets: state.budgets,
+      currentIssueId: state.current_issue_id,
+      rootIssueId: state.root_issue_id,
+      decision: "continue",
+      action: "continue",
+      nextStage: options.next_stage,
+      planningSource: {
+        dispatch_id: source.dispatch_id,
+        issue_id:
+          source.issue_id != null ? String(source.issue_id).trim() : rootIssueId,
+        stage: source.stage,
+        step_index: source.step_index,
+        execution_status: source.execution_status,
+        provider: actualProvider,
+        result: res as Record<string, unknown>,
+        receipt_path: source.receipt_path,
+      },
+    });
+
+    const now = new Date().toISOString();
+    const record: DecisionRecord = {
+      decision: "continue",
+      action: "continue",
+      reason: options.reason,
+      plan_dispatch_id: targetPlanId,
+      next_stage: options.next_stage!,
+      timestamp: now,
+    };
+
+    const nextState: RuntimeState = {
+      ...state,
+      current_issue_id: deliveryResult.currentIssueId,
+      current_stage: options.next_stage!,
+      stage_status: "pending",
+      budgets: deliveryResult.budgets,
+      delivery_sequence: deliveryResult.deliverySequence,
+      decisions: [...(state.decisions ?? []), record],
+      orchestrator_decision: "continue",
+      last_updated: now,
+    };
+
+    commitRun(root, {
+      expected_previous_state: expectedPreviousState,
+      target_state: nextState,
+    });
+
+    return record;
+  }
+
+  // --- Regular Resolve Branch ---
   assertResolveShape(options, state);
 
   if (options.decision === "finish") {
@@ -150,8 +382,6 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     decision: options.decision,
     action: options.decision,
     nextStage: options.next_stage,
-    childIssues: options.child_issues,
-    plan: options.plan,
     currentIssue:
       options.current_issue != null ? String(options.current_issue) : null,
     markLanded:
