@@ -57,6 +57,7 @@ export class EnvelopeValidationError extends ProtocolError {
   }
 }
 
+/** Collect structural errors for known fields while allowing extension fields. */
 export function validateTaskInputEnvelope(data: unknown): string[] {
   if (!isObject(data)) return ["Root envelope must be a JSON object (dict)"];
   const object = data;
@@ -90,6 +91,36 @@ export function validateTaskInputEnvelope(data: unknown): string[] {
     const value = obj[field];
     if (typeof value !== "string" || !value.trim()) {
       errors.push(`[${location}.${field}] Expected non-empty string`);
+    }
+  }
+
+  function optionalText(
+    obj: JsonObject,
+    field: string,
+    location: string,
+    nullable = false,
+  ) {
+    if (!(field in obj)) return;
+    const value = obj[field];
+    if (typeof value === "string" || (nullable && value === null)) return;
+    errors.push(
+      `[${location}.${field}] Expected string${nullable ? " or null" : ""}`,
+    );
+  }
+
+  function optionalTextList(obj: JsonObject, field: string, location: string) {
+    if (!(field in obj)) return;
+    const value = obj[field];
+    const message = `[${location}.${field}] Expected list of strings`;
+    if (!Array.isArray(value)) {
+      errors.push(message);
+      return;
+    }
+    for (const item of value) {
+      if (typeof item !== "string") {
+        errors.push(message);
+        return;
+      }
     }
   }
 
@@ -131,28 +162,30 @@ export function validateTaskInputEnvelope(data: unknown): string[] {
       errors.push(`[provider.type] Expected 'skill', got '${provider.type}'`);
     }
     text(provider, "target", "provider");
-    if (
-      "args" in provider &&
-      (!Array.isArray(provider.args) ||
-        provider.args.some((a) => typeof a !== "string"))
-    ) {
-      errors.push("[provider.args] Expected list of strings");
-    }
+    optionalTextList(provider, "args", "provider");
   });
 
   section("environment", (env) => {
     text(env, "working_directory", "environment");
+    for (const field of [
+      "repository",
+      "delivery_target",
+      "base_remote",
+      "push_remote",
+      "base_branch",
+    ]) {
+      optionalText(env, field, "environment");
+    }
+    for (const field of ["branch", "commit"]) {
+      optionalText(env, field, "environment", true);
+    }
   });
 
   section("inputs", (inputs) => {
     text(inputs, "objective", "inputs");
-    if ("scope" in inputs && typeof inputs.scope !== "string") {
-      errors.push("[inputs.scope] Expected string");
-    }
+    optionalText(inputs, "scope", "inputs");
     for (const field of ["acceptance_criteria", "predecessor_receipts"]) {
-      if (field in inputs && !Array.isArray(inputs[field])) {
-        errors.push(`[inputs.${field}] Expected list`);
-      }
+      optionalTextList(inputs, field, "inputs");
     }
     if ("parameters" in inputs && !isObject(inputs.parameters)) {
       errors.push("[inputs.parameters] Expected JSON object (dict)");
@@ -161,6 +194,7 @@ export function validateTaskInputEnvelope(data: unknown): string[] {
 
   section("contract", (contract) => {
     text(contract, "receipt_path", "contract");
+    optionalText(contract, "receipt_template", "contract");
   });
 
   section("budgets", (budgets) => {
@@ -182,7 +216,7 @@ export function assertTaskInputEnvelope(
   if (errors.length) throw new EnvelopeValidationError(errors);
 }
 
-/** Validate an envelope given as parsed value or JSON string. */
+/** Validate a value or JSON string, preserving its fields and values as supplied. */
 export function parseTaskInputEnvelope(raw: string | unknown): TaskInputEnvelope {
   let value: unknown = raw;
   if (typeof raw === "string") {

@@ -6,7 +6,7 @@ import { isObject, ProtocolError } from "./errors.js";
 
 export type ExecutionStatus = "succeeded" | "failed" | "blocked";
 
-export const EXECUTION_STATUSES: readonly ExecutionStatus[] = [
+const EXECUTION_STATUSES: readonly ExecutionStatus[] = [
   "succeeded",
   "failed",
   "blocked",
@@ -21,7 +21,7 @@ export interface CompactReport {
 }
 
 /** Validate and normalize (trim strings, drop unknown keys) a parsed report. */
-export function normalizeCompactReport(raw: unknown): CompactReport {
+function normalizeCompactReport(raw: unknown): CompactReport {
   if (!isObject(raw)) {
     throw new ProtocolError(
       "Report must be a JSON object dictionary or JSON string.",
