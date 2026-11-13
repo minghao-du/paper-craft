@@ -70,14 +70,15 @@ records needed by the research; Snakemake rules produce the evidence they refere
 
 - Group both roots by analytical stage: `processed/<stage>/` and `results/<stage>/`.
   Use the same stage name in both roots wherever that stage produces artifacts.
-- **Research-to-Code Mapping**: Follow the directory-report rules in the
+- **Scientific reporting**: Follow the
   [research-state convention](../pc-research-state/references/convention.md). Give
-  `/pc-research-state` the named repository/code root, affected directory tree and
-  scripts, actual rule/caller relationships, inputs, outputs and specific run
-  evidence. Identify shared helpers and affected consumers across stages or
-  repositories. For initialization or migration provide the full recursive mapping;
-  local changes provide their impact scope and unresolved mapping gaps. All report
-  writes go through `/pc-research-state` under the calling session's judgments.
+  `/pc-research-state` the research questions, actual data and scientific methods,
+  validated findings, limitations, and identifiable supporting evidence. Include
+  versions or analysis batches when needed to distinguish results, and identify
+  affected findings when an update replaces earlier evidence. Research reports
+  follow scientific questions; execution commands, code relationships, and
+  environment details stay in pipeline documentation. All report writes go through
+  `/pc-research-state` under the calling session's judgments.
 - Within a stage, group intermediates by domain meaning (e.g., `counts/`, `normalized/`) and deliverables by kind (e.g., `figures/`, `tables/`, `reports/`).
   Create only directories with actual outputs; a few files of one kind may live directly under the stage.
 - Give each artifact one canonical location.

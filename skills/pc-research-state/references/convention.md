@@ -10,20 +10,32 @@ When establishing the home, add a discovery sentence to relevant agent/startup g
 
 Keep the entire research-state workspace Git-ignored in its owning repository and ensure no files inside it remain tracked. If removing existing tracked records, preserve local files and useful content while removing only their index entries. An external workspace outside Git needs no repository ignore rule; check related repositories for tracked copies. Preserve unrelated instructions and local material during migration.
 
-## Directory reports and navigation
+## Scientific report organization and navigation
 
-The entry explains the project's research questions, current findings, route, and open issues, linking to detailed reports where needed. Apply the [report requirements](report-template.md) at each analytical level.
+The research state reads as one detailed scientific report, optionally split into linked chapters. The entry introduces the research questions, principal current findings, research route, and open issues, with a coherent reading order. Organize chapters by scientific questions and analytical relationships rather than code directories. Use the [report requirements](report-template.md) to cover the scientific account across the report, without repeating the full template at every level.
 
-For research-to-code mapping, identify each repository and code root explicitly. Mirror its meaningful directory hierarchy in report navigation, mapping analytical steps to report locations. Each mapped directory's role, scripts or workflow rules, inputs, outputs, and callers or consumers must be recoverable from its report or a linked report. Small directories may share a report; shared helpers link to the analyses they affect. Directory inventories support the scientific account rather than replacing it.
+Maintain one authoritative detailed account of each analysis. Explain shared data and methods once, with links from the chapters that use them. Overviews synthesize substantive findings, relationships, and common limits; detailed chapters supply the evidence and interpretation. Give enough context for the reading sequence to remain coherent without duplicating whole passages or tables.
 
-During initialization or migration, inspect the full recursive code hierarchy and establish the mapping, marking unresolved areas. During routine updates, inspect affected steps, upstream conditions needed to interpret them, downstream consumers, and parent summaries. Preserve one authoritative detailed account of each analysis; parent reports synthesize findings, their relationships, and common limits with links to the detail.
+During initialization or migration, inspect existing scientific materials and establish chapter coverage, marking gaps. During routine updates, inspect affected questions, the data and methods needed to interpret them, dependent findings, and overview summaries. Code inspection may establish facts for the writer; code inventories and recursive directory mapping are not report requirements.
 
-Use relative links within the research home and unambiguous repository/code identities for external mappings. Repair inbound links when moving records. Keep raw data, logs, tables, figures, and models in their canonical artifact locations; reports explain their research meaning and link to the evidence.
+Use relative links within the research home and repair inbound links when moving records. Keep raw data, logs, tables, figures, and models in their canonical artifact locations. Present key figures, comparison values, and explanations in the report; cite their sources without copying raw output collections. Execution commands, scripts, environments, and scheduling belong in the project's pipeline and execution documentation.
 
 ## Evidence and integration
 
 Distinguish plans, hypotheses, observations, interpretations, and conclusions. The calling session or human owns scientific judgments; recording a plan does not authorize execution. Keep live task status in its task system.
 
-Tie consequential claims to identifiable evidence: dataset or input identity, code revision where relevant, run/configuration identity, artifact path, and specific table, figure, or metric. Remote evidence includes host and path. Record whether evidence was inspected now, previously verified, reconstructed, unverified, or inaccessible, with gaps affecting the conclusion. Execution success alone establishes no scientific result.
+Tie consequential claims to identifiable evidence using concise citations, figure/table notes, or source links. Include dataset versions or analysis batches only as needed to distinguish the actual results; remote locations must be unambiguous. Shared citations may cover a related group of findings. Record whether evidence was inspected now, previously verified, reconstructed, unverified, or inaccessible, with gaps affecting the conclusion. Citations support verification; the scientific explanation must stand on its own. Execution success alone establishes no scientific result.
 
 Compare conditions before combining findings across runs. Keep conflicting conclusions unresolved until the caller interprets the evidence; supported independent updates may proceed. When findings change, update affected interpretations and parent syntheses or mark them pending reassessment. During migration, integrate useful existing findings before retiring parallel entries.
+
+## Replacement and retention
+
+Maintain current understanding by rewriting relevant sections in place. A newer result replaces an older result only when the research question and conditions are comparable, the evidence is adequate, and the replacement is established. Recency alone is insufficient; keep an unverified update provisional. Synthesize valid findings from different conditions as comparisons, and keep unresolved contradictions visible.
+
+Remove superseded claims, obsolete numerical results, duplicate explanations, and abandoned plans with no continuing relevance. Retain earlier evidence or a revision reason only when omitting it would change the reader's understanding of current findings, lead to a poor methodological choice, or cause repetition of a non-obvious mistake. Apply the same rule to rejected routes and failed approaches:
+
+- Keep scientifically valid negative findings, counterexamples, and method limitations with the evidence and conditions needed to interpret them.
+- Remove numerical results invalidated by faulty code or data. If the failure still matters, retain a concise explanation of the cause, its scientific consequence, and how to avoid it; clearly distinguish this lesson from valid scientific evidence.
+- Remove routine debugging, resolved setup failures, repeated failed runs, and obsolete result inventories. Keep a lesson only as long as it meets the retention criterion.
+
+No change log or historical archive is required. Pruning report content does not authorize deleting underlying datasets, artifacts, or execution logs. A missing or deleted artifact alone neither invalidates nor supersedes a finding; preserve any still-relevant finding with an explicit evidence-access gap. Update affected citations and summaries as part of the same edit so outdated results do not survive elsewhere as current conclusions.
