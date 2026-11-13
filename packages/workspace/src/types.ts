@@ -57,8 +57,16 @@ export interface PrDeliveryEvidence {
   mergeCommit?: string;
 }
 
+export interface OwnershipEvidence {
+  rootIssueId?: string | number;
+  root_issue_id?: string | number;
+  issue?: string | number;
+  issueId?: string | number;
+  source?: string;
+}
+
 export interface TaskBranchCleanupCandidate {
-  kind?: 'task_branch';
+  kind: 'task_branch';
   worktree?: string;
   branch: string;
   commit?: string;
@@ -68,19 +76,19 @@ export interface TaskBranchCleanupCandidate {
   pushRemote?: string;
   pr?: number | string | PrDeliveryEvidence;
   created?: boolean;
-  ownershipEvidence?: unknown;
+  ownershipEvidence?: OwnershipEvidence;
   consumersFinished?: boolean;
 }
 
 export interface DetachedCleanupCandidate {
-  kind?: 'detached';
+  kind: 'detached';
   worktree: string;
   commit: string;
   baseBranch?: string;
   deliveryTarget?: string;
   baseRemote?: string;
   pushRemote?: string;
-  ownershipEvidence?: unknown;
+  ownershipEvidence?: OwnershipEvidence;
   consumersFinished?: boolean;
   verificationCompleted?: boolean;
 }

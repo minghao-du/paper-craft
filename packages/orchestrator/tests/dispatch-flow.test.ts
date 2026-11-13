@@ -318,7 +318,9 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
     expect(inspectCheck.status).toBe(0);
     const inspectData = JSON.parse(inspectCheck.stdout);
     expect(inspectData.budgets.delivery_attempts_used).toBe(3);
-    expect(inspectData.blocking_reasons).toEqual(
+    expect(inspectData.budgets.delivery_attempts_max).toBe(3);
+    expect(inspectData.finish_check.status).toBe('blocked');
+    expect(inspectData.blocking_reasons).not.toEqual(
       expect.arrayContaining([
         expect.stringMatching(/delivery attempt budget exhausted/i),
       ]),

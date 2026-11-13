@@ -15,6 +15,8 @@ export {
   type ResolvedWorkspaceConfig,
   type WorkspaceConfigOverrides,
   type ResolveWorkspaceConfigOptions,
+  type LoadWorkspaceConfigOptions,
+  type SavedWorkspaceConfig,
   atomicWriteJson,
   runGit,
   findRepoRoot,

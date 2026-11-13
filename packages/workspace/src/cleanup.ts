@@ -32,6 +32,7 @@ import {
   type CleanupRequest,
   type CleanupResult,
   type DetachedCleanupCandidate,
+  type OwnershipEvidence,
   type PrDeliveryEvidence,
   type TaskBranchCleanupCandidate,
   WorkspaceError,
@@ -69,6 +70,162 @@ function defaultGhRunner(args: string[], cwd: string): string {
 }
 
 /**
+ * Validate explicit kind and strict boolean/structural types for a cleanup candidate.
+ */
+export function validateCleanupCandidate(
+  candidate: unknown,
+  idx = 0,
+): CleanupCandidate {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw new WorkspaceError('INVALID_INPUT', `Candidate at index ${idx} must be an object.`);
+  }
+
+  const c = candidate as Record<string, unknown>;
+
+  if (c.kind !== 'task_branch' && c.kind !== 'detached') {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Candidate at index ${idx} must have explicit kind 'task_branch' or 'detached', received '${String(c.kind)}'.`,
+    );
+  }
+
+  // Strict boolean validation helper
+  const checkStrictBool = (val: unknown, name: string) => {
+    if (val !== undefined && typeof val !== 'boolean') {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} field '${name}' must be a boolean or omitted; received ${
+          val === null ? 'null' : typeof val
+        } (${JSON.stringify(val)}).`,
+      );
+    }
+  };
+
+  checkStrictBool(c.created, 'created');
+  checkStrictBool(c.consumersFinished, 'consumersFinished');
+  checkStrictBool(c.consumers_finished, 'consumers_finished');
+  checkStrictBool(c.verificationCompleted, 'verificationCompleted');
+  checkStrictBool(c.verification_completed, 'verification_completed');
+
+  // String property type validation helper
+  const checkOptionalString = (val: unknown, name: string) => {
+    if (val !== undefined && typeof val !== 'string') {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} field '${name}' must be a string if provided; received ${typeof val}.`,
+      );
+    }
+  };
+
+  checkOptionalString(c.worktree, 'worktree');
+  checkOptionalString(c.commit, 'commit');
+  checkOptionalString(c.baseBranch, 'baseBranch');
+  checkOptionalString(c.base_branch, 'base_branch');
+  checkOptionalString(c.deliveryTarget, 'deliveryTarget');
+  checkOptionalString(c.delivery_target, 'delivery_target');
+  checkOptionalString(c.baseRemote, 'baseRemote');
+  checkOptionalString(c.base_remote, 'base_remote');
+  checkOptionalString(c.pushRemote, 'pushRemote');
+  checkOptionalString(c.push_remote, 'push_remote');
+
+  // Ownership evidence validation (non-object is malformed; missing/empty object is retained later)
+  const ev = c.ownershipEvidence ?? c.ownership_evidence;
+  if (ev !== undefined) {
+    if (typeof ev !== 'object' || ev === null || Array.isArray(ev)) {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} 'ownershipEvidence' must be an object if provided; received ${
+          ev === null ? 'null' : typeof ev
+        }.`,
+      );
+    }
+    const evRecord = ev as Record<string, unknown>;
+    const rootIssue = evRecord.rootIssueId ?? evRecord.root_issue_id;
+    const issue = evRecord.issue ?? evRecord.issue_id ?? evRecord.issueId;
+    const source = evRecord.source;
+
+    if (rootIssue !== undefined && typeof rootIssue !== 'string' && typeof rootIssue !== 'number') {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} ownership evidence 'rootIssueId' must be a string or number.`,
+      );
+    }
+    if (issue !== undefined && typeof issue !== 'string' && typeof issue !== 'number') {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} ownership evidence 'issue' must be a string or number.`,
+      );
+    }
+    if (source !== undefined && typeof source !== 'string') {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} ownership evidence 'source' must be a string.`,
+      );
+    }
+  }
+
+  if (c.kind === 'task_branch') {
+    if (typeof c.branch !== 'string' || !c.branch.trim()) {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} with kind 'task_branch' requires a non-empty string 'branch'.`,
+      );
+    }
+    if (c.verificationCompleted !== undefined || c.verification_completed !== undefined) {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Candidate at index ${idx} with kind 'task_branch' cannot specify 'verificationCompleted'.`,
+      );
+    }
+    if (c.pr !== undefined && c.pr !== null) {
+      if (typeof c.pr !== 'number' && typeof c.pr !== 'string') {
+        if (typeof c.pr !== 'object' || Array.isArray(c.pr)) {
+          throw new WorkspaceError(
+            'INVALID_INPUT',
+            `Candidate at index ${idx} 'pr' must be a number, string, or PR delivery evidence object.`,
+          );
+        }
+      }
+    }
+    return candidate as TaskBranchCleanupCandidate;
+  }
+
+  // c.kind === 'detached'
+  if (typeof c.worktree !== 'string' || !c.worktree.trim()) {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Candidate at index ${idx} with kind 'detached' requires a non-empty string 'worktree'.`,
+    );
+  }
+  if (typeof c.commit !== 'string' || !c.commit.trim()) {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Candidate at index ${idx} with kind 'detached' requires a non-empty string 'commit'.`,
+    );
+  }
+  if (c.branch !== undefined) {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Candidate at index ${idx} with kind 'detached' cannot specify a 'branch'.`,
+    );
+  }
+  if (c.created !== undefined) {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Candidate at index ${idx} with kind 'detached' cannot specify 'created'.`,
+    );
+  }
+  if (c.pr !== undefined) {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Candidate at index ${idx} with kind 'detached' cannot specify 'pr'.`,
+    );
+  }
+
+  return candidate as DetachedCleanupCandidate;
+}
+
+/**
  * Validate root cleanup request structure.
  */
 function validateRequest(request: CleanupRequest): {
@@ -102,6 +259,10 @@ function validateRequest(request: CleanupRequest): {
 
   if (!Array.isArray(request.candidates)) {
     throw new WorkspaceError('INVALID_INPUT', 'candidates must be an array.');
+  }
+
+  for (let i = 0; i < request.candidates.length; i++) {
+    validateCleanupCandidate(request.candidates[i], i);
   }
 
   const primary = resolvePath(findPrimaryCheckout(source));
@@ -166,7 +327,7 @@ function verifyOwnershipAndCompletion(
   const candRecord = candidate as unknown as Record<string, unknown>;
   const created = ('created' in candidate && candidate.created === true) || candRecord.created === true;
   const ownership = (candidate.ownershipEvidence ?? candRecord.ownership_evidence) as
-    | Record<string, unknown>
+    | OwnershipEvidence
     | undefined;
 
   const historical =
@@ -175,7 +336,7 @@ function verifyOwnershipAndCompletion(
         typeof ownership === 'object' &&
         ownership.issue &&
         ownership.source &&
-        String(ownership.root_issue_id ?? ownership.rootIssueId) === String(rootIssueId),
+        String(ownership.rootIssueId ?? ownership.root_issue_id) === String(rootIssueId),
     );
 
   if (!created && !historical) {
@@ -197,10 +358,7 @@ function verifyOwnershipAndCompletion(
     };
   }
 
-  const isDetached =
-    candidate.kind === 'detached' ||
-    !('branch' in candidate) ||
-    !candidate.branch;
+  const isDetached = candidate.kind === 'detached';
 
   if (isDetached) {
     const verificationCompleted =
@@ -237,7 +395,8 @@ export function cleanup(
     const hasWorktree = Boolean(rawWorktree && rawWorktree.trim());
     const target = hasWorktree ? resolvePath(rawWorktree!) : null;
 
-    const branch = 'branch' in candidate && candidate.branch ? candidate.branch : undefined;
+    const branch =
+      candidate.kind === 'task_branch' && candidate.branch ? candidate.branch : undefined;
 
     if (!target && !branch) {
       // Invalid candidate with neither worktree nor branch

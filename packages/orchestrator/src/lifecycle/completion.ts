@@ -140,6 +140,9 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
     completed_at: completedAt,
     ...(active.request?.request_id ? { request: active.request } : {}),
     ...(active.provider ? { provider: active.provider } : {}),
+    ...(active.request_identity_version !== undefined
+      ? { request_identity_version: active.request_identity_version }
+      : {}),
     envelope_path: active.envelope_path,
   };
 

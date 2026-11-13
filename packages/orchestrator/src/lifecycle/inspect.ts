@@ -6,7 +6,14 @@ import { loadRun } from "../run-store/index.js";
 import { inspectDelivery, WorkflowIntegrityError } from "../workflow/index.js";
 import type { DeliveryInspection } from "../workflow/types.js";
 import { toDeliveryState } from "./domain-state.js";
-import type { DecisionRecord, InspectOptions, RuntimeState } from "./types.js";
+import { isFinished } from "./control.js";
+import type {
+  DecisionRecord,
+  FinishCheck,
+  InspectOptions,
+  RunInspection,
+  RuntimeState,
+} from "./types.js";
 
 function lastDecisionReason(
   decisions: DecisionRecord[],
@@ -19,6 +26,8 @@ function lastDecisionReason(
   );
 }
 
+export function inspectState(o: InspectOptions & { field: string }): unknown;
+export function inspectState(o: InspectOptions): RunInspection;
 export function inspectState(o: InspectOptions): unknown {
   const root = path.resolve(o.receipt_root);
   const state = loadRun<RuntimeState>(root);
@@ -57,6 +66,10 @@ export function inspectState(o: InspectOptions): unknown {
       budgets,
       completed_stages_count: completed.length,
       blocking_reasons: reasons,
+      finish_check: {
+        status: "unavailable",
+        reasons: ["Legacy run: schema_version '1.0' is read-only."],
+      },
       last_updated: state.last_updated,
       ...(state.delivery_sequence
         ? { delivery_sequence: state.delivery_sequence }
@@ -103,6 +116,7 @@ export function inspectState(o: InspectOptions): unknown {
 
   // Domain delivery inspection
   let deliveryInspection: DeliveryInspection | null = null;
+  let domainIntegrityError: string | null = null;
   try {
     deliveryInspection = inspectDelivery({
       workflow: state.workflow_snapshot,
@@ -116,28 +130,38 @@ export function inspectState(o: InspectOptions): unknown {
         typeof err === "object" &&
         (err as { code?: string }).code === "WORKFLOW_INTEGRITY_ERROR")
     ) {
-      reasons.push(
-        `State integrity error: ${(err as Error).message ?? String(err)}`,
-      );
+      domainIntegrityError = `State integrity error: ${(err as Error).message ?? String(err)}`;
+      reasons.push(domainIntegrityError);
     } else {
       throw err;
     }
   }
 
-  if (deliveryInspection) {
-    if (
-      (deliveryInspection.budgets.delivery_attempts_used ?? 0) >=
-      (deliveryInspection.budgets.delivery_attempts_max ?? 3)
-    ) {
-      reasons.push(
-        `Delivery attempt budget exhausted: ${deliveryInspection.budgets.delivery_attempts_used}/${deliveryInspection.budgets.delivery_attempts_max} attempts used.`,
+  let finishCheck: FinishCheck;
+  if (isFinished(state)) {
+    finishCheck = { status: "finished", reasons: [] };
+  } else if (domainIntegrityError) {
+    finishCheck = { status: "unavailable", reasons: [domainIntegrityError] };
+  } else {
+    const finishGuards: string[] = [];
+    if (active) {
+      finishGuards.push(
+        `Cannot finish workflow: active dispatch '${active.dispatch_id}' is still in flight.`,
       );
     }
-
-    for (const reason of deliveryInspection.blockingReasons) {
-      if (!reasons.includes(reason)) {
-        reasons.push(reason);
-      }
+    if (state.protocol_error) {
+      finishGuards.push(
+        `Cannot finish workflow: active protocol error exists: ${state.protocol_error.message}`,
+      );
+    }
+    const allFinishReasons = [
+      ...finishGuards,
+      ...(deliveryInspection?.blockingReasons ?? []),
+    ];
+    if (allFinishReasons.length > 0) {
+      finishCheck = { status: "blocked", reasons: allFinishReasons };
+    } else {
+      finishCheck = { status: "ready", reasons: [] };
     }
   }
 
@@ -157,6 +181,7 @@ export function inspectState(o: InspectOptions): unknown {
     budgets: deliveryInspection ? deliveryInspection.budgets : null,
     completed_stages_count: completed.length,
     blocking_reasons: reasons,
+    finish_check: finishCheck,
     last_updated: state.last_updated,
     ...(state.delivery_sequence
       ? { delivery_sequence: state.delivery_sequence }

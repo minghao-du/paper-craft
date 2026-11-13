@@ -3,7 +3,7 @@
  * Validates command-line interface behavior, parameter parsing, and error reporting.
  */
 import { describe, expect, it } from 'vitest';
-import { initWorkflow } from '../src/lifecycle/index.js';
+import { initWorkflow, type InitOptions } from '../src/lifecycle/index.js';
 import {
   createTestDir,
   runLifecycleKernelCli,
@@ -37,32 +37,32 @@ describe('Lifecycle Kernel CLI Verification', () => {
         initWorkflow({
           receipt_root: env.dir,
           root_issue: '201',
-          plan: { tasks: [{ number: 202 }] } as any,
-        }),
+          plan: { tasks: [{ number: 202 }] },
+        } as unknown as InitOptions),
       ).toThrow(/Init option 'plan' has been removed and is no longer supported/);
 
       expect(() =>
         initWorkflow({
           receipt_root: env.dir,
           root_issue: '201',
-          child_issues: ['202'] as any,
-        }),
+          child_issues: ['202'],
+        } as unknown as InitOptions),
       ).toThrow(/Init option 'child_issues' has been removed and is no longer supported/);
 
       expect(() =>
         initWorkflow({
           receipt_root: env.dir,
           root_issue: '201',
-          current_issue: '202' as any,
-        }),
+          current_issue: '202',
+        } as unknown as InitOptions),
       ).toThrow(/Init option 'current_issue' has been removed and is no longer supported/);
 
       expect(() =>
         initWorkflow({
           receipt_root: env.dir,
           root_issue: '201',
-          initial_stage: 'stage_2_work' as any,
-        }),
+          initial_stage: 'stage_2_work',
+        } as unknown as InitOptions),
       ).toThrow(/Init option 'initial_stage' has been removed and is no longer supported/);
     } finally {
       env.cleanup();

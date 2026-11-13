@@ -13,6 +13,7 @@ import {
   initWorkflow,
   inspectState,
   resolveDecision,
+  type ResolveOptions,
 } from '../src/lifecycle/index.js';
 import {
   getPendingCommitPath,
@@ -72,7 +73,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       });
       expect(completed.execution_status).toBe('succeeded');
 
-      const inspected = inspectState({ receipt_root: env.dir }) as Record<string, unknown>;
+      const inspected = inspectState({ receipt_root: env.dir });
       expect(inspected.active_dispatch).toBeNull();
       expect(inspected.completed_stages_count).toBe(1);
       // Verify stage did not auto-advance before resolve
@@ -494,7 +495,9 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       expect(checkExceeded.status).toBe(0);
       const checkExceededData = JSON.parse(checkExceeded.stdout);
       expect(checkExceededData.budgets.delivery_attempts_used).toBe(3);
-      expect(checkExceededData.blocking_reasons).toEqual(
+      expect(checkExceededData.budgets.delivery_attempts_max).toBe(3);
+      expect(checkExceededData.finish_check.status).toBe('blocked');
+      expect(checkExceededData.blocking_reasons).not.toEqual(
         expect.arrayContaining([
           expect.stringMatching(/delivery attempt budget exhausted/i),
         ]),
@@ -664,4 +667,171 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       env.cleanup();
     }
   }, 20000);
+
+  it('L4: nonempty stage scope is inherited when omitted, cleared when empty, and rejected when null', () => {
+    const env = createTestDir('pc-l4-scope-');
+    try {
+      const scopedWorkflowPath = path.join(env.dir, 'scoped-workflow.json');
+      fs.writeFileSync(
+        scopedWorkflowPath,
+        JSON.stringify({
+          name: 'scoped-workflow',
+          completion_policy: 'basic',
+          initial_stage: 'scoped_stage',
+          stages: [
+            {
+              id: 'scoped_stage',
+              logical_task: 'scoped_stage',
+              scope: 'packages/scoped',
+              provider: { type: 'skill', target: 'pc-issue-work', args: [] },
+            },
+          ],
+        }),
+      );
+
+      initWorkflow({
+        receipt_root: env.dir,
+        root_issue: 111,
+        workflow: scopedWorkflowPath,
+      });
+
+      // 1. Omitted scope -> inherits stage scope 'packages/scoped'
+      const dispatch1 = dispatchTask({
+        receipt_root: env.dir,
+        request_id: 'req-omitted-scope',
+        stage: 'scoped_stage',
+        objective: 'Test omitted scope',
+        workdir: env.dir,
+      });
+      const env1 = JSON.parse(fs.readFileSync(dispatch1.envelope_path, 'utf8'));
+      expect(env1.inputs.scope).toBe('packages/scoped');
+
+      // Complete dispatch1 so we can test next dispatch
+      fs.writeFileSync(dispatch1.receipt_path, '# Receipt 1');
+      completeDispatch({
+        receipt_root: env.dir,
+        dispatch_id: dispatch1.dispatch_id,
+        report: {
+          execution_status: 'succeeded',
+          result: { outcome: 'done' },
+          receipt_path: dispatch1.receipt_path,
+          summary: 'Done',
+        },
+      });
+
+      // 2. Explicit scope: "" -> explicitly clears scope to ""
+      const dispatch2 = dispatchTask({
+        receipt_root: env.dir,
+        request_id: 'req-cleared-scope',
+        stage: 'scoped_stage',
+        objective: 'Test cleared scope',
+        scope: '',
+        workdir: env.dir,
+      });
+      const env2 = JSON.parse(fs.readFileSync(dispatch2.envelope_path, 'utf8'));
+      expect(env2.inputs.scope).toBe('');
+
+      // 3. Explicit scope: null -> invalid new request rejected at boundary
+      expect(() =>
+        dispatchTask({
+          receipt_root: env.dir,
+          request_id: 'req-null-scope',
+          stage: 'scoped_stage',
+          objective: 'Test null scope',
+          scope: null as unknown as string,
+          workdir: env.dir,
+        }),
+      ).toThrow(/scope/i);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('L5: replaying recorded request matches before pause check and supports historical records', () => {
+    const env = createTestDir('pc-l5-replay-');
+    try {
+      initWorkflow({ receipt_root: env.dir, root_issue: 112 });
+      const req = {
+        receipt_root: env.dir,
+        request_id: 'req-active-replay',
+        stage: 'stage_1_plan',
+        objective: 'Replay test',
+        workdir: env.dir,
+      };
+
+      const first = dispatchTask(req);
+      expect(first.launch_granted).toBe(true);
+
+      // Now pause the workflow
+      resolveDecision({
+        receipt_root: env.dir,
+        decision: 'wait_user',
+        reason: 'Testing pause replay',
+      });
+
+      // Replaying the active request while paused must succeed without launch grant and NOT throw pause error
+      const replay = dispatchTask(req);
+      expect(replay.dispatch_id).toBe(first.dispatch_id);
+      expect(replay.launch_granted).toBe(false);
+
+      // A genuinely new request while paused MUST be rejected by active dispatch check
+      expect(() =>
+        dispatchTask({
+          receipt_root: env.dir,
+          request_id: 'req-genuinely-new',
+          stage: 'stage_1_plan',
+          objective: 'Blocked by pause',
+          workdir: env.dir,
+        }),
+      ).toThrow(/Active dispatch/i);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('L6 & L7: resolve rejects unknown options and inspect provides typed FinishCheck', () => {
+    const env = createTestDir('pc-l6-l7-');
+    try {
+      initWorkflow({ receipt_root: env.dir, root_issue: 113 });
+
+      // Unknown resolve field rejected
+      expect(() =>
+        resolveDecision({
+          receipt_root: env.dir,
+          decision: 'continue',
+          reason: 'Valid reason',
+          unknown_option: true,
+        } as unknown as ResolveOptions),
+      ).toThrow(/Unknown resolve option/i);
+
+      // Non-array options rejected
+      expect(() =>
+        resolveDecision({
+          receipt_root: env.dir,
+          decision: 'wait_user',
+          reason: 'Valid reason',
+          options: 'not-an-array' as unknown as string[],
+        }),
+      ).toThrow(/Field 'options' must be an array of strings/i);
+
+      // Non-boolean complete_sequence rejected
+      expect(() =>
+        resolveDecision({
+          receipt_root: env.dir,
+          decision: 'continue',
+          reason: 'Valid reason',
+          complete_sequence: 'true' as unknown as boolean,
+        }),
+      ).toThrow(/Field 'complete_sequence' must be a boolean/i);
+
+      // InspectState returns typed RunInspection
+      const inspection = inspectState({ receipt_root: env.dir });
+      expect(inspection.finish_check).toBeDefined();
+      expect(inspection.finish_check.status).toBe('blocked');
+      expect(inspection.finish_check.reasons.length).toBeGreaterThan(0);
+      expect(inspection.blocking_reasons).toEqual([]); // no run-level blockers initially
+    } finally {
+      env.cleanup();
+    }
+  });
 });

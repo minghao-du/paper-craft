@@ -14,10 +14,13 @@ import {
   atomicWriteJson,
   findPrimaryCheckout,
   getConfigFilePath,
+  loadWorkspaceConfig,
   parseRepoFromUrl,
   prepareWorkspaceConfigInitialization,
   resolveWorkspaceConfig,
   saveWorkspaceConfigInitialization,
+  type LoadWorkspaceConfigOptions,
+  type SavedWorkspaceConfig,
 } from '../src/index.js';
 
 const require = createRequire(import.meta.url);
@@ -240,6 +243,85 @@ describe('workspace-config unit and CLI tests', () => {
       expect(resolved.base_remote).toBe('origin');
       expect(resolved.base_branch).toBe('main');
       expect(resolved.worktree_container).toBe(DEFAULT_WORKTREE_CONTAINER);
+    });
+  });
+
+  describe('loadWorkspaceConfig contract', () => {
+    it('returns null when default configuration file is absent in primary checkout', () => {
+      const { repoDir } = setupStandardRepo('load-missing-default');
+      const loaded = loadWorkspaceConfig({ repoDir });
+      expect(loaded).toBeNull();
+    });
+
+    it('resolves primary checkout from linked worktree and returns saved data and paths', () => {
+      const { repoDir } = setupStandardRepo('load-worktree');
+      const linkedDir = path.join(tempBaseDir, 'linked-for-load');
+      git(repoDir, 'worktree', 'add', linkedDir, '-b', 'feature-load');
+
+      const configPath = getConfigFilePath(repoDir);
+      const rawData = {
+        schema_version: SCHEMA_VERSION,
+        delivery_target: 'acme/load-worktree',
+        base_remote: 'origin',
+        push_remote: 'origin',
+        base_branch: 'main',
+        worktree_container: '../custom-worktrees',
+      };
+      atomicWriteJson(configPath, rawData);
+
+      const loaded = loadWorkspaceConfig({ repoDir: linkedDir });
+      expect(loaded).not.toBeNull();
+      expect(loaded!.primaryCheckout).toBe(repoDir);
+      expect(loaded!.configPath).toBe(configPath);
+      expect(loaded!.data).toEqual(rawData);
+    });
+
+    it('uses explicit configPath relative to repoDir and returns raw data without inserting defaults', () => {
+      const { repoDir } = setupStandardRepo('load-explicit');
+      const customRelPath = 'custom/nested/config.json';
+      const customAbsPath = path.join(repoDir, customRelPath);
+      // Only write partial fields; verify no defaults are injected
+      const partialData = {
+        delivery_target: 'acme/partial-target',
+        custom_key: 12345,
+      };
+      atomicWriteJson(customAbsPath, partialData);
+
+      const loaded = loadWorkspaceConfig({ repoDir, configPath: customRelPath });
+      expect(loaded).not.toBeNull();
+      expect(loaded!.primaryCheckout).toBe(repoDir);
+      expect(loaded!.configPath).toBe(customAbsPath);
+      expect(loaded!.data).toEqual(partialData);
+      expect(loaded!.data.workflow).toBeUndefined();
+      expect(loaded!.data.worktree_container).toBeUndefined();
+    });
+
+    it('throws error identifying requested file when explicit configPath does not exist', () => {
+      const { repoDir } = setupStandardRepo('load-missing-explicit');
+      const missingRel = 'missing/workspace.json';
+      const expectedAbs = path.resolve(repoDir, missingRel);
+
+      expect(() => loadWorkspaceConfig({ repoDir, configPath: missingRel })).toThrow(
+        new RegExp(`Specified workspace configuration file does not exist: ${expectedAbs}`),
+      );
+    });
+
+    it('throws structural read error on corrupted JSON or non-object root', () => {
+      const { repoDir } = setupStandardRepo('load-invalid-json');
+      const configPath = getConfigFilePath(repoDir);
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+
+      // Malformed JSON
+      fs.writeFileSync(configPath, '{not valid json');
+      expect(() => loadWorkspaceConfig({ repoDir })).toThrow(/Malformed JSON in workspace configuration/);
+
+      // Non-object root (JSON array)
+      fs.writeFileSync(configPath, JSON.stringify([1, 2, 3]));
+      expect(() => loadWorkspaceConfig({ repoDir })).toThrow(/must be a JSON object/);
+
+      // Non-object root (primitive string)
+      fs.writeFileSync(configPath, JSON.stringify('just a string'));
+      expect(() => loadWorkspaceConfig({ repoDir })).toThrow(/must be a JSON object/);
     });
   });
 

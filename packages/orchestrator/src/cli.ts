@@ -9,9 +9,8 @@ import {
   completeDispatch,
   resolveDecision,
   inspectState,
-  parseDispatchRequest,
-  type NormalizedDispatchRequest,
   type InitOptions,
+  type DispatchOptions,
   type CompleteOptions,
   type ResolveOptions,
   type InspectOptions,
@@ -20,14 +19,18 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CliOptions = Record<string, any>;
 
-export function loadDispatchRequest(
-  filename: string,
-): NormalizedDispatchRequest {
+export function loadDispatchRequest(filename: string): unknown {
   if (!path.isAbsolute(filename)) {
     throw new Error(`Request path must be absolute, received '${filename}'`);
   }
   const content = fs.readFileSync(filename, "utf8");
-  return parseDispatchRequest(content);
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Invalid dispatch request JSON: ${String(error)}`, {
+      cause: error,
+    });
+  }
 }
 
 export function parseReportInput(raw: string): unknown {
@@ -154,7 +157,30 @@ export async function main(
     let result: unknown;
     if (command === "init") {
       if (!o.root_issue) throw new Error("--root-issue is required");
-      result = initWorkflow({ ...o, root_issue: o.root_issue } as InitOptions);
+      const initOpts: InitOptions = {
+        root_issue: o.root_issue,
+        ...(o.receipt_root ? { receipt_root: o.receipt_root } : {}),
+        ...(o.repo_dir ? { repo_dir: o.repo_dir } : {}),
+        ...(o.workflow ? { workflow: o.workflow } : {}),
+        ...(o.force !== undefined ? { force: Boolean(o.force) } : {}),
+        ...(o.require_config !== undefined
+          ? { require_config: Boolean(o.require_config) }
+          : {}),
+        ...(o.delivery_attempts_max !== undefined
+          ? { delivery_attempts_max: Number(o.delivery_attempts_max) }
+          : {}),
+        ...(o.replans_max !== undefined
+          ? { replans_max: Number(o.replans_max) }
+          : {}),
+        ...(o.delivery_target ? { delivery_target: o.delivery_target } : {}),
+        ...(o.base_remote ? { base_remote: o.base_remote } : {}),
+        ...(o.push_remote ? { push_remote: o.push_remote } : {}),
+        ...(o.base_branch ? { base_branch: o.base_branch } : {}),
+        ...(o.worktree_container
+          ? { worktree_container: o.worktree_container }
+          : {}),
+      };
+      result = initWorkflow(initOpts);
     } else if (command === "dispatch") {
       if (!path.isAbsolute(o.receipt_root)) {
         throw new Error(
@@ -162,10 +188,18 @@ export async function main(
         );
       }
       if (!o.request) throw new Error("--request is required");
+      const decodedRequest = loadDispatchRequest(o.request);
+      if (
+        !decodedRequest ||
+        typeof decodedRequest !== "object" ||
+        Array.isArray(decodedRequest)
+      ) {
+        throw new Error("Dispatch request must be a JSON object");
+      }
       result = dispatchTask({
         receipt_root: o.receipt_root,
-        ...loadDispatchRequest(o.request),
-      });
+        ...(decodedRequest as Record<string, unknown>),
+      } as DispatchOptions);
     } else if (command === "complete") {
       if (!o.dispatch_id) {
         throw new Error("--dispatch-id is required for complete");

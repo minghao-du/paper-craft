@@ -28,7 +28,7 @@ export interface NormalizedDispatchRequest {
   workdir?: string;
   branch?: string | null;
   commit?: string | null;
-  scope: string;
+  scope?: string;
   parameters: Record<string, unknown>;
   receipt_template?: string;
   attempt_intent: "same" | "new";
@@ -50,6 +50,7 @@ export interface Dispatch {
   // Older runs have no request identity or independently stored resolved provider.
   request?: NormalizedDispatchRequest;
   provider?: SkillProvider;
+  request_identity_version?: number;
   [key: string]: unknown;
 }
 
@@ -73,6 +74,7 @@ export interface Completion {
   request?: NormalizedDispatchRequest;
   provider?: SkillProvider;
   envelope_path?: string;
+  request_identity_version?: number;
   [key: string]: unknown;
 }
 
@@ -142,7 +144,6 @@ export interface InitOptions {
   push_remote?: string;
   base_branch?: string;
   worktree_container?: string;
-  [key: string]: unknown;
 }
 
 export interface DispatchOptions {
@@ -155,9 +156,6 @@ export interface DispatchOptions {
     target: string;
     args?: string[];
   };
-  provider_type?: "skill";
-  provider_target?: string;
-  provider_args?: string[];
   acceptance_criteria?: string[];
   predecessor_receipts?: string[];
   workdir?: string;
@@ -168,7 +166,6 @@ export interface DispatchOptions {
   commit?: string | null;
   receipt_template?: string;
   rework_issue?: string | number | null;
-  [key: string]: unknown;
 }
 
 interface DispatchResultFields {
@@ -205,12 +202,37 @@ export interface ResolveOptions {
   /** Dispatch id of the completed pc-pr-land record that proves mark_landed. */
   landing_dispatch_id?: string | null;
   complete_sequence?: boolean;
-  [key: string]: unknown;
 }
 
 export interface InspectOptions {
   receipt_root: string;
   field?: string;
+}
+
+export type FinishCheck =
+  | { status: "ready"; reasons: [] }
+  | { status: "blocked"; reasons: string[] }
+  | { status: "unavailable"; reasons: string[] }
+  | { status: "finished"; reasons: [] };
+
+export interface RunInspection {
+  schema_version: string;
+  workflow: string;
+  root_issue_id: string;
+  current_issue_id: string;
+  current_stage: string;
+  stage_status: string;
+  orchestrator_decision: string | null;
+  active_dispatch: Dispatch | null;
+  last_decision: DecisionRecord | null;
+  protocol_error: ProtocolError | null;
+  budgets: WorkflowBudgets | null;
+  completed_stages_count: number;
+  blocking_reasons: string[];
+  finish_check: FinishCheck;
+  last_updated: string;
+  delivery_sequence?: DeliverySequence;
+  legacy?: boolean;
 }
 
 export interface EnvelopeCreateOptions {

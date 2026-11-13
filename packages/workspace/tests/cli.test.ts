@@ -55,4 +55,40 @@ describe('workspace CLI strict argument parsing', () => {
     expect(logSpy).toHaveBeenCalled();
     expect(fs.existsSync(receipt)).toBe(false);
   });
+
+  it('cleanup CLI with malformed candidate flag exits non-zero with no side effects', async () => {
+    const envelopePath = path.join(tmp, 'bad-cleanup-envelope.json');
+    const receiptPath = path.join(tmp, 'receipt.md');
+    const envelope = {
+      schema_version: '1.0',
+      task: { logical_stage: 'workspace_cleanup', root_issue_id: '99' },
+      environment: { working_directory: tmp },
+      inputs: {
+        parameters: {
+          candidates: [
+            {
+              branch: 'issue-99',
+              created: 'false',
+            },
+          ],
+        },
+      },
+      contract: { receipt_path: receiptPath },
+    };
+    fs.writeFileSync(envelopePath, JSON.stringify(envelope));
+
+    const code = await main([
+      'cleanup',
+      '--input-envelope',
+      envelopePath,
+      '--repo-dir',
+      tmp,
+      '--receipt-path',
+      receiptPath,
+    ]);
+
+    expect(code).not.toBe(0);
+    expect(errSpy).toHaveBeenCalled();
+    expect(fs.existsSync(receiptPath)).toBe(false);
+  });
 });

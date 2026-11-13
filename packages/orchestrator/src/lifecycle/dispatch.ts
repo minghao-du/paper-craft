@@ -13,30 +13,32 @@ import {
   assertMatchesPendingStageDecision,
   isFinished,
 } from "./control.js";
-import { parseDispatchRequest } from "./requests.js";
-import type { DispatchOptions, DispatchResult, RuntimeState } from "./types.js";
+import {
+  parseDispatchRequest,
+  parseHistoricalDispatchRequest,
+} from "./requests.js";
+import type {
+  Dispatch,
+  DispatchOptions,
+  DispatchResult,
+  NormalizedDispatchRequest,
+  RuntimeState,
+} from "./types.js";
 
 export function dispatchTask(options: DispatchOptions): DispatchResult {
-  const {
-    receipt_root,
-    provider_type,
-    provider_target,
-    provider_args,
-    ...input
-  } = options;
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("Dispatch options must be a JSON object");
+  }
+  const { receipt_root, ...requestInput } = options;
+  if (typeof receipt_root !== "string" || !receipt_root.trim()) {
+    throw new Error("--receipt-root is required");
+  }
   const root = path.resolve(receipt_root);
-  const request = parseDispatchRequest({
-    ...input,
-    provider:
-      input.provider ??
-      (provider_target
-        ? {
-            type: provider_type ?? "skill",
-            target: provider_target,
-            args: provider_args,
-          }
-        : undefined),
-  });
+
+  const rawRequestId = (requestInput as Record<string, unknown>).request_id;
+  const requestId =
+    typeof rawRequestId === "string" ? rawRequestId.trim() : undefined;
+
   const state = loadRun<RuntimeState>(root);
   if (state.schema_version === "1.0") {
     throw new Error(
@@ -48,47 +50,67 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
       `Unsupported schema_version '${state.schema_version}'. This version only supports '1.1'.`,
     );
   }
+
   const active = state.active_dispatch;
-  const activeReplay = active?.request?.request_id === request.request_id;
-  const completed = activeReplay
-    ? undefined
-    : (state.completed_stages ?? []).find(
-        (entry) => entry.request?.request_id === request.request_id,
-      );
+  const activeReplay =
+    requestId !== undefined &&
+    requestId !== "" &&
+    active?.request?.request_id === requestId;
+  const completed =
+    activeReplay || requestId === undefined || requestId === ""
+      ? undefined
+      : (state.completed_stages ?? []).find(
+          (entry) => entry.request?.request_id === requestId,
+        );
   const replay = activeReplay ? active : completed;
 
-  // Resolve identity before applying current admission rules or dynamic defaults.
-  if (replay && !isDeepStrictEqual(replay.request, request)) {
-    throw new Error(
-      `Conflicting dispatch request: request_id '${request.request_id}' is already associated with different content.`,
-    );
-  }
-  if (completed) {
-    if (!completed.provider || !completed.envelope_path) {
+  let request: NormalizedDispatchRequest;
+
+  // 1-3. If matching request_id exists, resolve identity before applying admission rules or dynamic defaults.
+  if (replay) {
+    const idVersion = replay.request_identity_version;
+    if (idVersion === 2) {
+      request = parseDispatchRequest(requestInput);
+    } else if (idVersion === undefined || idVersion === 1) {
+      request = parseHistoricalDispatchRequest(requestInput);
+    } else {
       throw new Error(
-        `Completed dispatch '${completed.dispatch_id}' is missing replay metadata.`,
+        `Unrecognized request_identity_version '${idVersion}'.`,
       );
     }
-    return {
-      dispatch_id: completed.dispatch_id,
-      step_index: completed.step_index,
-      attempt: completed.attempt,
-      stage: completed.stage,
-      status: "completed",
-      launch_granted: false,
-      provider: completed.provider,
-      envelope_path: completed.envelope_path,
-      receipt_path: completed.receipt_path,
-      completion: completed,
-    };
-  }
-  if (active) {
-    if (active.status === "prepared") {
+
+    if (!isDeepStrictEqual(replay.request, request)) {
       throw new Error(
-        `Cannot dispatch task: legacy dispatch '${active.dispatch_id}' is prepared without a launch grant. Finish it with the previous version or verify it was never launched and start a new run in a new receipt root.`,
+        `Conflicting dispatch request: request_id '${request.request_id}' is already associated with different content.`,
       );
     }
-    if (activeReplay) {
+
+    if (completed) {
+      if (!completed.provider || !completed.envelope_path) {
+        throw new Error(
+          `Completed dispatch '${completed.dispatch_id}' is missing replay metadata.`,
+        );
+      }
+      return {
+        dispatch_id: completed.dispatch_id,
+        step_index: completed.step_index,
+        attempt: completed.attempt,
+        stage: completed.stage,
+        status: "completed",
+        launch_granted: false,
+        provider: completed.provider,
+        envelope_path: completed.envelope_path,
+        receipt_path: completed.receipt_path,
+        completion: completed,
+      };
+    }
+
+    if (active) {
+      if (active.status === "prepared") {
+        throw new Error(
+          `Cannot dispatch task: legacy dispatch '${active.dispatch_id}' is prepared without a launch grant. Finish it with the previous version or verify it was never launched and start a new run in a new receipt root.`,
+        );
+      }
       if (!active.provider) {
         throw new Error(
           `Active dispatch '${active.dispatch_id}' is missing replay metadata.`,
@@ -106,6 +128,13 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
         receipt_path: active.receipt_path,
       };
     }
+  }
+
+  // 4. For an unmatched ID, validate and normalize using the strict new-request contract.
+  request = parseDispatchRequest(requestInput);
+
+  // 5. Only for a genuinely new request, check run admission and evaluate dynamic defaults/domain rules.
+  if (active) {
     throw new Error(
       `Cannot dispatch task: Active dispatch '${active.dispatch_id}' already has launch authorization. Verify the original execution and submit its completion report with 'complete'.`,
     );
@@ -278,6 +307,7 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
       receipt_path: receiptPath,
       provider: task.provider,
       request,
+      request_identity_version: 2,
     },
     last_updated: new Date().toISOString(),
   };

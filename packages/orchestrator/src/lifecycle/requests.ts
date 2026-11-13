@@ -68,18 +68,31 @@ export function parseDispatchRequest(raw: unknown): NormalizedDispatchRequest {
     }
   }
 
-  for (const key of [
-    "workdir",
-    "scope",
-    "branch",
-    "commit",
-    "receipt_template",
-  ] as const) {
+  for (const key of ["workdir", "receipt_template"] as const) {
     if (key in record && record[key] !== undefined && record[key] !== null) {
       const val = record[key];
-      if (typeof val !== "string" || (key !== "scope" && !val.trim())) {
+      if (typeof val !== "string" || !val.trim()) {
         throw new Error(
-          `Request '${key}' must be ${key === "scope" ? "a string" : "a non-empty string"}, received ${JSON.stringify(val)}`,
+          `Request '${key}' must be a non-empty string, received ${JSON.stringify(val)}`,
+        );
+      }
+    }
+  }
+
+  if ("scope" in record && record.scope !== undefined) {
+    if (record.scope === null || typeof record.scope !== "string") {
+      throw new Error(
+        `Request 'scope' must be a string, received ${JSON.stringify(record.scope)}`,
+      );
+    }
+  }
+
+  for (const key of ["branch", "commit"] as const) {
+    if (key in record && record[key] !== undefined && record[key] !== null) {
+      const val = record[key];
+      if (typeof val !== "string" || !val.trim()) {
+        throw new Error(
+          `Request '${key}' must be a non-empty string, received ${JSON.stringify(val)}`,
         );
       }
     }
@@ -216,6 +229,114 @@ export function parseDispatchRequest(raw: unknown): NormalizedDispatchRequest {
     ...(workdir !== undefined ? { workdir } : {}),
     ...(branch !== undefined ? { branch } : {}),
     ...(commit !== undefined ? { commit } : {}),
+    ...(record.scope !== undefined ? { scope: record.scope as string } : {}),
+    parameters,
+    ...(receiptTemplate !== undefined
+      ? { receipt_template: receiptTemplate }
+      : {}),
+    attempt_intent: (record.attempt_intent as "same" | "new") ?? "same",
+    rework_issue:
+      record.rework_issue != null ? String(record.rework_issue).trim() : null,
+  };
+}
+
+/**
+ * Historical request normalization for comparing replay requests with records
+ * created by older code (request_identity_version undefined or 1).
+ * Preserves legacy omission-to-empty-string and flat provider fields.
+ */
+export function parseHistoricalDispatchRequest(
+  raw: unknown,
+): NormalizedDispatchRequest {
+  let parsed: unknown = raw;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (error) {
+      throw new Error(`Invalid dispatch request JSON: ${String(error)}`, {
+        cause: error,
+      });
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Dispatch request must be a JSON object");
+  }
+
+  const record = parsed as Record<string, unknown>;
+
+  for (const key of ["request_id", "stage", "objective"]) {
+    if (!(key in record)) {
+      throw new Error(`Dispatch request missing required field '${key}'`);
+    }
+  }
+
+  for (const key of ["request_id", "stage", "objective"] as const) {
+    const val = record[key];
+    if (typeof val !== "string" || !val.trim()) {
+      throw new Error(
+        `Request '${key}' must be a non-empty string, received ${JSON.stringify(val)}`,
+      );
+    }
+  }
+
+  let parsedProvider:
+    | { type: "skill"; target: string; args: string[] }
+    | undefined = undefined;
+
+  const providerTarget =
+    (record.provider as { target?: string } | undefined)?.target ??
+    (record.provider_target as string | undefined);
+
+  if (record.provider != null) {
+    const p = record.provider as Record<string, unknown>;
+    parsedProvider = {
+      type: "skill",
+      target: String(p.target ?? "").trim(),
+      args: Array.isArray(p.args) ? (p.args as string[]) : [],
+    };
+  } else if (providerTarget) {
+    parsedProvider = {
+      type: (record.provider_type as "skill") ?? "skill",
+      target: String(providerTarget).trim(),
+      args: Array.isArray(record.provider_args)
+        ? (record.provider_args as string[])
+        : [],
+    };
+  }
+
+  const parameters: Record<string, unknown> = record.parameters
+    ? JSON.parse(
+        JSON.stringify({ ...(record.parameters as Record<string, unknown>) }),
+      )
+    : {};
+  const workdir = (record.workdir as string | null | undefined)?.trim();
+  const receiptTemplate = (
+    record.receipt_template as string | null | undefined
+  )?.trim();
+  const branch =
+    record.branch === null
+      ? null
+      : (record.branch as string | undefined)?.trim();
+  const commit =
+    record.commit === null
+      ? null
+      : (record.commit as string | undefined)?.trim();
+
+  return {
+    request_id: (record.request_id as string).trim(),
+    stage: (record.stage as string).trim(),
+    objective: (record.objective as string).trim(),
+    ...(parsedProvider ? { provider: parsedProvider } : {}),
+    acceptance_criteria: [
+      ...((record.acceptance_criteria as string[] | undefined) ?? []),
+    ],
+    predecessor_receipts: [
+      ...((record.predecessor_receipts as string[] | undefined) ?? []),
+    ],
+    ...(workdir !== undefined ? { workdir } : {}),
+    ...(branch !== undefined ? { branch } : {}),
+    ...(commit !== undefined ? { commit } : {}),
     scope: (record.scope as string | null | undefined) ?? "",
     parameters,
     ...(receiptTemplate !== undefined
@@ -265,6 +386,24 @@ const FORBIDDEN_PLAN_ACCEPTANCE_KEYS = [
   "child-issue",
 ] as const;
 
+const RESOLVE_ALLOWED_FIELDS = [
+  "receipt_root",
+  "decision",
+  "reason",
+  "options",
+  "next_stage",
+  "plan_dispatch_id",
+  "plan-dispatch-id",
+  "current_issue",
+  "current-issue",
+  "mark_landed",
+  "mark-landed",
+  "landing_dispatch_id",
+  "landing-dispatch-id",
+  "complete_sequence",
+  "complete-sequence",
+];
+
 export function parseResolveOptions(
   raw: Record<string, unknown>,
 ): ResolveOptions {
@@ -278,6 +417,15 @@ export function parseResolveOptions(
         `Resolve option '${key}' has been removed and is no longer supported.`,
       );
     }
+  }
+
+  const unknown = Object.keys(raw).filter(
+    (k) => !RESOLVE_ALLOWED_FIELDS.includes(k),
+  );
+  if (unknown.length) {
+    throw new Error(
+      `Unknown resolve option '${unknown[0]}'.`,
+    );
   }
 
   const decision = raw.decision;
@@ -295,6 +443,22 @@ export function parseResolveOptions(
   const reason = raw.reason;
   if (typeof reason !== "string" || !reason.trim()) {
     throw new Error("Field 'reason' must be a non-empty string.");
+  }
+
+  if ("options" in raw && raw.options !== undefined) {
+    if (
+      !Array.isArray(raw.options) ||
+      raw.options.some((opt) => typeof opt !== "string")
+    ) {
+      throw new Error("Field 'options' must be an array of strings.");
+    }
+  }
+
+  const completeSequence = raw.complete_sequence ?? raw["complete-sequence"];
+  if (completeSequence !== undefined) {
+    if (typeof completeSequence !== "boolean") {
+      throw new Error("Field 'complete_sequence' must be a boolean.");
+    }
   }
 
   let planDispatchId: string | undefined = undefined;
@@ -337,6 +501,21 @@ export function parseResolveOptions(
     }
   }
 
+  const markLanded = raw.mark_landed ?? raw["mark-landed"];
+  const landingDispatchId =
+    raw.landing_dispatch_id ?? raw["landing-dispatch-id"];
+  const hasMarkLanded =
+    markLanded != null && String(markLanded).trim() !== "";
+  const hasLandingDispatchId =
+    landingDispatchId != null && String(landingDispatchId).trim() !== "";
+  if (hasMarkLanded !== hasLandingDispatchId) {
+    throw new Error(
+      "mark_landed and landing_dispatch_id must be provided together.",
+    );
+  }
+
+  const currentIssue = raw.current_issue ?? raw["current-issue"];
+
   return {
     receipt_root:
       typeof raw.receipt_root === "string" ? raw.receipt_root.trim() : "",
@@ -347,17 +526,17 @@ export function parseResolveOptions(
       : {}),
     ...(planDispatchId ? { plan_dispatch_id: planDispatchId } : {}),
     ...(Array.isArray(raw.options) ? { options: raw.options as string[] } : {}),
-    ...(raw.current_issue != null
-      ? { current_issue: raw.current_issue as string | number }
+    ...(currentIssue != null
+      ? { current_issue: currentIssue as string | number }
       : {}),
-    ...(raw.mark_landed != null
-      ? { mark_landed: raw.mark_landed as string | number }
+    ...(markLanded != null
+      ? { mark_landed: markLanded as string | number }
       : {}),
-    ...(raw.landing_dispatch_id != null
-      ? { landing_dispatch_id: String(raw.landing_dispatch_id).trim() }
+    ...(landingDispatchId != null
+      ? { landing_dispatch_id: String(landingDispatchId).trim() }
       : {}),
-    ...(typeof raw.complete_sequence === "boolean"
-      ? { complete_sequence: raw.complete_sequence }
+    ...(typeof completeSequence === "boolean"
+      ? { complete_sequence: completeSequence }
       : {}),
   };
 }

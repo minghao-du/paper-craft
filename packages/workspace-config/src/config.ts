@@ -42,6 +42,17 @@ export interface ResolveWorkspaceConfigOptions {
   overrides?: WorkspaceConfigOverrides;
 }
 
+export interface LoadWorkspaceConfigOptions {
+  repoDir: string;
+  configPath?: string;
+}
+
+export interface SavedWorkspaceConfig {
+  primaryCheckout: string;
+  configPath: string;
+  data: Record<string, unknown>;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -182,21 +193,88 @@ export function probeDefaultBranch(repoRoot: string, remote = 'origin'): string 
   return null;
 }
 
-export function loadWorkspaceConfig(pathOrRepoRoot: string): Record<string, unknown> | null {
-  const configPath = pathOrRepoRoot.endsWith('.json') || (fs.existsSync(pathOrRepoRoot) && fs.statSync(pathOrRepoRoot).isFile())
-    ? pathOrRepoRoot
-    : getConfigFilePath(pathOrRepoRoot);
-  if (!fs.existsSync(configPath)) return null;
+interface InternalLoadedConfig {
+  primaryCheckout: string;
+  configPath: string;
+  data: Record<string, unknown> | null;
+}
+
+function loadWorkspaceConfigHelper(
+  options: LoadWorkspaceConfigOptions,
+): InternalLoadedConfig {
+  if (!options || typeof options !== 'object' || typeof options.repoDir !== 'string') {
+    throw new Error('loadWorkspaceConfig requires an options object with repoDir');
+  }
+  const sourceCheckout = resolvePath(options.repoDir);
+  const primaryCheckout = findPrimaryCheckout(sourceCheckout);
+
+  let resolvedConfigPath: string;
+  let isExplicit = false;
+
+  if (options.configPath !== undefined) {
+    isExplicit = true;
+    resolvedConfigPath = path.isAbsolute(options.configPath)
+      ? resolvePath(options.configPath)
+      : resolvePath(path.resolve(sourceCheckout, options.configPath));
+    if (!fs.existsSync(resolvedConfigPath)) {
+      throw new Error(`Specified workspace configuration file does not exist: ${resolvedConfigPath}`);
+    }
+  } else {
+    resolvedConfigPath = getConfigFilePath(primaryCheckout);
+    if (!fs.existsSync(resolvedConfigPath)) {
+      return {
+        primaryCheckout,
+        configPath: resolvedConfigPath,
+        data: null,
+      };
+    }
+  }
+
+  let rawContent: string;
+  try {
+    rawContent = fs.readFileSync(resolvedConfigPath, 'utf8');
+  } catch (error) {
+    throw new Error(
+      `Cannot read workspace configuration at ${resolvedConfigPath}: ${String(error)}. Please run 'pc-workspace-config' to reconfigure.`,
+      { cause: error },
+    );
+  }
+
   let data: unknown;
   try {
-    data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    data = JSON.parse(rawContent);
   } catch (error) {
-    throw new Error(`Malformed JSON in workspace configuration at ${configPath}: ${String(error)}. Please run 'pc-workspace-config' to reconfigure.`, { cause: error });
+    throw new Error(
+      `Malformed JSON in workspace configuration at ${resolvedConfigPath}: ${String(error)}. Please run 'pc-workspace-config' to reconfigure.`,
+      { cause: error },
+    );
   }
+
   if (!isRecord(data)) {
-    throw new Error(`Workspace configuration at ${configPath} must be a JSON object. Please run 'pc-workspace-config' to reconfigure.`);
+    throw new Error(
+      `Workspace configuration at ${resolvedConfigPath} must be a JSON object. Please run 'pc-workspace-config' to reconfigure.`,
+    );
   }
-  return data;
+
+  return {
+    primaryCheckout,
+    configPath: resolvedConfigPath,
+    data,
+  };
+}
+
+export function loadWorkspaceConfig(
+  options: LoadWorkspaceConfigOptions,
+): SavedWorkspaceConfig | null {
+  const result = loadWorkspaceConfigHelper(options);
+  if (!result.data) {
+    return null;
+  }
+  return {
+    primaryCheckout: result.primaryCheckout,
+    configPath: result.configPath,
+    data: result.data,
+  };
 }
 
 export function validateWorkspaceConfig(data: unknown, repoRoot?: string): string[] {
@@ -243,40 +321,26 @@ export function resolveWorkspaceConfig(options: ResolveWorkspaceConfigOptions): 
   if (!options || typeof options !== 'object') {
     throw new Error('resolveWorkspaceConfig requires an options object');
   }
-  const sourceCheckout = resolvePath(options.repoDir);
-  const primaryCheckout = findPrimaryCheckout(sourceCheckout);
+  const loaded = loadWorkspaceConfigHelper({
+    repoDir: options.repoDir,
+    configPath: options.configPath,
+  });
 
-  let resolvedConfigPath: string;
-  let configExists: boolean;
-
-  if (options.configPath !== undefined) {
-    resolvedConfigPath = path.isAbsolute(options.configPath)
-      ? resolvePath(options.configPath)
-      : resolvePath(path.resolve(sourceCheckout, options.configPath));
-    if (!fs.existsSync(resolvedConfigPath)) {
-      throw new Error(`Specified workspace configuration file does not exist: ${resolvedConfigPath}`);
-    }
-    configExists = true;
-  } else {
-    resolvedConfigPath = getConfigFilePath(primaryCheckout);
-    configExists = fs.existsSync(resolvedConfigPath);
-    if (!configExists && options.requireFile) {
-      throw new Error(`Workspace configuration missing at ${resolvedConfigPath}. Please run 'pc-workspace-config' to initialize.`);
-    }
-  }
+  const primaryCheckout = loaded.primaryCheckout;
 
   let configData: Record<string, unknown> = {};
-  if (configExists) {
-    const loaded = loadWorkspaceConfig(resolvedConfigPath);
-    if (loaded) {
-      configData = loaded;
-      const errors = validateWorkspaceConfig(configData, primaryCheckout);
-      if (errors.length) {
-        throw new Error(
-          `Workspace configuration at ${resolvedConfigPath} is invalid:\n  - ${errors.join('\n  - ')}\nPlease run 'pc-workspace-config' to reconfigure.`,
-        );
-      }
+  if (loaded.data) {
+    configData = loaded.data;
+    const errors = validateWorkspaceConfig(configData, primaryCheckout);
+    if (errors.length) {
+      throw new Error(
+        `Workspace configuration at ${loaded.configPath} is invalid:\n  - ${errors.join('\n  - ')}\nPlease run 'pc-workspace-config' to reconfigure.`,
+      );
     }
+  } else if (options.requireFile) {
+    throw new Error(
+      `Workspace configuration missing at ${loaded.configPath}. Please run 'pc-workspace-config' to initialize.`,
+    );
   }
 
   const overrides = options.overrides ?? {};

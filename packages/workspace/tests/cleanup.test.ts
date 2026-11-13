@@ -690,6 +690,84 @@ describe('Workspace Cleanup (cleanup)', () => {
     ).toThrow(WorkspaceError);
   });
 
+  it('should strictly validate candidate kind and boolean flags upfront before side effects', () => {
+    // 1. Candidate missing explicit kind
+    expect(() =>
+      cleanup({
+        sourceCheckout: ctx.repoDir,
+        rootIssueId: '99',
+        candidates: [
+          {
+            branch: 'issue-99',
+            created: true,
+          } as any,
+        ],
+        protectedPaths: [],
+      }),
+    ).toThrow(/must have explicit kind 'task_branch' or 'detached'/);
+
+    // 2. Candidate with invalid kind
+    expect(() =>
+      cleanup({
+        sourceCheckout: ctx.repoDir,
+        rootIssueId: '99',
+        candidates: [
+          {
+            kind: 'invalid_kind' as any,
+            branch: 'issue-99',
+          },
+        ],
+        protectedPaths: [],
+      }),
+    ).toThrow(/must have explicit kind 'task_branch' or 'detached'/);
+
+    // 3. Candidate with non-boolean flag (string "false")
+    expect(() =>
+      cleanup({
+        sourceCheckout: ctx.repoDir,
+        rootIssueId: '99',
+        candidates: [
+          {
+            kind: 'task_branch',
+            branch: 'issue-99',
+            created: 'false' as any,
+          },
+        ],
+        protectedPaths: [],
+      }),
+    ).toThrow(/must be a boolean or omitted/);
+
+    // 4. Preflight validation aborts before side effects when later candidate is malformed
+    const worktreeDir = path.join(ctx.tempDir, 'worktrees', 'issue-99');
+    fs.mkdirSync(worktreeDir, { recursive: true });
+
+    expect(() =>
+      cleanup({
+        sourceCheckout: ctx.repoDir,
+        rootIssueId: '99',
+        candidates: [
+          // Candidate A is valid
+          {
+            kind: 'task_branch',
+            worktree: worktreeDir,
+            branch: 'issue-99',
+            commit: '0123456789abcdef0123456789abcdef01234567',
+            created: true,
+            consumersFinished: true,
+          },
+          // Candidate B is missing kind
+          {
+            branch: 'issue-100',
+          } as any,
+        ],
+        protectedPaths: [],
+      }),
+    ).toThrow(WorkspaceError);
+
+    // Verify candidate A worktree directory is untouched because validation aborted upfront
+    expect(fs.existsSync(worktreeDir)).toBe(true);
+  });
+
   it('should mark outcome incomplete when unresolved inventory is present', () => {
     const result = cleanup({
       sourceCheckout: ctx.repoDir,

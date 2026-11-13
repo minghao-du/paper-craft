@@ -5,9 +5,9 @@ import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
-  findPrimaryCheckout,
-  getConfigFilePath,
+  loadWorkspaceConfig,
   validateWorkspaceConfig,
+  type SavedWorkspaceConfig,
 } from './config.js';
 import {
   prepareWorkspaceConfigInitialization,
@@ -150,68 +150,50 @@ async function cmdInit(values: Record<string, unknown>, repoDir: string): Promis
 }
 
 async function cmdShow(repoDir: string): Promise<number> {
-  let primaryCheckout: string;
+  let saved: SavedWorkspaceConfig | null;
   try {
-    primaryCheckout = findPrimaryCheckout(repoDir);
+    saved = loadWorkspaceConfig({ repoDir });
   } catch (err: unknown) {
     process.stderr.write(`Error: ${errorMessage(err)}\n`);
     return 1;
   }
 
-  const configPath = getConfigFilePath(primaryCheckout);
-  if (!fs.existsSync(configPath)) {
+  if (!saved) {
     process.stderr.write(
-      `Error: Workspace configuration missing at ${configPath}.\nPlease run 'pc-workspace-config' to initialize configuration.\n`,
+      `Error: Workspace configuration missing for repository at ${repoDir}.\nPlease run 'pc-workspace-config' to initialize configuration.\n`,
     );
     return 1;
   }
 
-  let data: unknown;
-  try {
-    data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch (err: unknown) {
-    process.stderr.write(`Error: Corrupted workspace config at ${configPath}: ${errorMessage(err)}\n`);
-    return 1;
-  }
-
-  console.log(JSON.stringify(data, null, 2));
+  console.log(JSON.stringify(saved.data, null, 2));
   return 0;
 }
 
 async function cmdValidate(repoDir: string): Promise<number> {
-  let primaryCheckout: string;
+  let saved: SavedWorkspaceConfig | null;
   try {
-    primaryCheckout = findPrimaryCheckout(repoDir);
+    saved = loadWorkspaceConfig({ repoDir });
   } catch (err: unknown) {
-    process.stderr.write(`Error: ${errorMessage(err)}\n`);
+    process.stderr.write(`Error: Workspace configuration is invalid: ${errorMessage(err)}\n`);
     return 1;
   }
 
-  const configPath = getConfigFilePath(primaryCheckout);
-  if (!fs.existsSync(configPath)) {
+  if (!saved) {
     process.stderr.write(
-      `Error: Workspace configuration is missing at ${configPath}.\nPlease run 'pc-workspace-config' to initialize.\n`,
+      `Error: Workspace configuration is missing for repository at ${repoDir}.\nPlease run 'pc-workspace-config' to initialize.\n`,
     );
     return 1;
   }
 
-  let data: unknown;
-  try {
-    data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch (err: unknown) {
-    process.stderr.write(`Error: Workspace configuration at ${configPath} is invalid: ${errorMessage(err)}\n`);
-    return 1;
-  }
-
-  const errors = validateWorkspaceConfig(data, primaryCheckout);
+  const errors = validateWorkspaceConfig(saved.data, saved.primaryCheckout);
   if (errors.length) {
     process.stderr.write(
-      `Error: Workspace configuration at ${configPath} is invalid:\n  - ${errors.join('\n  - ')}\nPlease run 'pc-workspace-config' to reconfigure.\n`,
+      `Error: Workspace configuration at ${saved.configPath} is invalid:\n  - ${errors.join('\n  - ')}\nPlease run 'pc-workspace-config' to reconfigure.\n`,
     );
     return 1;
   }
 
-  console.log(`Workspace configuration is valid: ${configPath}`);
+  console.log(`Workspace configuration is valid: ${saved.configPath}`);
   return 0;
 }
 
@@ -243,21 +225,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   const subcommand = parsed.positionals[0];
   if (!subcommand) {
-    let primaryCheckout: string;
+    let saved: SavedWorkspaceConfig | null;
     try {
-      primaryCheckout = findPrimaryCheckout(repoDir);
+      saved = loadWorkspaceConfig({ repoDir });
     } catch (err: unknown) {
       process.stderr.write(`Error: ${errorMessage(err)}\n`);
       return 1;
     }
-    const configPath = getConfigFilePath(primaryCheckout);
-    if (!fs.existsSync(configPath)) {
+    if (!saved) {
       process.stderr.write(
-        `Error: Workspace configuration is missing at ${configPath}.\nPlease run 'pc-workspace-config init' to initialize.\n`,
+        `Error: Workspace configuration is missing for repository at ${repoDir}.\nPlease run 'pc-workspace-config init' to initialize.\n`,
       );
       return 1;
     }
-    return cmdShow(repoDir);
+    console.log(JSON.stringify(saved.data, null, 2));
+    return 0;
   }
 
   switch (subcommand) {

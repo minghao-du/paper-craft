@@ -20,7 +20,7 @@ import {
 } from '../src/task-io.js';
 import { loadEnvelope as loadOrchestratorEnvelope } from '../../orchestrator/src/lifecycle/envelope.js';
 import { resolvePath } from '../src/git.js';
-import { CleanupResult, PreparedWorkspace } from '../src/types.js';
+import { CleanupResult, PreparedWorkspace, WorkspaceError } from '../src/types.js';
 
 describe('Workspace Task-IO', () => {
   let tmpDir: string;
@@ -141,8 +141,225 @@ describe('Workspace Task-IO', () => {
     const { request } = mapToCleanupRequest(envelope, { repoDir: tmpDir });
     expect(request.rootIssueId).toBe('50');
     expect(request.candidates.length).toBe(1);
+    const c0 = request.candidates[0];
+    expect(c0.kind).toBe('task_branch');
+    if (c0.kind === 'task_branch') {
+      expect(c0.created).toBe(true);
+      expect(c0.consumersFinished).toBe(true);
+    }
     expect(request.unresolved).toEqual(['dirty branch issue-51']);
     expect(request.protectedPaths).toContain(resolvePath(path.join(tmpDir, 'cleanup-receipt.md')));
+  });
+
+  it('strictly parses candidate boolean flags and rejects truthiness / string booleans', () => {
+    const baseEnvelope = (candidateOverrides: Record<string, unknown>): WorkspaceTaskInput => ({
+      task: { root_issue_id: '60' },
+      inputs: {
+        parameters: {
+          candidates: [
+            {
+              branch: 'issue-60',
+              commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              ...candidateOverrides,
+            },
+          ],
+        },
+      },
+    });
+
+    // Valid strict boolean flags
+    const valid = mapToCleanupRequest(
+      baseEnvelope({ created: true, consumers_finished: false }),
+      { repoDir: tmpDir },
+    );
+    const v0 = valid.request.candidates[0];
+    expect(v0.kind).toBe('task_branch');
+    if (v0.kind === 'task_branch') {
+      expect(v0.created).toBe(true);
+      expect(v0.consumersFinished).toBe(false);
+    }
+
+    // Omitted flags remain undefined (not confirmed)
+    const omitted = mapToCleanupRequest(baseEnvelope({}), { repoDir: tmpDir });
+    const o0 = omitted.request.candidates[0];
+    expect(o0.kind).toBe('task_branch');
+    if (o0.kind === 'task_branch') {
+      expect(o0.created).toBeUndefined();
+      expect(o0.consumersFinished).toBeUndefined();
+    }
+
+    // String "false" must NOT be converted by truthiness; must be rejected
+    expect(() =>
+      mapToCleanupRequest(baseEnvelope({ created: 'false' }), { repoDir: tmpDir }),
+    ).toThrowError(WorkspaceError);
+
+    // String "true" must be rejected
+    expect(() =>
+      mapToCleanupRequest(baseEnvelope({ consumers_finished: 'true' }), { repoDir: tmpDir }),
+    ).toThrowError(WorkspaceError);
+
+    // Number must be rejected
+    expect(() =>
+      mapToCleanupRequest(baseEnvelope({ created: 1 }), { repoDir: tmpDir }),
+    ).toThrowError(WorkspaceError);
+
+    // Null must be rejected
+    expect(() =>
+      mapToCleanupRequest(baseEnvelope({ consumers_finished: null }), { repoDir: tmpDir }),
+    ).toThrowError(WorkspaceError);
+  });
+
+  it('normalizes candidate kind from transport and rejects contradictory or unclassifiable entries', () => {
+    // 1. Branch-only without kind -> inferred task_branch (worktree omitted)
+    const branchOnlyEnv: WorkspaceTaskInput = {
+      task: { root_issue_id: '61' },
+      inputs: {
+        parameters: {
+          candidates: [{ branch: 'feature-61', created: true }],
+        },
+      },
+    };
+    const branchOnly = mapToCleanupRequest(branchOnlyEnv, { repoDir: tmpDir });
+    expect(branchOnly.request.candidates[0].kind).toBe('task_branch');
+    expect(branchOnly.request.candidates[0].worktree).toBeUndefined();
+
+    // 2. Worktree + commit without branch -> inferred detached
+    const detachedEnv: WorkspaceTaskInput = {
+      task: { root_issue_id: '61' },
+      inputs: {
+        parameters: {
+          candidates: [
+            {
+              worktree: path.join(tmpDir, 'detached'),
+              commit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              verification_completed: true,
+            },
+          ],
+        },
+      },
+    };
+    const detached = mapToCleanupRequest(detachedEnv, { repoDir: tmpDir });
+    expect(detached.request.candidates[0].kind).toBe('detached');
+    if (detached.request.candidates[0].kind === 'detached') {
+      expect(detached.request.candidates[0].verificationCompleted).toBe(true);
+    }
+
+    // 3. Contradictory: kind 'detached' with branch -> reject
+    const contradictDetached: WorkspaceTaskInput = {
+      task: { root_issue_id: '61' },
+      inputs: {
+        parameters: {
+          candidates: [
+            {
+              kind: 'detached',
+              worktree: path.join(tmpDir, 'detached'),
+              commit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              branch: 'should-not-be-here',
+            },
+          ],
+        },
+      },
+    };
+    expect(() => mapToCleanupRequest(contradictDetached, { repoDir: tmpDir })).toThrowError(
+      WorkspaceError,
+    );
+
+    // 4. Contradictory: task_branch with verification_completed -> reject
+    const contradictTaskBranch: WorkspaceTaskInput = {
+      task: { root_issue_id: '61' },
+      inputs: {
+        parameters: {
+          candidates: [
+            {
+              kind: 'task_branch',
+              branch: 'feature-61',
+              verification_completed: true,
+            },
+          ],
+        },
+      },
+    };
+    expect(() => mapToCleanupRequest(contradictTaskBranch, { repoDir: tmpDir })).toThrowError(
+      WorkspaceError,
+    );
+
+    // 5. Unclassifiable entry: only worktree without branch or commit -> reject
+    const unclassifiable: WorkspaceTaskInput = {
+      task: { root_issue_id: '61' },
+      inputs: {
+        parameters: {
+          candidates: [{ worktree: path.join(tmpDir, 'alone') }],
+        },
+      },
+    };
+    expect(() => mapToCleanupRequest(unclassifiable, { repoDir: tmpDir })).toThrowError(
+      WorkspaceError,
+    );
+  });
+
+  it('validates candidate list up-front so a malformed second entry aborts before returning', () => {
+    const mixedEnv: WorkspaceTaskInput = {
+      task: { root_issue_id: '62' },
+      inputs: {
+        parameters: {
+          candidates: [
+            // Candidate 0: valid
+            {
+              branch: 'valid-branch',
+              created: true,
+              consumers_finished: true,
+            },
+            // Candidate 1: malformed boolean flag
+            {
+              branch: 'bad-branch',
+              created: 'false',
+            },
+          ],
+        },
+      },
+    };
+
+    expect(() => mapToCleanupRequest(mixedEnv, { repoDir: tmpDir })).toThrowError(
+      /Candidate at index 1 field 'created' must be a boolean/,
+    );
+  });
+
+  it('accepts incomplete ownership evidence for downstream retention, but rejects non-object evidence', () => {
+    // Incomplete evidence ({}) is structurally valid; downstream cleanup retains it
+    const incompleteEnv: WorkspaceTaskInput = {
+      task: { root_issue_id: '63' },
+      inputs: {
+        parameters: {
+          candidates: [
+            {
+              branch: 'feature-63',
+              created: false,
+              ownership_evidence: {},
+            },
+          ],
+        },
+      },
+    };
+    const res = mapToCleanupRequest(incompleteEnv, { repoDir: tmpDir });
+    expect(res.request.candidates[0].ownershipEvidence).toEqual({});
+
+    // Non-object evidence is malformed input
+    const badEvidenceEnv: WorkspaceTaskInput = {
+      task: { root_issue_id: '63' },
+      inputs: {
+        parameters: {
+          candidates: [
+            {
+              branch: 'feature-63',
+              ownership_evidence: 'string-is-invalid',
+            },
+          ],
+        },
+      },
+    };
+    expect(() => mapToCleanupRequest(badEvidenceEnv, { repoDir: tmpDir })).toThrowError(
+      WorkspaceError,
+    );
   });
 
   it('workspace and orchestrator accept/reject the same complete envelope', () => {

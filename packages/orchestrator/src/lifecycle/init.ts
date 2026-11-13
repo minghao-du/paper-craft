@@ -20,13 +20,37 @@ const DEPRECATED_INIT_OPTIONS = [
   "initial-stage",
 ] as const;
 
+const INIT_ALLOWED_FIELDS = [
+  "root_issue",
+  "receipt_root",
+  "repo_dir",
+  "workflow",
+  "force",
+  "require_config",
+  "delivery_attempts_max",
+  "replans_max",
+  "delivery_target",
+  "base_remote",
+  "push_remote",
+  "base_branch",
+  "worktree_container",
+];
+
 export function initWorkflow(o: InitOptions): RuntimeState {
+  const oRec = o as unknown as Record<string, unknown>;
   for (const key of DEPRECATED_INIT_OPTIONS) {
-    if (key in o && (o as Record<string, unknown>)[key] !== undefined) {
+    if (key in oRec && oRec[key] !== undefined) {
       throw new Error(
         `Init option '${key}' has been removed and is no longer supported.`,
       );
     }
+  }
+
+  const unknown = Object.keys(oRec).filter(
+    (k) => !INIT_ALLOWED_FIELDS.includes(k),
+  );
+  if (unknown.length) {
+    throw new Error(`Unknown init option '${unknown[0]}'.`);
   }
 
   if (
@@ -54,7 +78,7 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     "base_branch",
     "worktree_container",
   ]) {
-    if (o[key] != null) overrides[key] = o[key];
+    if (oRec[key] != null) overrides[key] = oRec[key];
   }
 
   const config = resolveWorkspaceConfig({

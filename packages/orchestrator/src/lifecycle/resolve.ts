@@ -31,7 +31,7 @@ const ADVANCE_FIELDS = [
 ] as const;
 
 function hasValue(options: ResolveOptions, field: string): boolean {
-  const value = options[field];
+  const value = (options as unknown as Record<string, unknown>)[field];
   return value !== undefined && value !== null && value !== false;
 }
 
