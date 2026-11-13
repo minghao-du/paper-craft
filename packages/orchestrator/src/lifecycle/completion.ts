@@ -76,16 +76,18 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
     );
   }
 
+  // Historical completion replay must work even when a later dispatch is active.
+  const settled = [...(state.completed_stages ?? [])]
+    .reverse()
+    .find((entry) => entry.dispatch_id === dispatchId);
+  if (settled) {
+    if (compareCompleteReports(settled, report)) return settled;
+    throw new Error(
+      `Conflicting report for already settled dispatch '${settled.dispatch_id}': execution_status, result, receipt_path, or summary differs. The recorded completion is unchanged.`,
+    );
+  }
+
   if (!active) {
-    const settled = [...(state.completed_stages ?? [])]
-      .reverse()
-      .find((entry) => entry.dispatch_id === dispatchId);
-    if (settled) {
-      if (compareCompleteReports(settled, report)) return settled;
-      throw new Error(
-        `Conflicting report for already settled dispatch '${settled.dispatch_id}': execution_status or result differs. The recorded completion is unchanged.`,
-      );
-    }
     throw new Error("No active dispatch in flight to complete.");
   }
 

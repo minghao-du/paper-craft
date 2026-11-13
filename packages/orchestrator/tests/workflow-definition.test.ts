@@ -20,6 +20,21 @@ import {
   loadAndValidateWorkflow,
   resolveCanonicalStage,
 } from '../src/workflow/index.js';
+import {
+  allocatesDeliveryAttempt,
+  invalidatesLanding,
+  invalidatesVerification,
+  isAuxiliaryStage,
+  isCleanupStage,
+  isContentChangingStage,
+  isEvidenceSensitiveStage,
+  isFinalizationStage,
+  isInitialPlanStage,
+  isLandingStage,
+  isReplanStage,
+  isResearchRecordStage,
+  isVerificationStage,
+} from '../src/workflow/stage.js';
 import type { DeliveryState, WorkflowDefinition } from '../src/workflow/types.js';
 import {
   createTestDir,
@@ -858,5 +873,155 @@ describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () 
     expect(reqParameters.plain_key).toBe('original');
     expect(reqParameters.nested.flag).toBe(true);
     expect(reqParameters.nested.counts).toEqual([1, 2]);
+  });
+
+  it('F03: classifies stage roles strictly by logical_task regardless of stage.id or provider.target', () => {
+    const renamedWf = loadAndValidateWorkflow({
+      name: 'f03-renamed',
+      completion_policy: 'issue_delivery',
+      stages: [
+        { id: 'custom_prep', logical_task: 'workspace_prepare', provider: { type: 'skill', target: 'alt-prep' } },
+        { id: 'custom_plan', logical_task: 'issue_plan', provider: { type: 'skill', target: 'alt-plan' } },
+        { id: 'stage_2_work', logical_task: 'issue_verify', provider: { type: 'skill', target: 'alt-verify' } },
+        { id: 'stage_3_verify', logical_task: 'issue_work', provider: { type: 'skill', target: 'alt-work' } },
+        { id: 'custom_land', logical_task: 'issue_land', provider: { type: 'skill', target: 'alt-land' } },
+        { id: 'custom_finalize', logical_task: 'issue_finalize', provider: { type: 'skill', target: 'alt-fin' } },
+        { id: 'custom_cleanup', logical_task: 'workspace_cleanup', provider: { type: 'skill', target: 'alt-clean' } },
+        { id: 'custom_research', logical_task: 'research_record', provider: { type: 'skill', target: 'alt-res' } },
+        { id: 'custom_replan', logical_task: 'scope_replan', provider: { type: 'skill', target: 'alt-replan' } },
+        { id: 'stage_1_plan', logical_task: 'custom_impl', provider: { type: 'skill', target: 'pc-issue-plan' } },
+      ],
+    });
+
+    // Conflicting ID stage_2_work + logical_task issue_verify MUST behave as verification, NOT content-changing
+    const conflictingVerify = resolveCanonicalStage(renamedWf, 'stage_2_work');
+    expect(isVerificationStage(conflictingVerify)).toBe(true);
+    expect(isContentChangingStage(conflictingVerify)).toBe(false);
+    expect(allocatesDeliveryAttempt(conflictingVerify)).toBe(false);
+    expect(invalidatesLanding(conflictingVerify)).toBe(false);
+    expect(invalidatesVerification(conflictingVerify)).toBe(false);
+    expect(isEvidenceSensitiveStage(conflictingVerify)).toBe(true);
+
+    // Conflicting ID stage_3_verify + logical_task issue_work MUST behave as content-changing, NOT verification
+    const conflictingWork = resolveCanonicalStage(renamedWf, 'stage_3_verify');
+    expect(isVerificationStage(conflictingWork)).toBe(false);
+    expect(isContentChangingStage(conflictingWork)).toBe(true);
+    expect(allocatesDeliveryAttempt(conflictingWork)).toBe(true);
+    expect(invalidatesLanding(conflictingWork)).toBe(true);
+    expect(invalidatesVerification(conflictingWork)).toBe(true);
+    expect(isEvidenceSensitiveStage(conflictingWork)).toBe(false);
+
+    // Custom role with stage_1_plan ID and pc-issue-plan target MUST NOT be initial plan; defaults conservatively to content-changing
+    const customImpl = resolveCanonicalStage(renamedWf, 'stage_1_plan');
+    expect(isInitialPlanStage(customImpl)).toBe(false);
+    expect(isContentChangingStage(customImpl)).toBe(true);
+    expect(isEvidenceSensitiveStage(customImpl)).toBe(false);
+
+    // Renamed built-in roles retain full semantics and evidence sensitivity
+    expect(isAuxiliaryStage(resolveCanonicalStage(renamedWf, 'custom_prep'))).toBe(true);
+    expect(isInitialPlanStage(resolveCanonicalStage(renamedWf, 'custom_plan'))).toBe(true);
+    expect(isLandingStage(resolveCanonicalStage(renamedWf, 'custom_land'))).toBe(true);
+    expect(isFinalizationStage(resolveCanonicalStage(renamedWf, 'custom_finalize'))).toBe(true);
+    expect(isCleanupStage(resolveCanonicalStage(renamedWf, 'custom_cleanup'))).toBe(true);
+    expect(isAuxiliaryStage(resolveCanonicalStage(renamedWf, 'custom_cleanup'))).toBe(true);
+    expect(isResearchRecordStage(resolveCanonicalStage(renamedWf, 'custom_research'))).toBe(true);
+    expect(isContentChangingStage(resolveCanonicalStage(renamedWf, 'custom_research'))).toBe(false);
+    expect(isReplanStage(resolveCanonicalStage(renamedWf, 'custom_replan'))).toBe(true);
+
+    // Provider override on renamed verification stage (stage_2_work / issue_verify) is rejected
+    expect(() =>
+      evaluateDispatch({
+        workflow: renamedWf,
+        deliveryState: initialDeliveryState,
+        request: {
+          stage: 'stage_2_work',
+          provider: { type: 'skill', target: 'different-skill' },
+        },
+      }),
+    ).toThrowError(/Cannot override provider for evidence-sensitive stage 'stage_2_work'/);
+  });
+
+  it('F03: rejects contradictory auxiliary/replan flags on all built-in roles in source and snapshot modes', () => {
+    const nonAuxBuiltinRoles = [
+      'issue_plan',
+      'scope_replan',
+      'issue_work',
+      'pipeline_refactor_execute',
+      'issue_land',
+      'pipeline_refactor_redeliver',
+      'issue_verify',
+      'pipeline_refactor_audit',
+      'issue_finalize',
+      'research_record',
+    ];
+    const auxBuiltinRoles = ['workspace_prepare', 'workspace_cleanup'];
+    const nonReplanBuiltinRoles = [
+      ...auxBuiltinRoles,
+      'issue_plan',
+      'issue_work',
+      'pipeline_refactor_execute',
+      'issue_land',
+      'pipeline_refactor_redeliver',
+      'issue_verify',
+      'pipeline_refactor_audit',
+      'issue_finalize',
+      'research_record',
+    ];
+
+    for (const mode of ['source', 'snapshot'] as const) {
+      for (const role of nonAuxBuiltinRoles) {
+        expect(() =>
+          loadAndValidateWorkflow(
+            {
+              name: 'bad-aux',
+              completion_policy: 'issue_delivery',
+              stages: [{ id: 's1', logical_task: role, auxiliary: true, provider: { type: 'skill', target: 'p' } }],
+            },
+            undefined,
+            mode,
+          ),
+        ).toThrowError(/cannot declare auxiliary: true/);
+      }
+
+      for (const role of auxBuiltinRoles) {
+        expect(() =>
+          loadAndValidateWorkflow(
+            {
+              name: 'bad-aux-false',
+              completion_policy: 'issue_delivery',
+              stages: [{ id: 's1', logical_task: role, auxiliary: false, provider: { type: 'skill', target: 'p' } }],
+            },
+            undefined,
+            mode,
+          ),
+        ).toThrowError(/cannot declare auxiliary: false/);
+      }
+
+      for (const role of nonReplanBuiltinRoles) {
+        expect(() =>
+          loadAndValidateWorkflow(
+            {
+              name: 'bad-replan',
+              completion_policy: 'issue_delivery',
+              stages: [{ id: 's1', logical_task: role, replan: true, provider: { type: 'skill', target: 'p' } }],
+            },
+            undefined,
+            mode,
+          ),
+        ).toThrowError(/cannot declare replan: true/);
+      }
+
+      expect(() =>
+        loadAndValidateWorkflow(
+          {
+            name: 'bad-replan-false',
+            completion_policy: 'issue_delivery',
+            stages: [{ id: 's1', logical_task: 'scope_replan', replan: false, provider: { type: 'skill', target: 'p' } }],
+          },
+          undefined,
+          mode,
+        ),
+      ).toThrowError(/cannot declare replan: false/);
+    }
   });
 });

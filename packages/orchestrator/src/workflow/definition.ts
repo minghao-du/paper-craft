@@ -6,6 +6,9 @@ import type {
   WorkflowStage,
 } from "./types.js";
 import {
+  BUILTIN_AUXILIARY_ROLES,
+  BUILTIN_NON_AUXILIARY_NON_REPLAN_ROLES,
+  BUILTIN_REPLAN_ROLES,
   resolveCanonicalStage,
 } from "./stage.js";
 
@@ -194,42 +197,39 @@ function validateWorkflow(
       );
     }
 
-    // Contradictory declarations for constrained built-in roles
-    if (
-      Boolean(rawStage.auxiliary) &&
-      (rawStage.logical_task === "issue_work" ||
-        rawStage.logical_task === "pipeline_refactor_execute")
-    ) {
+    // Contradictory declarations for all built-in roles
+    const logicalTask = rawStage.logical_task as string;
+    const isBuiltinAux = BUILTIN_AUXILIARY_ROLES.has(logicalTask);
+    const isBuiltinReplan = BUILTIN_REPLAN_ROLES.has(logicalTask);
+    const isBuiltinStandard = BUILTIN_NON_AUXILIARY_NON_REPLAN_ROLES.has(logicalTask);
+
+    if (rawStage.auxiliary === true && (isBuiltinStandard || isBuiltinReplan)) {
       throw new Error(
-        `Workflow stage '${stageId}' cannot declare auxiliary: true for content-changing role '${rawStage.logical_task}'.`,
+        `Workflow stage '${stageId}' cannot declare auxiliary: true for built-in role '${logicalTask}'.`,
       );
     }
 
-    if (
-      Boolean(rawStage.replan) &&
-      (rawStage.logical_task === "workspace_prepare" ||
-        rawStage.logical_task === "workspace_cleanup")
-    ) {
+    if (rawStage.auxiliary === false && isBuiltinAux) {
       throw new Error(
-        `Workflow stage '${stageId}' cannot declare replan: true for auxiliary role '${rawStage.logical_task}'.`,
+        `Workflow stage '${stageId}' cannot declare auxiliary: false for built-in auxiliary role '${logicalTask}'.`,
       );
     }
 
-    if (Boolean(rawStage.replan) && rawStage.logical_task === "issue_plan") {
+    if (rawStage.replan === true && (isBuiltinStandard || isBuiltinAux)) {
       throw new Error(
-        `Workflow stage '${stageId}' cannot declare replan: true for initial planning role 'issue_plan'.`,
+        `Workflow stage '${stageId}' cannot declare replan: true for built-in role '${logicalTask}'.`,
       );
     }
 
-    if (Boolean(rawStage.auxiliary) && rawStage.logical_task === "scope_replan") {
+    if (rawStage.replan === false && isBuiltinReplan) {
       throw new Error(
-        `Workflow stage '${stageId}' cannot declare auxiliary: true for replan role 'scope_replan'.`,
+        `Workflow stage '${stageId}' cannot declare replan: false for built-in replan role '${logicalTask}'.`,
       );
     }
 
     if (mode === "source") {
-      rawStage.auxiliary = rawStage.auxiliary ?? false;
-      rawStage.replan = rawStage.replan ?? false;
+      rawStage.auxiliary = rawStage.auxiliary ?? isBuiltinAux;
+      rawStage.replan = rawStage.replan ?? isBuiltinReplan;
     }
 
     if (rawStage.parameters !== undefined) {

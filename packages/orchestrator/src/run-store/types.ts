@@ -46,3 +46,14 @@ export class StorageIOError extends StorageError {
     this.name = "StorageIOError";
   }
 }
+
+export interface RunStorageInspection<TState = unknown> {
+  exists: boolean;
+  stateExists: boolean;
+  pendingExists: boolean;
+  state: TState | null;
+  stateCorrupt: boolean;
+  pending: PendingCommit<TState> | null;
+  pendingCorrupt: boolean;
+  dispatchArtifacts: string[];
+}

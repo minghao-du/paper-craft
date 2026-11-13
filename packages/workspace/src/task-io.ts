@@ -14,6 +14,7 @@ import {
   ExternalCleanupReport,
   OwnershipEvidence,
   PreparedWorkspace,
+  PreparedWorkspaceResult,
   PrepareRequest,
   PrepareTarget,
   PrDeliveryEvidence,
@@ -21,12 +22,14 @@ import {
   WorkspaceError,
   WorkspaceOverrides,
 } from './types.js';
-import { findRepoRoot, resolvePath } from './git.js';
+import { resolvePath } from './git.js';
 import { validateCleanupCandidate } from './cleanup.js';
 import {
   parseTaskInputEnvelope,
   type TaskInputEnvelope as ProtocolTaskInputEnvelope,
 } from '../../orchestrator/src/protocol/index.js';
+
+export type { PreparedWorkspaceResult } from './types.js';
 
 /** @deprecated Use WorkspaceTaskInput (simplified) or the protocol TaskInputEnvelope (full). */
 export type TaskInputEnvelope = WorkspaceTaskInput;
@@ -200,6 +203,18 @@ function assertNoConflict(name: string, cliVal: unknown, envVal: unknown, arePat
   }
 }
 
+function readOptionalString(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Field '${fieldName}' must be a string if provided; received ${typeof value}.`,
+    );
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 /**
  * Map CLI arguments and optional envelope to a PrepareRequest.
  */
@@ -238,66 +253,107 @@ export function mapToPrepareRequest(
   const issue = args.issue ?? envIssue ?? undefined;
 
   // 2. Base branch
-  const envBase = envSection.base_branch;
-  assertNoConflict('base', args.base, envBase);
-  const base = args.base ?? envBase;
+  const argsBase = readOptionalString(args.base, 'base');
+  const envBase = readOptionalString(envSection.base_branch, 'environment.base_branch');
+  assertNoConflict('base', argsBase, envBase);
+  const base = argsBase ?? envBase;
 
-  // 3. Worktree & Expected Head
-  const envWorktree = paramsSection.worktree as string | undefined;
-  assertNoConflict('worktree', args.worktree, envWorktree, true);
-  let worktree = args.worktree ?? envWorktree;
+  // 3. Worktree, Expected Head, & Config Path
+  const argsWorktree = readOptionalString(args.worktree, 'worktree');
+  const envWorktree = readOptionalString(paramsSection.worktree, 'inputs.parameters.worktree');
+  assertNoConflict('worktree', argsWorktree, envWorktree, true);
+  const explicitWorktree = argsWorktree ?? envWorktree;
 
-  const envExpectedHead = paramsSection.expected_head as string | undefined;
-  assertNoConflict('expected_head', args.expectedHead, envExpectedHead);
-  let expectedHead = args.expectedHead ?? envExpectedHead;
+  const argsExpectedHead = readOptionalString(args.expectedHead, 'expected_head');
+  const envExpectedHead = readOptionalString(
+    paramsSection.expected_head,
+    'inputs.parameters.expected_head',
+  );
+  assertNoConflict('expected_head', argsExpectedHead, envExpectedHead);
+  let expectedHead = argsExpectedHead ?? envExpectedHead;
 
-  const envConfigPath = paramsSection.workspace_config as string | undefined;
-  assertNoConflict('workspace_config', args.workspaceConfig, envConfigPath, true);
-  const configPath = args.workspaceConfig ?? envConfigPath;
+  const argsConfigPath = readOptionalString(args.workspaceConfig, 'workspace_config');
+  const envConfigPath = readOptionalString(
+    paramsSection.workspace_config,
+    'inputs.parameters.workspace_config',
+  );
+  assertNoConflict('workspace_config', argsConfigPath, envConfigPath, true);
+  const configPath = argsConfigPath ?? envConfigPath;
 
-  // 4. Branch & Commit
-  const envBranch = envSection.branch;
-  const envCommit = envSection.commit;
-  assertNoConflict('branch', args.branch, envBranch);
-  assertNoConflict('commit', args.commit, envCommit);
+  // 4. Branch & Commit normalization and conflict verification
+  const envBranchIsNull = envSection.branch === null;
+  const argsBranch = readOptionalString(args.branch, 'branch');
+  const envBranch = readOptionalString(envSection.branch, 'environment.branch');
+  if (envBranchIsNull && argsBranch !== undefined) {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Conflicting 'branch' specified: CLI provided '${argsBranch}' but envelope specified null (detached).`,
+    );
+  }
+  assertNoConflict('branch', argsBranch, envBranch);
 
-  let branch = args.branch ?? (envBranch ? String(envBranch) : undefined);
-  let commit = args.commit ?? (envCommit ? String(envCommit) : undefined);
+  const argsCommit = readOptionalString(args.commit, 'commit');
+  const envCommit = readOptionalString(envSection.commit, 'environment.commit');
+  assertNoConflict('commit', argsCommit, envCommit);
 
-  // If env branch and commit are both specified, branch is feature branch and commit is expectedHead
-  if (!args.branch && !args.commit && envBranch && envCommit) {
-    branch = String(envBranch);
-    if (!expectedHead) {
-      expectedHead = String(envCommit);
+  const branch = argsBranch ?? envBranch;
+  const rawCommit = argsCommit ?? envCommit;
+  let commit: string | undefined;
+
+  if (envBranch && envCommit) {
+    // Envelope describes branch + commit: commit is the expected HEAD of that branch.
+    // Repeating identical branch/commit via CLI preserves this branch intent.
+    if (expectedHead && expectedHead !== envCommit) {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Conflicting 'expected_head' and envelope 'commit': expected_head is '${expectedHead}' but envelope commit is '${envCommit}'.`,
+      );
     }
+    expectedHead = expectedHead ?? envCommit;
     commit = undefined;
-  }
-
-  // 5. Working directory & repoDir resolution
-  let repoDir = args.repoDir;
-  const envWorkdir = envSection.working_directory;
-  if (envWorkdir) {
-    const p = resolvePath(envWorkdir);
-    if (worktree) {
-      if (!repoDir) repoDir = p;
-    } else {
-      let isGitRepo: boolean;
-      try {
-        findRepoRoot(p);
-        isGitRepo = true;
-      } catch {
-        isGitRepo = false;
-      }
-      if (!isGitRepo) {
-        worktree = p;
-      } else {
-        if (!repoDir) repoDir = p;
-      }
+  } else if (rawCommit !== undefined) {
+    if (branch !== undefined) {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Contradictory branch and detached commit declarations: branch '${branch}' cannot be combined with commit '${rawCommit}' unless envelope specifies both branch and commit.`,
+      );
     }
+    if (issue !== undefined) {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Contradictory issue and detached commit declarations: issue '${issue}' cannot be combined with commit '${rawCommit}' unless envelope specifies both branch and commit.`,
+      );
+    }
+    if (expectedHead && expectedHead !== rawCommit) {
+      throw new WorkspaceError(
+        'INVALID_INPUT',
+        `Conflicting 'expected_head' and 'commit': expected_head is '${expectedHead}' but commit is '${rawCommit}'.`,
+      );
+    }
+    commit = rawCommit;
   }
 
-  if (!repoDir) {
-    repoDir = '.';
+  // 5. Deterministic directory interpretation (source checkout vs target worktree)
+  const explicitRepoDirRaw = readOptionalString(args.repoDir, 'repo_dir');
+  const explicitRepoDir = explicitRepoDirRaw ? resolvePath(explicitRepoDirRaw) : undefined;
+  const envWorkdirRaw = readOptionalString(
+    envSection.working_directory,
+    'environment.working_directory',
+  );
+  const envWorkdir = envWorkdirRaw ? resolvePath(envWorkdirRaw) : undefined;
+
+  let worktree = explicitWorktree ? resolvePath(explicitWorktree) : undefined;
+  let repoDir: string;
+
+  if (worktree) {
+    repoDir = explicitRepoDir ?? envWorkdir ?? resolvePath('.');
+  } else if (issue !== undefined) {
+    repoDir = explicitRepoDir ?? envWorkdir ?? resolvePath('.');
+  } else {
+    repoDir = explicitRepoDir ?? resolvePath('.');
+    if (envWorkdir && envWorkdir !== repoDir) {
+      worktree = envWorkdir;
+    }
   }
 
   // 6. Overrides
@@ -321,7 +377,7 @@ export function mapToPrepareRequest(
   const outputFormat =
     args.outputFormat ?? (args.inputEnvelope || receiptPath ? 'compact' : 'raw');
 
-  // Build target
+  // 9. Choose target purely from normalized intent
   let target: PrepareTarget;
   if (commit) {
     if (!worktree) {
@@ -332,16 +388,16 @@ export function mapToPrepareRequest(
     target = {
       kind: 'issue',
       issue,
-      branch: branch || undefined,
-      path: worktree || undefined,
-      expectedHead: expectedHead || undefined,
+      branch,
+      path: worktree,
+      expectedHead,
     };
   } else if (branch && worktree) {
     target = {
       kind: 'branch',
       branch,
       path: worktree,
-      expectedHead: expectedHead || undefined,
+      expectedHead,
     };
   } else {
     throw new WorkspaceError(
@@ -352,7 +408,7 @@ export function mapToPrepareRequest(
 
   return {
     request: {
-      sourceCheckout: resolvePath(repoDir),
+      sourceCheckout: repoDir,
       target,
       configPath,
       overrides,
@@ -728,8 +784,9 @@ export function mapToCleanupRequest(
  */
 export function mapPreparedWorkspaceToResult(
   prepared: PreparedWorkspace,
-): Record<string, unknown> {
+): PreparedWorkspaceResult {
   return {
+    outcome: prepared.disposition === 'created' ? 'prepared' : 'reused',
     repository: prepared.repository,
     delivery_target: prepared.deliveryTarget,
     base_remote: prepared.baseRemote,

@@ -33,29 +33,31 @@ export function loadDispatchRequest(filename: string): unknown {
   }
 }
 
-export function parseReportInput(raw: string): unknown {
+/**
+ * Reads a compact report payload from an inline JSON object string or file path.
+ * Decoding and schema validation stay in Lifecycle/Protocol so protocol errors
+ * correlate with the target dispatch on the same path as programmatic callers.
+ */
+export function readReportText(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith("{")) {
-    try {
-      return JSON.parse(trimmed);
-    } catch (error) {
-      throw new Error(`Invalid compact report JSON: ${String(error)}`, {
-        cause: error,
-      });
-    }
+    return trimmed;
   }
   const filePath = path.resolve(trimmed);
   if (!fs.existsSync(filePath)) {
     throw new Error(`Report file not found: ${filePath}`);
   }
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return fs.readFileSync(filePath, "utf8");
   } catch (error) {
-    throw new Error(`Invalid report JSON in ${filePath}: ${String(error)}`, {
-      cause: error,
-    });
+    throw new Error(
+      `Failed to read report file ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
+
+export const parseReportInput = readReportText;
 
 type ArgOption = { type: "string" | "boolean"; multiple?: boolean };
 
@@ -196,20 +198,26 @@ export async function main(
       ) {
         throw new Error("Dispatch request must be a JSON object");
       }
+      const requestRecord = decodedRequest as Record<string, unknown>;
+      if (Object.prototype.hasOwnProperty.call(requestRecord, "receipt_root")) {
+        throw new Error(
+          "Dispatch request cannot specify 'receipt_root'; use CLI --receipt-root.",
+        );
+      }
       result = dispatchTask({
+        ...requestRecord,
         receipt_root: o.receipt_root,
-        ...(decodedRequest as Record<string, unknown>),
       } as DispatchOptions);
     } else if (command === "complete") {
       if (!o.dispatch_id) {
         throw new Error("--dispatch-id is required for complete");
       }
       if (!o.report) throw new Error("--report is required");
-      const reportData = parseReportInput(String(o.report));
+      const reportText = readReportText(String(o.report));
       result = completeDispatch({
         receipt_root: o.receipt_root,
         dispatch_id: o.dispatch_id,
-        report: reportData,
+        report: reportText,
       } as CompleteOptions);
     } else if (command === "resolve") {
       if (!o.decision || !o.reason) {

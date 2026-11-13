@@ -14,6 +14,7 @@ import {
   completeDispatch,
   dispatchTask,
   initWorkflow,
+  inspectState,
   resolveDecision,
 } from "../src/lifecycle/index.js";
 import { createTestDir, runLifecycleKernelCli } from "./helpers.js";
@@ -504,6 +505,55 @@ describe("Plan Acceptance Lifecycle (Phase 2B)", () => {
           next_stage: "stage_2_work",
         }),
       ).toThrow(/a delivery sequence already exists/);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // F13: Regular resolve must canonicalize logical_task aliases identically to plan acceptance and reject ambiguity.
+  it("F13: regular resolve canonicalizes unique logical_task next_stage and rejects ambiguous aliases", () => {
+    const env = createTestDir("pc-f13-resolve-alias-");
+    try {
+      const wfPath = path.join(env.dir, "alias-wf.json");
+      fs.writeFileSync(
+        wfPath,
+        JSON.stringify({
+          name: "alias-wf",
+          completion_policy: "basic",
+          initial_stage: "plan_step",
+          stages: [
+            { id: "plan_step", logical_task: "issue_plan", provider: { type: "skill", target: "pc-issue-plan" } },
+            { id: "impl_step", logical_task: "issue_work", provider: { type: "skill", target: "pc-issue-work" } },
+            { id: "verify_one", logical_task: "issue_verify", provider: { type: "skill", target: "pc-issue-verify" } },
+            { id: "verify_two", logical_task: "issue_verify", provider: { type: "skill", target: "pc-issue-verify" } },
+          ],
+        }),
+      );
+
+      const receiptRoot = path.join(env.dir, "receipts");
+      initWorkflow({
+        receipt_root: receiptRoot,
+        root_issue: "305",
+        workflow: wfPath,
+      });
+
+      const resolved = resolveDecision({
+        receipt_root: receiptRoot,
+        decision: "continue",
+        reason: "Move to unique logical role alias",
+        next_stage: "issue_work",
+      });
+      expect(resolved.next_stage).toBe("impl_step");
+      expect(inspectState({ receipt_root: receiptRoot }).current_stage).toBe("impl_step");
+
+      expect(() =>
+        resolveDecision({
+          receipt_root: receiptRoot,
+          decision: "continue",
+          reason: "Move to ambiguous logical role alias",
+          next_stage: "issue_verify",
+        }),
+      ).toThrow(/ambiguous/i);
     } finally {
       env.cleanup();
     }

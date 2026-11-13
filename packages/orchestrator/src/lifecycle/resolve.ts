@@ -53,14 +53,7 @@ function assertResolveShape(
     );
   }
   if (options.next_stage) {
-    const known = state.workflow_snapshot.stages.some(
-      (s) => s.id === options.next_stage,
-    );
-    if (!known) {
-      throw new Error(
-        `next_stage '${options.next_stage}' is not a stage of workflow '${state.workflow_snapshot.name}'.`,
-      );
-    }
+    resolveCanonicalStage(state.workflow_snapshot, options.next_stage);
   }
   if (supplied.length && state.active_dispatch) {
     throw new Error(

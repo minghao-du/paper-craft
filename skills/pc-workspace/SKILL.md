@@ -54,7 +54,8 @@ The kernel emits a machine-parseable JSON object:
     "branch": "issue-12",
     "baseBranch": "main",
     "commit": "0123456789abcdef0123456789abcdef01234567",
-    "created": true
+    "created": true,
+    "outcome": "prepared"
   },
   "receipt_path": "/path/to/receipts/01-workspace-prepare-receipt.md",
   "summary": "Prepared feature worktree for issue 12 at /path/to/worktree"

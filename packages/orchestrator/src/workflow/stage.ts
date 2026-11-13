@@ -44,33 +44,40 @@ export function resolveCanonicalStage(
   );
 }
 
+export const BUILTIN_AUXILIARY_ROLES = new Set<string>([
+  "workspace_prepare",
+  "workspace_cleanup",
+]);
+
+export const BUILTIN_REPLAN_ROLES = new Set<string>(["scope_replan"]);
+
+export const BUILTIN_NON_AUXILIARY_NON_REPLAN_ROLES = new Set<string>([
+  "issue_plan",
+  "issue_work",
+  "pipeline_refactor_execute",
+  "issue_land",
+  "pipeline_refactor_redeliver",
+  "issue_verify",
+  "pipeline_refactor_audit",
+  "issue_finalize",
+  "research_record",
+]);
+
 /**
  * Predicate: determines whether a stage is an initial planning stage.
  */
 export function isInitialPlanStage(stage: WorkflowStage): boolean {
-  if (
-    Boolean(stage.replan) ||
-    stage.logical_task === "scope_replan" ||
-    stage.id === "scope_replan"
-  ) {
+  if (Boolean(stage.replan) || stage.logical_task === "scope_replan") {
     return false;
   }
-  return (
-    stage.logical_task === "issue_plan" ||
-    stage.provider?.target === "pc-issue-plan" ||
-    stage.id === "stage_1_plan"
-  );
+  return stage.logical_task === "issue_plan";
 }
 
 /**
  * Predicate: determines whether a stage is a replanning stage.
  */
 export function isReplanStage(stage: WorkflowStage): boolean {
-  return (
-    Boolean(stage.replan) ||
-    stage.logical_task === "scope_replan" ||
-    stage.id === "scope_replan"
-  );
+  return Boolean(stage.replan) || stage.logical_task === "scope_replan";
 }
 
 /**
@@ -79,9 +86,7 @@ export function isReplanStage(stage: WorkflowStage): boolean {
 export function isLandingStage(stage: WorkflowStage): boolean {
   return (
     stage.logical_task === "issue_land" ||
-    stage.logical_task === "pipeline_refactor_redeliver" ||
-    stage.id === "stage_2_land" ||
-    stage.id === "stage_5_redeliver"
+    stage.logical_task === "pipeline_refactor_redeliver"
   );
 }
 
@@ -91,9 +96,7 @@ export function isLandingStage(stage: WorkflowStage): boolean {
 export function isVerificationStage(stage: WorkflowStage): boolean {
   return (
     stage.logical_task === "issue_verify" ||
-    stage.logical_task === "pipeline_refactor_audit" ||
-    stage.id === "stage_3_verify" ||
-    stage.id === "stage_4_refactor_audit"
+    stage.logical_task === "pipeline_refactor_audit"
   );
 }
 
@@ -101,20 +104,14 @@ export function isVerificationStage(stage: WorkflowStage): boolean {
  * Predicate: determines whether a stage is an issue closure/finalization stage.
  */
 export function isFinalizationStage(stage: WorkflowStage): boolean {
-  return (
-    stage.logical_task === "issue_finalize" ||
-    stage.id === "issue_finalize"
-  );
+  return stage.logical_task === "issue_finalize";
 }
 
 /**
  * Predicate: determines whether a stage is a workspace cleanup stage.
  */
 export function isCleanupStage(stage: WorkflowStage): boolean {
-  return (
-    stage.logical_task === "workspace_cleanup" ||
-    stage.id === "workspace_cleanup"
-  );
+  return stage.logical_task === "workspace_cleanup";
 }
 
 /**
@@ -124,9 +121,7 @@ export function isAuxiliaryStage(stage: WorkflowStage): boolean {
   return (
     Boolean(stage.auxiliary) ||
     stage.logical_task === "workspace_prepare" ||
-    stage.logical_task === "workspace_cleanup" ||
-    stage.id === "workspace_prepare" ||
-    stage.id === "workspace_cleanup"
+    stage.logical_task === "workspace_cleanup"
   );
 }
 
@@ -134,10 +129,7 @@ export function isAuxiliaryStage(stage: WorkflowStage): boolean {
  * Predicate: determines whether a stage is a research recording stage.
  */
 export function isResearchRecordStage(stage: WorkflowStage): boolean {
-  return (
-    stage.logical_task === "research_record" ||
-    stage.id === "stage_6_research_record"
-  );
+  return stage.logical_task === "research_record";
 }
 
 /**
@@ -147,9 +139,7 @@ export function isResearchRecordStage(stage: WorkflowStage): boolean {
 export function isContentChangingStage(stage: WorkflowStage): boolean {
   if (
     stage.logical_task === "issue_work" ||
-    stage.logical_task === "pipeline_refactor_execute" ||
-    stage.id === "stage_2_work" ||
-    stage.id === "stage_4_refactor_execute"
+    stage.logical_task === "pipeline_refactor_execute"
   ) {
     return true;
   }

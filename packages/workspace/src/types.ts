@@ -42,6 +42,20 @@ export interface PreparedWorkspace {
   disposition: 'created' | 'reused';
 }
 
+export type PreparedWorkspaceResult = {
+  outcome: 'prepared' | 'reused';
+  repository: string;
+  delivery_target: string;
+  base_remote: string;
+  push_remote: string;
+  working_directory: string;
+  worktree: string;
+  branch: string | null;
+  baseBranch: string;
+  commit: string;
+  created: boolean;
+};
+
 // ============================================================================
 // Cleanup Types (Section 6.2)
 // ============================================================================

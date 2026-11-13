@@ -1,6 +1,7 @@
 /**
  * Request parsing, validation, and comparison for Lifecycle operations.
  */
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parseReportInput } from "../protocol/index.js";
 import type {
@@ -356,6 +357,10 @@ export function compareCompleteReports(
 ): boolean {
   if (a.execution_status !== b.execution_status) return false;
   if (!isDeepStrictEqual(a.result, b.result)) return false;
+  if (!a.receipt_path || !b.receipt_path) return false;
+  if (path.resolve(a.receipt_path) !== path.resolve(b.receipt_path)) {
+    return false;
+  }
   if (a.summary !== b.summary) return false;
   return true;
 }

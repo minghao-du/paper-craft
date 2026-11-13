@@ -5,6 +5,7 @@ import {
   type PendingCommit,
   type PendingEnvelope,
   type RunCommit,
+  type RunStorageInspection,
   StorageError,
   StorageInconsistentError,
   StorageIOError,
@@ -80,6 +81,31 @@ function validateAndResolveEnvelopePath(root: string, filename: unknown): string
 }
 
 /**
+ * Verifies an existing envelope file against expectedContent if it already exists.
+ * Returns true if the file exists and matches; false if it does not exist.
+ * Throws StorageInconsistentError if unreadable, malformed JSON, or unequal.
+ */
+function assertEnvelopeCompatible(
+  envPath: string,
+  expectedContent: unknown,
+  conflictErrorMessage: string,
+): boolean {
+  if (!pathExists(envPath)) {
+    return false;
+  }
+  let existingContent: unknown;
+  try {
+    existingContent = JSON.parse(fs.readFileSync(envPath, "utf8"));
+  } catch {
+    throw new StorageInconsistentError(conflictErrorMessage);
+  }
+  if (!isDeepStrictEqual(existingContent, expectedContent)) {
+    throw new StorageInconsistentError(conflictErrorMessage);
+  }
+  return true;
+}
+
+/**
  * Verifies or writes an envelope file during commit or recovery.
  * If the file exists, validates that its content matches; otherwise writes it atomically.
  */
@@ -89,19 +115,38 @@ function applyEnvelope(
   conflictErrorMessage: string,
 ): void {
   const envPath = validateAndResolveEnvelopePath(root, envelope.filename);
-  if (fs.existsSync(envPath)) {
-    let existingContent: unknown;
-    try {
-      existingContent = JSON.parse(fs.readFileSync(envPath, "utf8"));
-    } catch {
-      throw new StorageInconsistentError(conflictErrorMessage);
-    }
-    if (!isDeepStrictEqual(existingContent, envelope.content)) {
-      throw new StorageInconsistentError(conflictErrorMessage);
-    }
-  } else {
+  if (!assertEnvelopeCompatible(envPath, envelope.content, conflictErrorMessage)) {
     atomicWriteJson(envPath, envelope.content);
   }
+}
+
+/**
+ * Validates the persisted shape of a pending-commit.json record.
+ */
+function isValidPendingCommit<TState = unknown>(
+  raw: unknown,
+): raw is PendingCommit<TState> {
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    (raw as { version?: unknown }).version !== "1.0" ||
+    !("target_state" in raw)
+  ) {
+    return false;
+  }
+  const envelope = (raw as { envelope?: unknown }).envelope;
+  if (envelope !== undefined && envelope !== null) {
+    if (
+      typeof envelope !== "object" ||
+      Array.isArray(envelope) ||
+      typeof (envelope as { filename?: unknown }).filename !== "string" ||
+      !("content" in envelope)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -133,32 +178,13 @@ export function loadRun<TState = unknown>(root: string): TState {
       );
     }
 
-    if (
-      pendingRaw === null ||
-      typeof pendingRaw !== "object" ||
-      Array.isArray(pendingRaw) ||
-      (pendingRaw as { version?: unknown }).version !== "1.0" ||
-      !("target_state" in pendingRaw)
-    ) {
+    if (!isValidPendingCommit<TState>(pendingRaw)) {
       throw new StorageInconsistentError(
         `Malformed pending-commit record at ${pendingPath}`,
       );
     }
 
-    const pending = pendingRaw as PendingCommit<TState>;
-
-    if (pending.envelope !== undefined && pending.envelope !== null) {
-      if (
-        typeof pending.envelope !== "object" ||
-        Array.isArray(pending.envelope) ||
-        typeof pending.envelope.filename !== "string" ||
-        !("content" in pending.envelope)
-      ) {
-        throw new StorageInconsistentError(
-          `Malformed pending-commit record at ${pendingPath}`,
-        );
-      }
-    }
+    const pending = pendingRaw;
 
     const stateExists = fs.existsSync(statePath);
     let diskState: unknown = undefined;
@@ -241,7 +267,8 @@ export function loadRun<TState = unknown>(root: string): TState {
 /**
  * Commits a state transition and optional envelope atomically to disk.
  * Uses a pending-commit record (pending-commit.json) as a durable 2-phase write log:
- * 1. Validates preconditions (expected_previous_state, relative envelope path).
+ * 1. Validates preconditions (expected_previous_state, relative envelope path,
+ *    and preflight compatibility of any pre-existing envelope file).
  * 2. Writes pending-commit.json atomically.
  * 3. Writes envelope atomically (verifying content if already exists).
  * 4. Writes state.json atomically.
@@ -252,10 +279,9 @@ export function commitRun<TState = unknown>(
   commit: RunCommit<TState>,
 ): void {
   const resolvedRoot = path.resolve(root);
-
-  if (commit.envelope) {
-    validateAndResolveEnvelopePath(resolvedRoot, commit.envelope.filename);
-  }
+  const envelopePath = commit.envelope
+    ? validateAndResolveEnvelopePath(resolvedRoot, commit.envelope.filename)
+    : null;
 
   const statePath = getStateFilePath(resolvedRoot);
   const stateExists = fs.existsSync(statePath);
@@ -288,6 +314,16 @@ export function commitRun<TState = unknown>(
         "Precondition failed: current state does not match expected_previous_state",
       );
     }
+  }
+
+  // Preflight any pre-existing envelope file before persisting pending-commit.json
+  // so predictable conflicts leave both state.json and pending-commit.json untouched.
+  if (commit.envelope && envelopePath) {
+    assertEnvelopeCompatible(
+      envelopePath,
+      commit.envelope.content,
+      "Envelope file exists with conflicting content",
+    );
   }
 
   const pendingPath = getPendingCommitPath(resolvedRoot);
@@ -327,6 +363,122 @@ function pathExists(filePath: string): boolean {
   }
 }
 
+const INPUT_ENVELOPE_ARTIFACT_RE = /^\d+-input\.json$/;
+const DISPATCH_RECEIPT_ARTIFACT_RE = /^\d+-.+\.md$/;
+
+function isDispatchArtifact(filename: string): boolean {
+  return (
+    INPUT_ENVELOPE_ARTIFACT_RE.test(filename) ||
+    DISPATCH_RECEIPT_ARTIFACT_RE.test(filename)
+  );
+}
+
+/**
+ * Lists recognized dispatch artifacts (numbered input envelopes and receipt files)
+ * directly inside resolvedRoot, sorted lexicographically.
+ * Throws StorageIOError advising a new run directory if resolvedRoot is not a
+ * readable directory.
+ */
+function findDispatchArtifacts(resolvedRoot: string): string[] {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(resolvedRoot);
+  } catch (error) {
+    throw new StorageIOError(
+      `Cannot inspect run directory ${resolvedRoot}: ${(error as Error).message}. Use a new run directory.`,
+    );
+  }
+  return entries.filter(isDispatchArtifact).sort();
+}
+
+function rejectIfDispatchArtifactsExist(resolvedRoot: string): void {
+  const dispatchArtifacts = findDispatchArtifacts(resolvedRoot);
+  if (dispatchArtifacts.length > 0) {
+    throw new StorageError(
+      `Cannot replace run in ${resolvedRoot}: dispatch artifacts exist (${dispatchArtifacts.join(", ")}). Use a new run directory.`,
+      "STORAGE_REPLACE_REJECTED",
+    );
+  }
+}
+
+/**
+ * Purely observational inspection of a run directory's storage artifacts.
+ * Does not modify any files or run pending-commit recovery.
+ */
+export function inspectRunStorage<TState = unknown>(
+  root: string,
+): RunStorageInspection<TState> {
+  const resolvedRoot = path.resolve(root);
+  if (!pathExists(resolvedRoot)) {
+    return {
+      exists: false,
+      stateExists: false,
+      pendingExists: false,
+      state: null,
+      stateCorrupt: false,
+      pending: null,
+      pendingCorrupt: false,
+      dispatchArtifacts: [],
+    };
+  }
+
+  const dispatchArtifacts = findDispatchArtifacts(resolvedRoot);
+
+  const statePath = getStateFilePath(resolvedRoot);
+  const stateExists = pathExists(statePath);
+  let state: TState | null = null;
+  let stateCorrupt = false;
+  if (stateExists) {
+    try {
+      state = JSON.parse(fs.readFileSync(statePath, "utf8")) as TState;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        stateCorrupt = true;
+      } else {
+        throw new StorageIOError(
+          `Failed to read state file at ${statePath}: ${String(error)}`,
+        );
+      }
+    }
+  }
+
+  const pendingPath = getPendingCommitPath(resolvedRoot);
+  const pendingExists = pathExists(pendingPath);
+  let pending: PendingCommit<TState> | null = null;
+  let pendingCorrupt = false;
+  if (pendingExists) {
+    try {
+      const pendingRaw: unknown = JSON.parse(
+        fs.readFileSync(pendingPath, "utf8"),
+      );
+      if (isValidPendingCommit<TState>(pendingRaw)) {
+        pending = pendingRaw;
+      } else {
+        pendingCorrupt = true;
+      }
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        pendingCorrupt = true;
+      } else {
+        throw new StorageIOError(
+          `Failed to read pending-commit file at ${pendingPath}: ${String(error)}`,
+        );
+      }
+    }
+  }
+
+  return {
+    exists: true,
+    stateExists,
+    pendingExists,
+    state,
+    stateCorrupt,
+    pending,
+    pendingCorrupt,
+    dispatchArtifacts,
+  };
+}
+
 /**
  * Loads the run state if one exists, otherwise returns null.
  * Null is returned only when neither state.json nor pending-commit.json
@@ -351,7 +503,9 @@ export function loadRunIfExists<TState = unknown>(root: string): TState | null {
  * Explicitly replaces any existing run with target_state (force semantics).
  * - Valid or recoverable old state is replaced through a normal commit.
  * - Corrupt/inconsistent old state or pending files are preserved as
- *   `<name>.corrupt-<timestamp>` evidence files before replacement.
+ *   `<name>.corrupt-<timestamp>` evidence files before replacement, unless
+ *   dispatch artifacts exist in the directory (in which case replacement is
+ *   rejected without modifying or renaming any files).
  * - I/O and permission errors are never treated as "not found"; if the old
  *   files cannot be safely replaced a StorageError is thrown advising a new
  *   run directory.
@@ -364,10 +518,13 @@ export function replaceRun<TState = unknown>(
 ): void {
   const resolvedRoot = path.resolve(root);
   let existing: TState | null;
+  let checkedArtifacts = false;
   try {
     existing = loadRunIfExists<TState>(resolvedRoot);
   } catch (error) {
     if (!(error instanceof StorageInconsistentError)) throw error;
+    rejectIfDispatchArtifactsExist(resolvedRoot);
+    checkedArtifacts = true;
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     try {
       for (const file of [
@@ -383,6 +540,9 @@ export function replaceRun<TState = unknown>(
       );
     }
     existing = null;
+  }
+  if (!checkedArtifacts && pathExists(resolvedRoot)) {
+    rejectIfDispatchArtifactsExist(resolvedRoot);
   }
   commitRun<TState>(resolvedRoot, {
     is_initial: existing === null,

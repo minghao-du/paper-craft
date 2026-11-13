@@ -73,10 +73,7 @@ The `workspace_prepare` stage is executed via a specialized skill subagent:
   The Orchestrator uses the [dispatch and launch step](../SKILL.md#3-execution-loop) to start `pc-workspace`. The subagent validates source checkout, creates or reuses the target
   worktree, writes the receipt, and returns the compact JSON report.
 
-### State Persistence & Acceptance Gate
-Before preparation, record the requested path, branch or integrated revision, source checkout,
-envelope path, receipt path, and status in `state.json`.
-
+### Acceptance Gate & Explicit Environment Passing
 Accept preparation only when:
 1. `execution_status` is `"succeeded"`.
 2. `result` contains verified environment properties matching the assigned task:
@@ -88,9 +85,7 @@ Accept preparation only when:
    - `outcome`: `prepared` (newly created) or `reused` (compatible existing environment).
 3. The physical receipt exists at `contract.receipt_path` and is non-empty.
 
-The preparation receipt records its source execution directory separately from the target environment in `result`.
-Record whether the target was created or reused. Resolve uncertain creation ownership after an interruption before
-allowing cleanup. Professional tasks proceed only after accepted preparation.
+The preparation receipt records its source execution directory separately from the target environment in `result`. Record whether the target was created or reused. Request/envelope and completion records preserve explicit environment assignments and preparation evidence (there is no `context.workspaces` registry): callers pass the chosen `workdir`/`branch`/`commit` explicitly on each dispatch and link relevant preparation receipts via `predecessor_receipts`. Resolve uncertain creation ownership after an interruption before allowing cleanup. Professional tasks proceed only after accepted preparation.
 
 ### Environment Reuse Rules
 - **Compatible Stages**: Reuse accepted feature environments across compatible sequential stages (e.g., `issue_work`
@@ -199,9 +194,5 @@ The Task Input Envelope supplies `inputs.parameters.candidates` using `pc-worksp
 Cleanup includes merged local and remote task branches whose refs still match their delivered SHAs. Historical resources require explicit issue-tree ownership evidence. Supply unresolved inventory items as `inputs.parameters.unresolved`; they block successful cleanup.
 Accept cleanup only with removed and retained paths, branches, and retention reasons in `result`. Recorded retention means cleanup remains incomplete; preserve unsafe candidates and retry only outstanding work. Failed or interrupted workflows retain their environments for diagnosis.
 
-### State Persistence & Crash Resumption ($O(1)$)
-Persist active environment assignments, preparation status and receipts, creation ownership, and cleanup results in
-`state.json` under `context.workspaces`. Update this state before dispatch and after acceptance so resumption can recover
-the workspace decision without replaying past conversations.
-Resume with the recorded assignment and validate it before further professional work. Historical receipts keep removed
-paths as history and point to durable evidence for subsequent use.
+### Completion Records & Resumption Evidence
+Request/envelope files, completion records, and runtime `context` preserve explicit environment assignments, preparation receipts, and cleanup results across restarts. Resume by inspecting state (`cli.ts inspect`) and recorded preparation/cleanup receipts, supply explicit `workdir`, `branch`, and `commit` fields on subsequent dispatches, and validate live workspace state before further professional work. Historical receipts retain removed paths as audit history and point to durable evidence for subsequent use.

@@ -14,11 +14,13 @@ import {
   inspectState,
   resolveDecision,
   type ResolveOptions,
+  type RuntimeState,
 } from '../src/lifecycle/index.js';
 import {
   getPendingCommitPath,
   getStateFilePath,
   loadRun,
+  replaceRun,
 } from '../src/run-store/index.js';
 import {
   createTestDir,
@@ -830,6 +832,154 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
       expect(inspection.finish_check.status).toBe('blocked');
       expect(inspection.finish_check.reasons.length).toBeGreaterThan(0);
       expect(inspection.blocking_reasons).toEqual([]); // no run-level blockers initially
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // F06 & F07: Historical completion replay works while another dispatch is active and rejects receipt_path changes.
+  it('F06 & F07: completion replay for settled dispatch succeeds while later dispatch is active and rejects changed receipt_path', () => {
+    const env = createTestDir('pc-f06-f07-');
+    try {
+      initWorkflow({ receipt_root: env.dir, root_issue: 114 });
+
+      const plan = dispatchTask({
+        receipt_root: env.dir,
+        request_id: 'f06-plan',
+        stage: 'stage_1_plan',
+        objective: 'Plan issue 114',
+        provider: { type: 'skill', target: 'pc-issue-plan' },
+        workdir: env.dir,
+      });
+      fs.writeFileSync(plan.receipt_path, '# Plan receipt');
+      const planReport = {
+        execution_status: 'succeeded' as const,
+        result: { outcome: 'direct' },
+        receipt_path: plan.receipt_path,
+        summary: 'Planned',
+      };
+      const completedPlan = completeDispatch({
+        receipt_root: env.dir,
+        dispatch_id: plan.dispatch_id,
+        report: planReport,
+      });
+
+      resolveDecision({
+        receipt_root: env.dir,
+        decision: 'continue',
+        reason: 'Accept direct plan',
+        plan_dispatch_id: plan.dispatch_id,
+        next_stage: 'stage_2_work',
+      });
+
+      const work = dispatchTask({
+        receipt_root: env.dir,
+        request_id: 'f06-work',
+        stage: 'stage_2_work',
+        objective: 'Implement issue 114',
+        provider: { type: 'skill', target: 'pc-issue-work' },
+        workdir: env.dir,
+      });
+
+      // Replay with lexically equivalent receipt_path while work dispatch is active
+      const dotNormalizedReceipt = path.join(
+        path.dirname(plan.receipt_path),
+        '.',
+        path.basename(plan.receipt_path),
+      );
+      const replayed = completeDispatch({
+        receipt_root: env.dir,
+        dispatch_id: plan.dispatch_id,
+        report: { ...planReport, receipt_path: dotNormalizedReceipt },
+      });
+      expect(replayed).toEqual(completedPlan);
+      const afterReplay = loadRun<RuntimeState>(env.dir);
+      expect(afterReplay.active_dispatch?.dispatch_id).toBe(work.dispatch_id);
+      expect(afterReplay.completed_stages).toHaveLength(1);
+
+      // Changed receipt_path on settled replay must reject without mutating active dispatch B
+      const altReceipt = path.join(env.dir, 'other-receipt.md');
+      fs.writeFileSync(altReceipt, '# Other receipt');
+      expect(() =>
+        completeDispatch({
+          receipt_root: env.dir,
+          dispatch_id: plan.dispatch_id,
+          report: { ...planReport, receipt_path: altReceipt },
+        }),
+      ).toThrow(/Conflicting report/);
+      const afterConflict = loadRun<RuntimeState>(env.dir);
+      expect(afterConflict.active_dispatch?.dispatch_id).toBe(work.dispatch_id);
+      expect(afterConflict.completed_stages[0]?.receipt_path).toBe(plan.receipt_path);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // F09: Different explicit workdir must clear inherited branch/commit rather than copying stale context values.
+  it('F09: dispatch with different workdir sets omitted branch/commit to null while equal workdir retains inheritance', () => {
+    const env = createTestDir('pc-f09-workdir-');
+    const worktreeA = path.join(env.dir, 'wt-a');
+    const worktreeB = path.join(env.dir, 'wt-b');
+    fs.mkdirSync(worktreeA, { recursive: true });
+    fs.mkdirSync(worktreeB, { recursive: true });
+    try {
+      const state = initWorkflow({ receipt_root: env.dir, root_issue: 115 });
+      replaceRun(env.dir, {
+        ...state,
+        context: {
+          ...(state.context ?? {}),
+          worktree: worktreeA,
+          branch: 'feat/issue-115',
+          commit: 'abc1234',
+        },
+      });
+
+      // Dispatch with explicit different workdir and omitted branch/commit -> null
+      const diffDirDispatch = dispatchTask({
+        receipt_root: env.dir,
+        request_id: 'f09-diff-dir',
+        stage: 'stage_1_plan',
+        objective: 'Plan in fresh dir',
+        provider: { type: 'skill', target: 'pc-issue-plan' },
+        workdir: worktreeB,
+      });
+      const diffEnvelope = JSON.parse(fs.readFileSync(diffDirDispatch.envelope_path, 'utf8'));
+      expect(diffEnvelope.environment.working_directory).toBe(path.resolve(worktreeB));
+      expect(diffEnvelope.environment.branch).toBeNull();
+      expect(diffEnvelope.environment.commit).toBeNull();
+
+      fs.writeFileSync(diffDirDispatch.receipt_path, '# Plan receipt');
+      completeDispatch({
+        receipt_root: env.dir,
+        dispatch_id: diffDirDispatch.dispatch_id,
+        report: {
+          execution_status: 'succeeded',
+          result: { outcome: 'direct' },
+          receipt_path: diffDirDispatch.receipt_path,
+          summary: 'Planned',
+        },
+      });
+      resolveDecision({
+        receipt_root: env.dir,
+        decision: 'continue',
+        reason: 'Accept plan',
+        plan_dispatch_id: diffDirDispatch.dispatch_id,
+        next_stage: 'stage_2_work',
+      });
+
+      // Dispatch with explicit equal workdir preserves context inheritance
+      const sameDirDispatch = dispatchTask({
+        receipt_root: env.dir,
+        request_id: 'f09-same-dir',
+        stage: 'stage_2_work',
+        objective: 'Work in worktreeA',
+        provider: { type: 'skill', target: 'pc-issue-work' },
+        workdir: worktreeA,
+      });
+      const sameEnvelope = JSON.parse(fs.readFileSync(sameDirDispatch.envelope_path, 'utf8'));
+      expect(sameEnvelope.environment.working_directory).toBe(path.resolve(worktreeA));
+      expect(sameEnvelope.environment.branch).toBe('feat/issue-115');
+      expect(sameEnvelope.environment.commit).toBe('abc1234');
     } finally {
       env.cleanup();
     }

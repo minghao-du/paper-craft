@@ -107,6 +107,7 @@ export interface RuntimeState {
   root_issue_id: string;
   current_issue_id: string;
   workflow?: string;
+  workflow_locator?: string;
   workflow_snapshot: WorkflowDefinition;
   current_stage: string;
   stage_status: string;

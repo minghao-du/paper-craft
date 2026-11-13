@@ -25,6 +25,45 @@ import type {
   RuntimeState,
 } from "./types.js";
 
+function resolveDispatchEnvironment(
+  request: NormalizedDispatchRequest,
+  context: Record<string, unknown>,
+  config: Record<string, unknown>,
+): {
+  workingDirectory: string;
+  resolvedBranch: string | null;
+  resolvedCommit: string | null;
+} {
+  const defaultWorkingDirectory = path.resolve(
+    (context.worktree as string | undefined) ||
+      (context.working_directory as string | undefined) ||
+      (config.repo_checkout as string | undefined) ||
+      process.cwd(),
+  );
+  const workingDirectory = path.resolve(
+    request.workdir || defaultWorkingDirectory,
+  );
+  const inheritContextRef = workingDirectory === defaultWorkingDirectory;
+  const resolvedBranch =
+    request.branch !== undefined
+      ? request.branch
+      : inheritContextRef
+        ? ((context.branch as string | null | undefined) ?? null)
+        : null;
+  const resolvedCommit =
+    request.commit !== undefined
+      ? request.commit
+      : inheritContextRef
+        ? ((context.commit as string | null | undefined) ?? null)
+        : null;
+
+  return {
+    workingDirectory,
+    resolvedBranch,
+    resolvedCommit,
+  };
+}
+
 export function dispatchTask(options: DispatchOptions): DispatchResult {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Dispatch options must be a JSON object");
@@ -149,21 +188,8 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
 
   const context = state.context ?? {};
   const config = state.config_snapshot ?? {};
-  const workingDirectory = path.resolve(
-    request.workdir ||
-      (context.worktree as string | undefined) ||
-      (context.working_directory as string | undefined) ||
-      (config.repo_checkout as string | undefined) ||
-      process.cwd(),
-  );
-  const resolvedBranch =
-    request.branch !== undefined
-      ? request.branch
-      : ((context.branch as string | null | undefined) ?? null);
-  const resolvedCommit =
-    request.commit !== undefined
-      ? request.commit
-      : ((context.commit as string | null | undefined) ?? null);
+  const { workingDirectory, resolvedBranch, resolvedCommit } =
+    resolveDispatchEnvironment(request, context, config);
   for (const item of request.predecessor_receipts) {
     if (typeof item !== "string" || !item.trim()) {
       throw new Error("Predecessor receipt path must be a non-empty string.");

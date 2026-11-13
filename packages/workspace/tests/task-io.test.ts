@@ -93,23 +93,109 @@ describe('Workspace Task-IO', () => {
     ).toThrow(/Conflicting issue/);
   });
 
-  it('maps envelope branch + commit to branch with expectedHead', () => {
-    const envelope: WorkspaceTaskInput = {
+  it('maps envelope branch + commit to branch with expectedHead even when repeated via CLI or without issue', () => {
+    const sha = '1111222233334444555566667777888899990000';
+    const issueEnvelope: WorkspaceTaskInput = {
       task: { current_issue_id: 10 },
       environment: {
         working_directory: tmpDir,
         branch: 'feature-10',
-        commit: '1111222233334444555566667777888899990000',
+        commit: sha,
       },
     };
 
-    const { request } = mapToPrepareRequest({ repoDir: tmpDir }, envelope);
-    expect(request.target.kind).toBe('issue');
-    if (request.target.kind === 'issue') {
-      expect(request.target.branch).toBe('feature-10');
-      expect(request.target.expectedHead).toBe(
-        '1111222233334444555566667777888899990000',
-      );
+    const baseline = mapToPrepareRequest({ repoDir: tmpDir }, issueEnvelope);
+    const repeated = mapToPrepareRequest(
+      { repoDir: tmpDir, branch: 'feature-10', commit: sha },
+      issueEnvelope,
+    );
+    expect(baseline.request.target).toEqual({
+      kind: 'issue',
+      issue: 10,
+      branch: 'feature-10',
+      path: undefined,
+      expectedHead: sha,
+    });
+    expect(repeated.request.target).toEqual(baseline.request.target);
+
+    // Without issue, distinct working_directory acts as worktree deterministically
+    // regardless of whether the worktree directory already exists on disk.
+    const wtDir = path.join(tmpDir, 'wt-feature-10');
+    const branchEnvelope: WorkspaceTaskInput = {
+      environment: {
+        working_directory: wtDir,
+        branch: 'feature-10',
+        commit: sha,
+      },
+    };
+    const beforeCreate = mapToPrepareRequest(
+      { repoDir: tmpDir, branch: 'feature-10', commit: sha },
+      branchEnvelope,
+    );
+    fs.mkdirSync(wtDir, { recursive: true });
+    const afterCreate = mapToPrepareRequest(
+      { repoDir: tmpDir, branch: 'feature-10', commit: sha },
+      branchEnvelope,
+    );
+    expect(beforeCreate.request.target).toEqual({
+      kind: 'branch',
+      branch: 'feature-10',
+      path: resolvePath(wtDir),
+      expectedHead: sha,
+    });
+    expect(afterCreate.request.target).toEqual(beforeCreate.request.target);
+    expect(afterCreate.request.sourceCheckout).toBe(resolvePath(tmpDir));
+  });
+
+  it('supports standalone detached requests and rejects contradictory branch/detached declarations', () => {
+    const sha = '1111222233334444555566667777888899990000';
+    const otherSha = '2222333344445555666677778888999900001111';
+    const wtDir = path.join(tmpDir, 'detached-wt');
+
+    // Valid standalone detached target
+    const detached = mapToPrepareRequest({
+      repoDir: tmpDir,
+      worktree: wtDir,
+      commit: sha,
+    });
+    expect(detached.request.target).toEqual({
+      kind: 'detached',
+      commit: sha,
+      path: resolvePath(wtDir),
+    });
+
+    const invalidCases: Array<[string, Parameters<typeof mapToPrepareRequest>[0], WorkspaceTaskInput?]> = [
+      ['standalone --branch + --commit', { repoDir: tmpDir, worktree: wtDir, branch: 'feat', commit: sha }],
+      ['standalone --issue + --commit', { repoDir: tmpDir, worktree: wtDir, issue: 10, commit: sha }],
+      [
+        'env branch === null + --branch',
+        { repoDir: tmpDir, worktree: wtDir, branch: 'feat' },
+        { environment: { working_directory: wtDir, branch: null, commit: sha } },
+      ],
+      [
+        'env branch without env commit + --commit',
+        { repoDir: tmpDir, worktree: wtDir, commit: sha },
+        { environment: { working_directory: wtDir, branch: 'feat' } },
+      ],
+      [
+        'env branch + commit conflicting with expectedHead',
+        { repoDir: tmpDir, expectedHead: otherSha },
+        { task: { current_issue_id: 10 }, environment: { working_directory: tmpDir, branch: 'feat', commit: sha } },
+      ],
+      [
+        'standalone commit conflicting with expectedHead',
+        { repoDir: tmpDir, worktree: wtDir, commit: sha, expectedHead: otherSha },
+      ],
+    ];
+
+    for (const [label, args, env] of invalidCases) {
+      try {
+        mapToPrepareRequest(args, env);
+        expect.unreachable(`Expected INVALID_INPUT for ${label}`);
+      } catch (err) {
+        expect(err, label).toBeInstanceOf(WorkspaceError);
+        expect((err as WorkspaceError).code, label).toBe('INVALID_INPUT');
+      }
     }
   });
 
@@ -382,7 +468,7 @@ describe('Workspace Task-IO', () => {
     expect(() => loadEnvelope(bad)).toThrow(/schema_version/);
   });
 
-  it('maps PreparedWorkspace to external result format', () => {
+  it('maps PreparedWorkspace to external result format with outcome', () => {
     const prepared: PreparedWorkspace = {
       repository: 'owner/repo',
       deliveryTarget: 'owner/repo',
@@ -396,8 +482,8 @@ describe('Workspace Task-IO', () => {
       disposition: 'created',
     };
 
-    const result = mapPreparedWorkspaceToResult(prepared);
-    expect(result).toEqual({
+    expect(mapPreparedWorkspaceToResult(prepared)).toEqual({
+      outcome: 'prepared',
       repository: 'owner/repo',
       delivery_target: 'owner/repo',
       base_remote: 'origin',
@@ -408,6 +494,21 @@ describe('Workspace Task-IO', () => {
       baseBranch: 'main',
       commit: 'abc1234',
       created: true,
+    });
+
+    const reused: PreparedWorkspace = { ...prepared, disposition: 'reused' };
+    expect(mapPreparedWorkspaceToResult(reused)).toEqual({
+      outcome: 'reused',
+      repository: 'owner/repo',
+      delivery_target: 'owner/repo',
+      base_remote: 'origin',
+      push_remote: 'origin',
+      working_directory: '/repo-worktrees/issue-1',
+      worktree: '/repo-worktrees/issue-1',
+      branch: 'issue-1',
+      baseBranch: 'main',
+      commit: 'abc1234',
+      created: false,
     });
   });
 
