@@ -1,23 +1,34 @@
 import type {
   ApplyDeliveryDecisionParams,
-  ApplyDeliveryDecisionResult,
-  CalculateDeliveryChangeParams,
   CompletionRecordView,
-  DeliveryCalculationResult,
   DeliveryDecision,
+  DeliveryDecisionResult,
   DeliveryItem,
   DeliverySequence,
   DeliveryState,
   IssueBudgets,
-  PlanningSource,
   WorkflowBudgets,
   WorkflowDefinition,
   WorkflowStage,
 } from "./types.js";
-
-export { assertCanFinish, inspectDelivery } from "./completion.js";
-
-const LANDING_PROVIDER = "pc-pr-land";
+import { WorkflowIntegrityError } from "./types.js";
+import {
+  allocatesDeliveryAttempt,
+  invalidatesLanding,
+  isAuxiliaryStage,
+  isCleanupStage,
+  isContentChangingStage,
+  isFinalizationStage,
+  isInitialPlanStage,
+  isLandingStage,
+  isReplanStage,
+  isVerificationStage,
+  resolveCanonicalStage,
+} from "./stage.js";
+import {
+  isLandingInvalidatedBySubsequentWork,
+  validateLandingRecord,
+} from "./evidence.js";
 
 export interface DeliveryDispatchResult {
   currentIssueId: string;
@@ -32,24 +43,6 @@ export interface DeliveryDispatchResult {
     replans_by_stage?: Record<string, number>;
   };
   nextDeliveryState: DeliveryState;
-}
-
-export function resolveCanonicalStage(
-  workflow: WorkflowDefinition,
-  stageRef: string,
-): WorkflowStage {
-  const trimmed = stageRef.trim();
-  const byId = workflow.stages.find((s) => s.id === trimmed);
-  if (byId) return byId;
-  const byLogical = workflow.stages.filter((s) => s.logical_task === trimmed);
-  if (byLogical.length === 1) return byLogical[0];
-  if (byLogical.length > 1) {
-    const candidates = byLogical.map((s) => s.id).join(", ");
-    throw new Error(
-      `Ambiguous stage reference '${trimmed}': matches multiple stages (${candidates}). Please provide explicit stage ID.`,
-    );
-  }
-  throw new Error(`Unknown stage reference '${trimmed}' in workflow.`);
 }
 
 function parsePositiveIntegerId(raw: unknown, label: string): string {
@@ -141,11 +134,24 @@ function validatePlanOrder(tasks: unknown[], rootIssueId?: string): string[] {
   return parsedItems.map((item) => item.id);
 }
 
+/**
+ * Child sequence creation inheriting replans_max and delivery_attempts_max from rootBudgets (F14).
+ * Child usage starts strictly at 0.
+ */
 function makeDeliverySequence(
   ids: string[],
-  max: number,
+  rootBudgets: IssueBudgets,
   initialStage: string,
 ): DeliverySequence {
+  const deliveryMax =
+    typeof rootBudgets.delivery_attempts_max === "number"
+      ? rootBudgets.delivery_attempts_max
+      : 3;
+  const replanMax =
+    typeof rootBudgets.replans_max === "number"
+      ? rootBudgets.replans_max
+      : 2;
+
   return {
     items: ids.map((issue_id) => ({
       issue_id,
@@ -153,9 +159,9 @@ function makeDeliverySequence(
       status: "pending",
       budgets: {
         delivery_attempts_used: 0,
-        delivery_attempts_max: max,
+        delivery_attempts_max: deliveryMax,
         replans_used: 0,
-        replans_max: 2,
+        replans_max: replanMax,
         replans_by_stage: {},
       },
       landed: false,
@@ -165,6 +171,10 @@ function makeDeliverySequence(
   };
 }
 
+/**
+ * Evaluates dispatch attempt and delivery state transitions for a task.
+ * Exported for internal test and dispatch usage.
+ */
 export function calculateDeliveryDispatch(
   workflow: WorkflowDefinition,
   deliveryState: DeliveryState,
@@ -176,21 +186,19 @@ export function calculateDeliveryDispatch(
   },
   completedStages?: readonly CompletionRecordView[],
 ): DeliveryDispatchResult {
-  // Input immutability (W04): clone deliveryState completely
+  // Input immutability: clone deliveryState completely
   const nextDeliveryState: DeliveryState = structuredClone(deliveryState);
   const rootIssueId = String(nextDeliveryState.rootIssueId).trim();
 
-  const isAuxiliary = Boolean(
-    stageDef.auxiliary ||
-      ["workspace_prepare", "workspace_cleanup"].includes(stageDef.id),
-  );
-  const isReplan = Boolean(
-    stageDef.replan ||
-      stageDef.id === "scope_replan" ||
-      stageDef.logical_task === "scope_replan",
-  );
+  const isReplan = isReplanStage(stageDef);
+  const isAux = isAuxiliaryStage(stageDef);
+  const isPostDeliveryReview =
+    isVerificationStage(stageDef) ||
+    isFinalizationStage(stageDef) ||
+    isCleanupStage(stageDef);
+  const isContentChanging = isContentChangingStage(stageDef);
 
-  // 1. Issue ownership (Section 8.2)
+  // 1. Issue ownership
   const designated =
     request.rework_issue != null && request.rework_issue.trim() !== ""
       ? String(request.rework_issue).trim()
@@ -199,7 +207,6 @@ export function calculateDeliveryDispatch(
   let targetIssueId: string;
 
   if (designated !== null) {
-    // Priority 1: Explicit rework_issue
     const inSequence = nextDeliveryState.sequence?.items?.find(
       (i) => String(i.issue_id) === designated,
     );
@@ -222,36 +229,43 @@ export function calculateDeliveryDispatch(
 
     targetIssueId = designated;
   } else if (nextDeliveryState.sequence?.active_rework_issue_id) {
-    // Priority 2: Existing active_rework_issue_id
     targetIssueId = String(nextDeliveryState.sequence.active_rework_issue_id);
   } else if (
     nextDeliveryState.sequence &&
     !nextDeliveryState.sequence.completed
   ) {
-    // Priority 3: Normal unfinished delivery sequence (including replan stages, W06)
-    const curIdx = nextDeliveryState.sequence.current_index ?? 0;
-    const curItem = nextDeliveryState.sequence.items?.[curIdx];
-    targetIssueId = curItem ? String(curItem.issue_id) : rootIssueId;
+    const curIdx = nextDeliveryState.sequence.current_index;
+    if (
+      typeof curIdx !== "number" ||
+      curIdx < 0 ||
+      curIdx >= nextDeliveryState.sequence.items.length
+    ) {
+      throw new WorkflowIntegrityError(
+        `Invalid sequence current_index: ${curIdx}. Cursor is out of range for sequence of length ${nextDeliveryState.sequence.items.length}.`,
+      );
+    }
+    const curItem = nextDeliveryState.sequence.items[curIdx];
+    targetIssueId = String(curItem.issue_id);
   } else {
-    // Priority 4: Root-level task or sequence completed
     targetIssueId = rootIssueId;
   }
 
-  // Find target item (if child) and authoritative budget
-  const targetItem =
-    nextDeliveryState.sequence?.items?.find(
-      (i) => String(i.issue_id) === targetIssueId,
-    ) ?? null;
+  // Find target item (if child) and authoritative budget (F07)
+  const isRootTarget = targetIssueId === rootIssueId;
+  const targetItem: DeliveryItem | null = isRootTarget
+    ? null
+    : (nextDeliveryState.sequence?.items?.find(
+        (i) => String(i.issue_id) === targetIssueId,
+      ) ?? null);
+
+  if (!isRootTarget && !targetItem) {
+    throw new WorkflowIntegrityError(
+      `Target issue '${targetIssueId}' not found in delivery sequence.`,
+    );
+  }
 
   const targetBudgets: IssueBudgets = targetItem
-    ? (targetItem.budgets ??= {
-        delivery_attempts_used: 0,
-        delivery_attempts_max:
-          nextDeliveryState.rootBudgets.delivery_attempts_max ?? 3,
-        replans_used: 0,
-        replans_max: nextDeliveryState.rootBudgets.replans_max ?? 2,
-        replans_by_stage: {},
-      })
+    ? targetItem.budgets
     : nextDeliveryState.rootBudgets;
 
   let attempt: number;
@@ -260,7 +274,6 @@ export function calculateDeliveryDispatch(
 
   // 2. Budget calculations by stage type
   if (isReplan) {
-    // Replan stage (Section 8.4 & W06)
     if (request.originating_stage && request.originating_stage.trim() !== "") {
       const originDef = resolveCanonicalStage(
         workflow,
@@ -272,24 +285,15 @@ export function calculateDeliveryDispatch(
         if (e.issue_id != null && String(e.issue_id).trim() !== targetIssueId) {
           return false;
         }
-        const def = workflow.stages.find(
-          (s) => s.id === e.stage || s.logical_task === e.stage,
-        );
-        if (!def) return false;
-        if (
-          def.auxiliary ||
-          ["workspace_prepare", "workspace_cleanup"].includes(def.id)
-        ) {
+        try {
+          const def = resolveCanonicalStage(workflow, e.stage ?? "");
+          if (isAuxiliaryStage(def) || isReplanStage(def)) {
+            return false;
+          }
+          return true;
+        } catch {
           return false;
         }
-        if (
-          def.replan ||
-          def.id === "scope_replan" ||
-          def.logical_task === "scope_replan"
-        ) {
-          return false;
-        }
-        return true;
       });
 
       const latestRecord = candidates.at(-1);
@@ -303,20 +307,16 @@ export function calculateDeliveryDispatch(
     }
 
     const originDef = resolveCanonicalStage(workflow, originStage);
-    if (
-      originDef.replan ||
-      originDef.id === "scope_replan" ||
-      originDef.logical_task === "scope_replan"
-    ) {
+    if (isReplanStage(originDef)) {
       throw new Error(
         `Replan stage '${originDef.id}' cannot be its own originating stage.`,
       );
     }
 
     const replanMax =
-      targetBudgets.replans_max ??
-      nextDeliveryState.rootBudgets.replans_max ??
-      2;
+      typeof targetBudgets.replans_max === "number"
+        ? targetBudgets.replans_max
+        : 2;
     const byStage = (targetBudgets.replans_by_stage ??= {});
     const used = byStage[originStage] ?? 0;
 
@@ -331,13 +331,24 @@ export function calculateDeliveryDispatch(
 
     attempt = used + 1;
     deliveryAttempt = targetBudgets.delivery_attempts_used || 1;
-  } else if (isAuxiliary) {
-    // Auxiliary stage (Section 8.3)
+  } else if (isAux) {
+    const used = targetBudgets.delivery_attempts_used ?? 0;
+    attempt = Math.max(1, used);
+    deliveryAttempt = used;
+  } else if (isPostDeliveryReview) {
+    // F13: Verification, finalization, cleanup after landing
+    // MUST NOT allocate a new delivery attempt, must NOT clear landing evidence,
+    // and must NOT be rejected in direct mode just because the issue is landed.
+    if (request.attempt_intent === "new") {
+      throw new Error(
+        `Cannot start a new delivery attempt on non-content-changing stage '${stageDef.id}'.`,
+      );
+    }
     const used = targetBudgets.delivery_attempts_used ?? 0;
     attempt = Math.max(1, used);
     deliveryAttempt = used;
   } else {
-    // Ordinary Delivery Stage
+    // Content-changing work / ordinary delivery stage
     const isExplicitRework = designated !== null;
     const isActiveRework = Boolean(
       nextDeliveryState.sequence?.active_rework_issue_id,
@@ -346,15 +357,18 @@ export function calculateDeliveryDispatch(
       isExplicitRework &&
       nextDeliveryState.sequence?.active_rework_issue_id !== designated;
 
+    const max =
+      typeof targetBudgets.delivery_attempts_max === "number"
+        ? targetBudgets.delivery_attempts_max
+        : 3;
+
     if (isFirstStartingRework) {
-      // First starting rework requires attempt_intent: "new" (Section 9.2)
       if (request.attempt_intent !== "new") {
         throw new Error(
           `Starting rework on issue '${designated}' requires attempt_intent: 'new'.`,
         );
       }
       const used = targetBudgets.delivery_attempts_used ?? 0;
-      const max = targetBudgets.delivery_attempts_max ?? 3;
       if (used >= max) {
         throw new Error(
           `Budget exceeded: delivery attempts used (${used}) reached maximum (${max}) for issue ${targetIssueId}.`,
@@ -377,10 +391,8 @@ export function calculateDeliveryDispatch(
       deliveryAttempt = targetBudgets.delivery_attempts_used;
       attempt = deliveryAttempt;
     } else if (isActiveRework) {
-      // Continuing active rework
       if (request.attempt_intent === "new") {
         const used = targetBudgets.delivery_attempts_used ?? 0;
-        const max = targetBudgets.delivery_attempts_max ?? 3;
         if (used >= max) {
           throw new Error(
             `Budget exceeded: delivery attempts used (${used}) reached maximum (${max}) for issue ${targetIssueId}.`,
@@ -407,7 +419,6 @@ export function calculateDeliveryDispatch(
         }
       }
     } else {
-      // Normal delivery
       if (targetItem?.landed && request.attempt_intent !== "new") {
         throw new Error(
           `Issue '${targetIssueId}' is already landed. Modifying an already landed issue requires attempt_intent: 'new'.`,
@@ -415,8 +426,6 @@ export function calculateDeliveryDispatch(
       }
 
       const used = targetBudgets.delivery_attempts_used ?? 0;
-      const max = targetBudgets.delivery_attempts_max ?? 3;
-
       if (used === 0) {
         if (max <= 0) {
           throw new Error(
@@ -446,6 +455,8 @@ export function calculateDeliveryDispatch(
           delete targetItem.land_dispatch_id;
           targetItem.stage = stageDef.id;
           targetItem.status = "pending";
+        } else if (targetIssueId === rootIssueId) {
+          delete nextDeliveryState.rootLandingEvidence;
         }
       } else {
         deliveryAttempt = used;
@@ -464,8 +475,8 @@ export function calculateDeliveryDispatch(
     nextDeliveryState.sequence?.items?.length === 1 &&
     nextDeliveryState.sequence.items[0].issue_id === rootIssueId
   ) {
-    nextDeliveryState.rootBudgets = structuredClone(
-      nextDeliveryState.sequence.items[0].budgets,
+    nextDeliveryState.sequence.items[0].budgets = structuredClone(
+      nextDeliveryState.rootBudgets,
     );
   }
 
@@ -478,392 +489,154 @@ export function calculateDeliveryDispatch(
     originatingStage: isReplan ? originStage : undefined,
     budgets: {
       delivery_attempts_used: targetBudgets.delivery_attempts_used ?? 0,
-      delivery_attempts_max: targetBudgets.delivery_attempts_max ?? 3,
+      delivery_attempts_max:
+        typeof targetBudgets.delivery_attempts_max === "number"
+          ? targetBudgets.delivery_attempts_max
+          : 3,
       replans_used: targetBudgets.replans_used ?? 0,
-      replans_max: targetBudgets.replans_max ?? 2,
-      replans_by_stage: targetBudgets.replans_by_stage,
+      replans_max:
+        typeof targetBudgets.replans_max === "number"
+          ? targetBudgets.replans_max
+          : 2,
+      replans_by_stage: targetBudgets.replans_by_stage
+        ? { ...targetBudgets.replans_by_stage }
+        : undefined,
     },
     nextDeliveryState,
   };
 }
 
-export function calculateDeliveryChange(
-  params: CalculateDeliveryChangeParams,
-): DeliveryCalculationResult {
-  const sequence = params.deliverySequence
-    ? structuredClone(params.deliverySequence)
-    : null;
-  let currentItem: DeliveryItem | null = null;
-  let currentIssue = params.currentIssueId ?? params.rootIssueId ?? "0";
-
-  const designated =
-    params.reworkIssue == null ? null : String(params.reworkIssue).trim();
-
-  if (designated !== null) {
-    currentItem =
-      sequence?.items?.find((item) => String(item.issue_id) === designated) ??
-      null;
-    if (!currentItem && String(params.rootIssueId) !== designated) {
-      throw new Error(
-        `Cannot attribute rework to issue '${designated}': issue not found in delivery sequence. Gaps that cannot be attributed to an existing issue must be routed to replanning; do not guess attribution or replace plan.`,
-      );
-    }
-    if (currentItem && sequence) {
-      sequence.active_rework_issue_id = designated;
-    }
-    currentIssue = designated;
-  } else if (sequence?.active_rework_issue_id && !params.intent.replan) {
-    currentIssue = String(sequence.active_rework_issue_id);
-    currentItem =
-      sequence.items?.find((item) => String(item.issue_id) === currentIssue) ??
-      null;
-  } else if (sequence && !sequence.completed && !params.intent.replan) {
-    currentItem = sequence.items?.[sequence.current_index ?? 0] ?? null;
-    if (currentItem) {
-      currentIssue = currentItem.issue_id;
-    }
-  }
-
-  const budgets = structuredClone(params.budgets);
-  let attempt: number;
-  let deliveryUsed: number;
-  let deliveryMax: number;
-  let replanUsed: number;
-  let replanMax: number;
-  let nextOriginatingStage = params.originatingStageForReplan ?? null;
-
-  if (params.intent.replan) {
-    let originStage = params.parameters?.originating_stage as
-      | string
-      | undefined;
-    if (!originStage) {
-      if (
-        params.originatingStageForReplan &&
-        params.originatingStageForReplan !== "scope_replan"
-      ) {
-        originStage = params.originatingStageForReplan;
-      } else {
-        originStage = "stage_1_plan";
-      }
-    }
-    nextOriginatingStage = originStage;
-
-    const target = currentItem
-      ? (currentItem.budgets ??= {
-          delivery_attempts_used: 0,
-          delivery_attempts_max: budgets.delivery_attempts_max ?? 3,
-        })
-      : budgets;
-
-    const byStage = (target.replans_by_stage ??= {});
-    const used = byStage[originStage] ?? 0;
-    const max = target.replans_max ?? budgets.replans_max ?? 2;
-    if (max <= 0 || used >= max) {
-      throw new Error(
-        `Budget exceeded: replans used (${used}) reached maximum (${max}) for issue ${currentIssue} and stage ${originStage}.`,
-      );
-    }
-    byStage[originStage] = used + 1;
-    target.replans_used = (target.replans_used ?? 0) + 1;
-    if (currentItem) {
-      budgets.replans_used = (budgets.replans_used ?? 0) + 1;
-    }
-    attempt = used + 1;
-    deliveryUsed =
-      target.delivery_attempts_used ?? budgets.delivery_attempts_used ?? 0;
-    deliveryMax =
-      target.delivery_attempts_max ?? budgets.delivery_attempts_max ?? 3;
-    replanUsed = attempt;
-    replanMax = max;
-  } else {
-    const target = currentItem
-      ? (currentItem.budgets ??= {
-          delivery_attempts_used: 0,
-          delivery_attempts_max: budgets.delivery_attempts_max ?? 3,
-        })
-      : budgets;
-
-    if (currentItem) {
-      nextOriginatingStage = null;
-    }
-    const used = target.delivery_attempts_used ?? 0;
-    const max =
-      target.delivery_attempts_max ?? budgets.delivery_attempts_max ?? 3;
-    if (max <= 0) {
-      throw new Error(
-        `Budget exceeded: delivery attempts max (${max}) is exhausted${currentItem ? ` for issue ${currentIssue}` : ""}.`,
-      );
-    }
-    if (params.intent.auxiliary) {
-      attempt = Math.max(1, used);
-    } else if (used === 0 || params.attemptIntent === "new") {
-      if (used >= max) {
-        throw new Error(
-          `Budget exceeded: delivery attempts used (${used}) reached maximum (${max})${currentItem ? ` for issue ${currentIssue}` : ""}.`,
-        );
-      }
-      attempt = used + 1;
-      target.delivery_attempts_used = attempt;
-    } else {
-      attempt = used;
-    }
-    budgets.delivery_attempts_used = target.delivery_attempts_used ?? 0;
-    if (currentItem) {
-      budgets.delivery_attempts_max = max;
-      if (!params.intent.auxiliary) {
-        currentItem.stage = params.intent.canonical_stage;
-        currentItem.status = "pending";
-      }
-    }
-    deliveryUsed = target.delivery_attempts_used ?? 0;
-    deliveryMax = max;
-    replanUsed = target.replans_used ?? budgets.replans_used ?? 0;
-    replanMax = target.replans_max ?? budgets.replans_max ?? 2;
-  }
-
-  return {
-    current_issue_id: String(currentIssue),
-    attempt,
-    delivery_attempts_used: deliveryUsed,
-    delivery_attempts_max: deliveryMax,
-    replan_attempts_used: replanUsed,
-    replan_attempts_max: replanMax,
-    budgets,
-    delivery_sequence: sequence ?? undefined,
-    originating_stage_for_replan: nextOriginatingStage,
-  };
-}
-
-function assertLandingEvidence(
-  params: ApplyDeliveryDecisionParams,
-  issue: string,
-  dispatchId: string,
-  currentAttempt: number,
-): { receipt_path: string } {
-  const record = (params.completedStages ?? []).find(
-    (e) => e.dispatch_id === dispatchId,
-  );
-  if (!record) {
-    throw new Error(
-      `Landing dispatch '${dispatchId}' not found in completed stages.`,
-    );
-  }
-  if (record.issue_id == null || String(record.issue_id).trim() === "") {
-    throw new Error(
-      `Landing dispatch '${dispatchId}' lacks issue_id; use a completed record that carries issue_id.`,
-    );
-  }
-  if (String(record.issue_id).trim() !== issue) {
-    throw new Error(
-      `Landing dispatch '${dispatchId}' belongs to issue '${String(record.issue_id)}', not '${issue}'.`,
-    );
-  }
-
-  const stageDef = resolveCanonicalStage(
-    params.workflow,
-    record.stage ?? "stage_2_land",
-  );
-  const landingProvider = record.provider?.target ?? stageDef?.provider?.target;
-  if (landingProvider !== LANDING_PROVIDER) {
-    throw new Error(
-      `Landing dispatch '${dispatchId}' stage '${String(record.stage)}' is not a '${LANDING_PROVIDER}' stage in the workflow.`,
-    );
-  }
-
-  const result = (record.result ?? {}) as Record<string, unknown>;
-  const nonEmpty = (v: unknown): boolean =>
-    typeof v === "string" && v.trim() !== "";
-  if (
-    record.execution_status !== "succeeded" ||
-    result.outcome !== "landed" ||
-    result.merged !== true ||
-    !nonEmpty(result.mergedCommit)
-  ) {
-    throw new Error(
-      `Landing dispatch '${dispatchId}' does not satisfy the landed outcome contract (requires succeeded, outcome 'landed', merged true, mergedCommit).`,
-    );
-  }
-  if (!nonEmpty(record.receipt_path)) {
-    throw new Error(`Landing dispatch '${dispatchId}' has no receipt_path.`);
-  }
-
-  // W05: delivery attempt must match target's current delivery attempt
-  if (
-    record.delivery_attempt != null &&
-    record.delivery_attempt !== currentAttempt
-  ) {
-    throw new Error(
-      `Landing dispatch '${dispatchId}' delivery attempt (${record.delivery_attempt}) does not match current delivery attempt (${currentAttempt}) for issue '${issue}'.`,
-    );
-  }
-
-  // Freshness check: Subsequent work in the same attempt invalidates previous landing
-  const recordStep = record.step_index ?? -1;
-  const subsequentWork = (params.completedStages ?? []).find((e) => {
-    if (String(e.issue_id).trim() !== issue) return false;
-    const eAttempt = e.delivery_attempt ?? currentAttempt;
-    if (eAttempt !== currentAttempt) return false;
-    if ((e.step_index ?? -1) <= recordStep) return false;
-    const def = params.workflow.stages.find(
-      (s) => s.id === e.stage || s.logical_task === e.stage,
-    );
-    const isWork =
-      def?.id === "stage_2_work" ||
-      def?.logical_task === "issue_work" ||
-      def?.provider?.target === "pc-issue-work";
-    return isWork;
-  });
-
-  if (subsequentWork) {
-    throw new Error(
-      `Landing dispatch '${dispatchId}' has been invalidated by subsequent work at step ${subsequentWork.step_index}.`,
-    );
-  }
-
-  return { receipt_path: record.receipt_path as string };
-}
-
+/**
+ * Applies a delivery decision atomically (Section 9.4).
+ * Returns nextDeliveryState and optional nextStage.
+ */
 export function applyDeliveryDecision(
   params: ApplyDeliveryDecisionParams,
-): ApplyDeliveryDecisionResult {
-  // Input immutability (W04): work strictly on cloned state
-  let deliverySequence = params.deliveryState?.sequence
-    ? structuredClone(params.deliveryState.sequence)
-    : params.deliverySequence
-      ? structuredClone(params.deliverySequence)
-      : undefined;
+): DeliveryDecisionResult {
+  const { workflow, deliveryState, decision, completedStages } = params;
 
-  const rootIssueId = String(
-    params.deliveryState?.rootIssueId ?? params.rootIssueId ?? "0",
-  ).trim();
-  let currentIssueId =
-    params.deliveryState?.currentIssueId ?? params.currentIssueId ?? rootIssueId;
-
-  const rawBudgets = params.deliveryState?.rootBudgets ?? params.budgets ?? {
-    delivery_attempts_used: 0,
-    delivery_attempts_max: 3,
-    replans_used: 0,
-    replans_max: 2,
-  };
-  const budgets: WorkflowBudgets = structuredClone(rawBudgets);
-
-  let nextStage: string | undefined = params.nextStage ?? undefined;
-  let planningSource = params.planningSource;
-  let markLanded = params.markLanded;
-  let landingDispatchId = params.landingDispatchId;
-  let completeSequence = params.completeSequence;
-  let currentIssue = params.currentIssue;
-
-  // Unify modern DeliveryDecision
-  if (
-    typeof params.decision === "object" &&
-    params.decision !== null &&
-    "kind" in params.decision
-  ) {
-    const dec = params.decision as DeliveryDecision;
-    if (dec.kind === "accept_plan") {
-      const record = (params.completedStages ?? []).find(
-        (e) => e.dispatch_id === dec.planDispatchId,
+  if (decision.kind === "accept_plan") {
+    if (workflow.completion_policy === "basic") {
+      throw new Error(
+        "Cannot accept plan: completion policy 'basic' does not support plan acceptance.",
       );
-      if (!record) {
-        throw new Error(
-          `Planning dispatch '${dec.planDispatchId}' not found in completed stages.`,
-        );
-      }
-      planningSource = {
-        dispatch_id: dec.planDispatchId,
-        stage: record.stage ?? "stage_1_plan",
-        step_index: record.step_index ?? 0,
-        execution_status: record.execution_status ?? "succeeded",
-        provider: record.provider,
-        result: (record.result ?? {}) as Record<string, unknown>,
-        receipt_path: record.receipt_path ?? "",
-        issue_id: record.issue_id,
-      };
-      nextStage = dec.nextStage;
-    } else if (dec.kind === "update_delivery") {
-      nextStage = dec.nextStage ?? nextStage;
-      currentIssue = dec.currentIssueId ?? currentIssue;
-      if (dec.landing) {
-        markLanded = dec.landing.issueId;
-        landingDispatchId = dec.landing.dispatchId;
-      }
-      if (dec.completeSequence !== undefined) {
-        completeSequence = dec.completeSequence;
-      }
     }
-  }
-
-  // Plan acceptance (accept_plan / planningSource)
-  if (planningSource) {
-    if (deliverySequence) {
+    if (deliveryState.sequence) {
       throw new Error("Cannot accept plan: delivery sequence already exists.");
     }
-    if (currentIssue != null) {
-      throw new Error("Cannot combine planningSource with currentIssue.");
-    }
-    if (markLanded != null || landingDispatchId != null || completeSequence) {
-      throw new Error(
-        "Cannot combine planningSource with landing or sequence completion.",
-      );
-    }
-
-    // Section 14: accept_plan requires explicit nextStage, omitting it is rejected
-    if (!nextStage || typeof nextStage !== "string" || !nextStage.trim()) {
+    if (
+      !decision.nextStage ||
+      typeof decision.nextStage !== "string" ||
+      !decision.nextStage.trim()
+    ) {
       throw new Error(
         "Plan acceptance requires an explicit non-empty 'nextStage'.",
       );
     }
-    const nextStageDef = resolveCanonicalStage(params.workflow, nextStage);
+    const nextStageDef = resolveCanonicalStage(workflow, decision.nextStage);
     const initialStage = nextStageDef.id;
 
-    const ps = planningSource;
-    if (
-      !ps.result ||
-      typeof ps.result !== "object" ||
-      Array.isArray(ps.result)
-    ) {
-      throw new Error("Planning result must be an object.");
+    const record = (completedStages ?? []).find(
+      (e) => e.dispatch_id === decision.planDispatchId,
+    );
+    if (!record) {
+      throw new Error(
+        `Planning dispatch '${decision.planDispatchId}' not found in completed stages.`,
+      );
     }
-    const outcome = ps.result.outcome;
+
+    const rootIssueId = String(deliveryState.rootIssueId).trim();
+    if (
+      record.issue_id != null &&
+      String(record.issue_id).trim() !== rootIssueId
+    ) {
+      throw new Error(
+        `Planning dispatch '${decision.planDispatchId}' belongs to issue '${record.issue_id}', expected root issue '${rootIssueId}'.`,
+      );
+    }
+
+    if (record.execution_status !== "succeeded") {
+      throw new Error(
+        `Planning dispatch '${decision.planDispatchId}' execution status is '${record.execution_status}', expected 'succeeded'.`,
+      );
+    }
+
+    const planStageDef = resolveCanonicalStage(
+      workflow,
+      record.stage ?? "stage_1_plan",
+    );
+    if (!isInitialPlanStage(planStageDef)) {
+      throw new Error(
+        `Stage '${planStageDef.id}' is not an initial planning stage.`,
+      );
+    }
+
+    const result = (record.result ?? {}) as Record<string, unknown>;
+    const outcome = result.outcome;
     if (outcome !== "direct" && outcome !== "decomposed") {
       throw new Error(
         `Planning outcome must be 'direct' or 'decomposed', got '${String(outcome)}'.`,
       );
     }
 
+    // Freshness check: no subsequent non-auxiliary business execution
+    const planStep = record.step_index ?? -1;
+    const subsequentNonAux = (completedStages ?? []).find((e) => {
+      if ((e.step_index ?? -1) <= planStep) return false;
+      try {
+        const def = resolveCanonicalStage(workflow, e.stage ?? "");
+        return !isAuxiliaryStage(def);
+      } catch {
+        return true;
+      }
+    });
+    if (subsequentNonAux) {
+      throw new Error(
+        `Planning dispatch '${decision.planDispatchId}' invalidated by subsequent execution at step ${subsequentNonAux.step_index}.`,
+      );
+    }
+
+    let deliverySequence: DeliverySequence;
+    let currentIssueId: string;
+    const nextRootBudgets: IssueBudgets = structuredClone(
+      deliveryState.rootBudgets,
+    );
+
     if (outcome === "direct") {
-      const planObj = ps.result.plan as Record<string, unknown> | undefined;
+      const planObj = result.plan as Record<string, unknown> | undefined;
       const directTasks =
         planObj?.tasks ??
-        (Array.isArray(ps.result.plan) ? ps.result.plan : undefined) ??
-        ps.result.tasks;
+        (Array.isArray(result.plan) ? result.plan : undefined) ??
+        result.tasks;
       if (Array.isArray(directTasks) && directTasks.length > 0) {
         throw new Error("Direct planning outcome cannot contain tasks.");
       }
 
       deliverySequence = makeDeliverySequence(
         [rootIssueId],
-        budgets.delivery_attempts_max ?? 3,
+        nextRootBudgets,
         initialStage,
       );
       const rootItem = deliverySequence.items[0];
       rootItem.budgets.delivery_attempts_used = 0;
       rootItem.budgets.delivery_attempts_max =
-        budgets.delivery_attempts_max ?? 3;
-      rootItem.budgets.replans_used = budgets.replans_used ?? 0;
-      rootItem.budgets.replans_max = budgets.replans_max ?? 2;
-      if (budgets.replans_by_stage) {
+        nextRootBudgets.delivery_attempts_max ?? 3;
+      rootItem.budgets.replans_used = nextRootBudgets.replans_used ?? 0;
+      rootItem.budgets.replans_max =
+        typeof nextRootBudgets.replans_max === "number"
+          ? nextRootBudgets.replans_max
+          : 2;
+      if (nextRootBudgets.replans_by_stage) {
         rootItem.budgets.replans_by_stage = structuredClone(
-          budgets.replans_by_stage,
+          nextRootBudgets.replans_by_stage,
         );
       }
-      budgets.delivery_attempts_used = 0;
+      nextRootBudgets.delivery_attempts_used = 0;
       currentIssueId = rootIssueId;
       deliverySequence.current_index = 0;
       deliverySequence.completed = false;
     } else {
-      const planObj = ps.result.plan;
+      const planObj = result.plan;
       if (!planObj || typeof planObj !== "object" || Array.isArray(planObj)) {
         throw new Error(
           "Decomposed planning result must contain a 'plan' object.",
@@ -879,155 +652,219 @@ export function applyDeliveryDecision(
       const taskIds = validatePlanOrder(rawTasks, rootIssueId);
       deliverySequence = makeDeliverySequence(
         taskIds,
-        budgets.delivery_attempts_max ?? 3,
+        nextRootBudgets,
         initialStage,
       );
-      budgets.delivery_attempts_used = 0;
+      nextRootBudgets.delivery_attempts_used = 0;
       currentIssueId = taskIds[0];
       deliverySequence.current_index = 0;
       deliverySequence.completed = false;
     }
+
+    return {
+      nextDeliveryState: {
+        rootIssueId,
+        currentIssueId,
+        rootBudgets: nextRootBudgets,
+        sequence: deliverySequence,
+        rootLandingEvidence: deliveryState.rootLandingEvidence,
+      },
+      nextStage: initialStage,
+    };
   }
 
-  // Update currentIssue
-  if (currentIssue != null) {
-    const issue = String(currentIssue).trim();
-    currentIssueId = issue;
-    if (deliverySequence) {
-      if (deliverySequence.active_rework_issue_id !== issue) {
-        deliverySequence.active_rework_issue_id = null;
+  if (decision.kind === "update_delivery") {
+    const rootIssueId = String(deliveryState.rootIssueId).trim();
+    let currentIssueId = String(
+      deliveryState.currentIssueId ?? rootIssueId,
+    ).trim();
+    const nextDeliveryState: DeliveryState = structuredClone(deliveryState);
+    const sequence = nextDeliveryState.sequence;
+
+    // 1. Validate sequence cursor if sequence exists and is unfinished (F18)
+    if (sequence && !sequence.completed) {
+      const curIdx = sequence.current_index;
+      if (
+        typeof curIdx !== "number" ||
+        curIdx < 0 ||
+        curIdx >= sequence.items.length
+      ) {
+        throw new WorkflowIntegrityError(
+          `Invalid sequence current_index: ${curIdx}. Cursor is out of range for sequence of length ${sequence.items.length}.`,
+        );
       }
-      const index = deliverySequence.items.findIndex(
-        (i) => String(i.issue_id) === issue,
+    }
+
+    // 2. Landing registration (F16, atomic order: capture attempt before cursor change)
+    let nextRootLandingEvidence = nextDeliveryState.rootLandingEvidence;
+    if (decision.landing) {
+      const issue = String(decision.landing.issueId).trim();
+      const dispatchId = String(decision.landing.dispatchId).trim();
+      if (!sequence) {
+        throw new Error(
+          `Cannot mark issue '${issue}' landed: no delivery sequence exists.`,
+        );
+      }
+      const item = sequence.items.find((i) => String(i.issue_id) === issue);
+      const isRoot = issue === rootIssueId;
+      if (!item && !isRoot) {
+        throw new Error(
+          `Cannot mark issue '${issue}' landed: issue not found in delivery sequence.`,
+        );
+      }
+
+      const currentAttempt = item
+        ? (item.budgets?.delivery_attempts_used ?? 1)
+        : (nextDeliveryState.rootBudgets.delivery_attempts_used ?? 1);
+
+      const record = (completedStages ?? []).find(
+        (e) => e.dispatch_id === dispatchId,
       );
-      if (index >= 0) {
-        deliverySequence.current_index = index;
-        const itemBudgets = (deliverySequence.items[index].budgets ??= {
-          delivery_attempts_used: 0,
-          delivery_attempts_max: budgets.delivery_attempts_max ?? 3,
-        });
-        budgets.delivery_attempts_used =
-          itemBudgets.delivery_attempts_used ?? 0;
-        budgets.delivery_attempts_max =
-          itemBudgets.delivery_attempts_max ??
-          budgets.delivery_attempts_max ??
-          3;
+      if (!record) {
+        throw new Error(
+          `Landing dispatch '${dispatchId}' not found in completed stages.`,
+        );
+      }
+
+      const validated = validateLandingRecord(
+        workflow,
+        record,
+        issue,
+        currentAttempt,
+      );
+
+      // Invalidation check by subsequent content-changing work
+      const invalidated = isLandingInvalidatedBySubsequentWork(
+        workflow,
+        completedStages ?? [],
+        record,
+        issue,
+        currentAttempt,
+      );
+      if (invalidated) {
+        throw new Error(
+          `Landing dispatch '${dispatchId}' has been invalidated by subsequent work at step ${invalidated.step_index}.`,
+        );
+      }
+
+      if (item) {
+        if (item.landed) {
+          if (item.land_dispatch_id !== dispatchId) {
+            throw new Error(
+              `Issue '${issue}' is already landed by dispatch '${String(item.land_dispatch_id)}'; refusing different landing evidence from dispatch '${dispatchId}'.`,
+            );
+          }
+        } else {
+          item.landed = true;
+          item.status = "landed";
+          item.stage = "landed";
+          item.land_dispatch_id = dispatchId;
+          item.land_receipt_path = validated.receiptPath;
+          item.landed_attempt = currentAttempt;
+        }
+      }
+      if (isRoot) {
+        nextRootLandingEvidence = {
+          dispatch_id: dispatchId,
+          receipt_path: validated.receiptPath,
+          delivery_attempt: currentAttempt,
+        };
+      }
+
+      // Resolve active rework if matching
+      if (sequence.active_rework_issue_id === issue) {
+        sequence.active_rework_issue_id = null;
       }
     }
-  }
 
-  // Landing registration
-  if ((markLanded != null) !== (landingDispatchId != null)) {
-    throw new Error(
-      "markLanded and landingDispatchId must be provided together.",
-    );
-  }
-
-  let nextRootLandingEvidence = params.deliveryState?.rootLandingEvidence;
-
-  if (markLanded != null) {
-    const issue = String(markLanded).trim();
-    const dispatchId = String(landingDispatchId).trim();
-    if (!deliverySequence) {
-      throw new Error(
-        `Cannot mark issue '${issue}' landed: no delivery sequence exists.`,
-      );
-    }
-    const item = deliverySequence.items.find(
-      (i) => String(i.issue_id) === issue,
-    );
-    const isRoot = issue === rootIssueId;
-
-    if (!item && !isRoot) {
-      throw new Error(
-        `Cannot mark issue '${issue}' landed: issue not found in delivery sequence.`,
-      );
-    }
-
-    const currentAttempt = item
-      ? (item.budgets?.delivery_attempts_used ?? 1)
-      : (budgets.delivery_attempts_used ?? 1);
-
-    const record = assertLandingEvidence(
-      params,
-      issue,
-      dispatchId,
-      currentAttempt,
-    );
-
-    if (item) {
-      if (item.landed) {
-        if (item.land_dispatch_id !== dispatchId) {
+    // 3. Issue selection (F08: switching currentIssueId must NEVER clear active_rework_issue_id without landing it)
+    if (decision.currentIssueId != null) {
+      const targetIssue = String(decision.currentIssueId).trim();
+      if (
+        sequence?.active_rework_issue_id &&
+        sequence.active_rework_issue_id !== targetIssue
+      ) {
+        throw new Error(
+          `Cannot switch current issue to '${targetIssue}': active rework is in progress for issue '${sequence.active_rework_issue_id}'.`,
+        );
+      }
+      currentIssueId = targetIssue;
+      if (sequence) {
+        const index = sequence.items.findIndex(
+          (i) => String(i.issue_id) === targetIssue,
+        );
+        if (index >= 0) {
+          sequence.current_index = index;
+        } else if (targetIssue === rootIssueId) {
+          // Returning to root is valid
+        } else {
           throw new Error(
-            `Issue '${issue}' is already landed by dispatch '${String(item.land_dispatch_id)}'; refusing different landing evidence from dispatch '${dispatchId}'.`,
+            `Cannot switch to issue '${targetIssue}': issue not found in delivery sequence.`,
           );
         }
-      } else {
-        item.landed = true;
-        item.status = "landed";
-        item.stage = "landed";
-        item.land_dispatch_id = dispatchId;
-        item.land_receipt_path = record.receipt_path;
-        item.landed_attempt = currentAttempt;
+        // F07: Do NOT pollute nextDeliveryState.rootBudgets with item budgets!
       }
-    } else if (isRoot) {
-      nextRootLandingEvidence = {
-        dispatch_id: dispatchId,
-        receipt_path: record.receipt_path,
-        delivery_attempt: currentAttempt,
-      };
     }
 
-    if (deliverySequence.active_rework_issue_id === issue) {
-      deliverySequence.active_rework_issue_id = null;
+    // 4. Sequence completion
+    if (decision.completeSequence) {
+      if (!sequence) {
+        throw new Error("Cannot complete delivery sequence: none exists.");
+      }
+      if (sequence.active_rework_issue_id) {
+        throw new Error(
+          `Cannot complete delivery sequence: active rework is in progress for issue '${sequence.active_rework_issue_id}'.`,
+        );
+      }
+      if (
+        decision.currentIssueId != null &&
+        String(decision.currentIssueId).trim() !== rootIssueId
+      ) {
+        throw new Error(
+          `Cannot combine completeSequence with non-root currentIssue '${String(decision.currentIssueId).trim()}'. Expected root issue '${rootIssueId}'.`,
+        );
+      }
+
+      const unlanded = sequence.items.filter(
+        (i) => !i.landed || !i.land_receipt_path || !i.land_dispatch_id,
+      );
+      if (unlanded.length > 0) {
+        throw new Error(
+          `Cannot complete delivery sequence: issues without landing evidence: ${unlanded.map((i) => i.issue_id).join(", ")}.`,
+        );
+      }
+
+      // Validate accepted landing references (Section 10.4, F17)
+      for (const item of sequence.items) {
+        const rec = (completedStages ?? []).find(
+          (e) => e.dispatch_id === item.land_dispatch_id,
+        );
+        if (!rec) {
+          throw new WorkflowIntegrityError(
+            `Cannot complete delivery sequence: accepted landing dispatch '${item.land_dispatch_id}' for issue '${item.issue_id}' not found in completed stages.`,
+          );
+        }
+      }
+
+      sequence.completed = true;
+      currentIssueId = rootIssueId;
     }
+
+    // 5. Next stage resolution
+    const resolvedNextStage = decision.nextStage
+      ? resolveCanonicalStage(workflow, decision.nextStage).id
+      : undefined;
+
+    nextDeliveryState.currentIssueId = currentIssueId;
+    nextDeliveryState.rootLandingEvidence = nextRootLandingEvidence;
+
+    return {
+      nextDeliveryState,
+      nextStage: resolvedNextStage,
+    };
   }
 
-  // Sequence completion
-  if (completeSequence) {
-    if (!deliverySequence) {
-      throw new Error("Cannot complete delivery sequence: none exists.");
-    }
-    if (deliverySequence.active_rework_issue_id) {
-      throw new Error(
-        `Cannot complete delivery sequence: active rework is in progress for issue '${deliverySequence.active_rework_issue_id}'.`,
-      );
-    }
-    if (currentIssue != null && String(currentIssue).trim() !== rootIssueId) {
-      throw new Error(
-        `Cannot combine completeSequence with non-root currentIssue '${String(currentIssue).trim()}'. Expected root issue '${rootIssueId}'.`,
-      );
-    }
-
-    const unlanded = deliverySequence.items.filter(
-      (i) => !i.landed || !i.land_receipt_path || !i.land_dispatch_id,
-    );
-    if (unlanded.length > 0) {
-      throw new Error(
-        `Cannot complete delivery sequence: issues without landing evidence: ${unlanded.map((i) => i.issue_id).join(", ")}.`,
-      );
-    }
-    deliverySequence.completed = true;
-    currentIssueId = rootIssueId;
-  }
-
-  const resolvedNextStage = nextStage
-    ? resolveCanonicalStage(params.workflow, nextStage).id
-    : undefined;
-
-  const nextDeliveryState: DeliveryState = {
-    rootIssueId,
-    currentIssueId,
-    rootBudgets: budgets,
-    sequence: deliverySequence,
-    rootLandingEvidence: nextRootLandingEvidence,
-  };
-
-  return {
-    nextDeliveryState,
-    nextStage: resolvedNextStage,
-    deliverySequence,
-    currentIssueId,
-    budgets,
-  };
+  throw new Error(
+    `Unsupported delivery decision kind: '${(decision as { kind: string })?.kind}'.`,
+  );
 }

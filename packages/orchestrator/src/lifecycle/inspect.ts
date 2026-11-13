@@ -3,7 +3,8 @@
  */
 import path from "node:path";
 import { loadRun } from "../run-store/index.js";
-import { inspectDelivery } from "../workflow/index.js";
+import { inspectDelivery, WorkflowIntegrityError } from "../workflow/index.js";
+import type { DeliveryInspection } from "../workflow/types.js";
 import { toDeliveryState } from "./domain-state.js";
 import type { DecisionRecord, InspectOptions, RuntimeState } from "./types.js";
 
@@ -101,33 +102,42 @@ export function inspectState(o: InspectOptions): unknown {
   }
 
   // Domain delivery inspection
-  const deliveryInspection = inspectDelivery({
-    workflow: state.workflow_snapshot,
-    deliveryState: toDeliveryState(state),
-    completedStages: completed,
-  });
-
-  if (
-    (deliveryInspection.budgets.delivery_attempts_used ?? 0) >=
-    (deliveryInspection.budgets.delivery_attempts_max ?? 3)
-  ) {
-    reasons.push(
-      `Delivery attempt budget exhausted: ${deliveryInspection.budgets.delivery_attempts_used}/${deliveryInspection.budgets.delivery_attempts_max} attempts used.`,
-    );
+  let deliveryInspection: DeliveryInspection | null = null;
+  try {
+    deliveryInspection = inspectDelivery({
+      workflow: state.workflow_snapshot,
+      deliveryState: toDeliveryState(state),
+      completedStages: completed,
+    });
+  } catch (err: unknown) {
+    if (
+      err instanceof WorkflowIntegrityError ||
+      (err &&
+        typeof err === "object" &&
+        (err as { code?: string }).code === "WORKFLOW_INTEGRITY_ERROR")
+    ) {
+      reasons.push(
+        `State integrity error: ${(err as Error).message ?? String(err)}`,
+      );
+    } else {
+      throw err;
+    }
   }
 
-  if (
-    (deliveryInspection.budgets.replans_used ?? 0) >=
-    (deliveryInspection.budgets.replans_max ?? 2)
-  ) {
-    reasons.push(
-      `Replan budget exhausted: ${deliveryInspection.budgets.replans_used}/${deliveryInspection.budgets.replans_max} replans used.`,
-    );
-  }
+  if (deliveryInspection) {
+    if (
+      (deliveryInspection.budgets.delivery_attempts_used ?? 0) >=
+      (deliveryInspection.budgets.delivery_attempts_max ?? 3)
+    ) {
+      reasons.push(
+        `Delivery attempt budget exhausted: ${deliveryInspection.budgets.delivery_attempts_used}/${deliveryInspection.budgets.delivery_attempts_max} attempts used.`,
+      );
+    }
 
-  for (const reason of deliveryInspection.blockingReasons) {
-    if (!reasons.includes(reason)) {
-      reasons.push(reason);
+    for (const reason of deliveryInspection.blockingReasons) {
+      if (!reasons.includes(reason)) {
+        reasons.push(reason);
+      }
     }
   }
 
@@ -135,14 +145,16 @@ export function inspectState(o: InspectOptions): unknown {
     schema_version: state.schema_version ?? "1.1",
     workflow: state.workflow ?? "default",
     root_issue_id: state.root_issue_id,
-    current_issue_id: deliveryInspection.currentIssueId,
+    current_issue_id: deliveryInspection
+      ? deliveryInspection.currentIssueId
+      : state.current_issue_id ?? state.root_issue_id,
     current_stage: state.current_stage,
     stage_status: state.stage_status,
     orchestrator_decision: state.orchestrator_decision ?? null,
     active_dispatch: active,
     last_decision: decisions.at(-1) ?? null,
     protocol_error: state.protocol_error ?? null,
-    budgets: deliveryInspection.budgets,
+    budgets: deliveryInspection ? deliveryInspection.budgets : null,
     completed_stages_count: completed.length,
     blocking_reasons: reasons,
     last_updated: state.last_updated,

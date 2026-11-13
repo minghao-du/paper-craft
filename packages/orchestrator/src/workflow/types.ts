@@ -12,24 +12,13 @@ export interface SkillProvider {
   args?: string[];
 }
 
-export interface PlanningSource {
-  dispatch_id: string;
-  issue_id?: string;
-  stage: string;
-  step_index: number;
-  execution_status: string;
-  provider?: SkillProvider;
-  result: Record<string, unknown>;
-  receipt_path: string;
-}
-
 export interface WorkflowStage {
   id: string;
-  logical_task?: string;
+  logical_task: string;
+  provider: SkillProvider;
   name?: string;
   auxiliary?: boolean;
   replan?: boolean;
-  provider?: SkillProvider;
   description?: string;
   template?: string;
   receipt_template?: string;
@@ -185,42 +174,22 @@ export type DeliveryDecision =
 
 export interface ApplyDeliveryDecisionParams {
   workflow: WorkflowDefinition;
-  deliveryState?: DeliveryState;
-  decision?: string | DeliveryDecision;
-  completedStages?: readonly CompletionRecordView[];
-  // Legacy compatibility fields during refactoring:
-  deliverySequence?: DeliverySequence | null;
-  budgets?: WorkflowBudgets;
-  currentIssueId?: string;
-  rootIssueId?: string;
-  action?: string;
-  nextStage?: string | null;
-  planningSource?: PlanningSource;
-  currentIssue?: string | null;
-  markLanded?: string | null;
-  landingDispatchId?: string | null;
-  completeSequence?: boolean;
+  deliveryState: DeliveryState;
+  decision: DeliveryDecision;
+  completedStages: readonly CompletionRecordView[];
 }
 
 export interface DeliveryDecisionResult {
   nextDeliveryState: DeliveryState;
   nextStage?: string;
-  // Legacy compatibility:
-  deliverySequence?: DeliverySequence;
-  currentIssueId: string;
-  budgets: WorkflowBudgets;
 }
 
 export type ApplyDeliveryDecisionResult = DeliveryDecisionResult;
 
 export interface AssertCanFinishParams {
   workflow: WorkflowDefinition;
-  deliveryState?: DeliveryState;
+  deliveryState: DeliveryState;
   completedStages: readonly CompletionRecordView[];
-  rootIssueId: string;
-  // Legacy compatibility:
-  activeDispatch?: { dispatch_id?: string; [key: string]: unknown } | null;
-  protocolError?: { message?: string; [key: string]: unknown } | null;
 }
 
 export interface InspectDeliveryParams {
@@ -239,56 +208,10 @@ export interface DeliveryInspection {
   canFinish: boolean;
 }
 
-// Legacy helpers & compatibility types
-export interface TaskIntent {
-  canonical_stage: string;
-  stage_def: WorkflowStage;
-  provider: {
-    type: "skill";
-    target: string;
-    args: string[];
-  };
-  auxiliary: boolean;
-  replan: boolean;
-  template: string;
-  scope: string;
-  parameters: Record<string, unknown>;
-}
-
-export interface DeliveryCalculationResult {
-  current_issue_id: string;
-  attempt: number;
-  delivery_attempts_used: number;
-  delivery_attempts_max: number;
-  replan_attempts_used: number;
-  replan_attempts_max: number;
-  budgets: WorkflowBudgets;
-  delivery_sequence?: DeliverySequence;
-  originating_stage_for_replan?: string | null;
-}
-
-export interface ProviderOverride {
-  type?: string;
-  target?: string;
-  args?: string[];
-}
-
-export interface ResolveTaskIntentOptions {
-  template?: string;
-  scope?: string;
-  parameters?: Record<string, unknown>;
-  configSnapshot?: Record<string, unknown>;
-  context?: Record<string, unknown>;
-}
-
-export interface CalculateDeliveryChangeParams {
-  intent: TaskIntent;
-  deliverySequence?: DeliverySequence | null;
-  budgets: WorkflowBudgets;
-  currentIssueId: string;
-  rootIssueId: string;
-  reworkIssue?: string | null;
-  attemptIntent?: "same" | "new";
-  originatingStageForReplan?: string | null;
-  parameters?: Record<string, unknown>;
+export class WorkflowIntegrityError extends Error {
+  readonly code = "WORKFLOW_INTEGRITY_ERROR";
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkflowIntegrityError";
+  }
 }

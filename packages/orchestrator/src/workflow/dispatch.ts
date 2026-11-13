@@ -1,47 +1,90 @@
-import { DEFAULT_RECEIPT_TEMPLATE, resolveCanonicalStage } from "./definition.js";
+import { DEFAULT_RECEIPT_TEMPLATE } from "./definition.js";
 import { calculateDeliveryDispatch } from "./delivery.js";
+import {
+  isAuxiliaryStage,
+  isReplanStage,
+  resolveCanonicalStage,
+  validateProviderOverride,
+} from "./stage.js";
 import type {
   DispatchEvaluation,
   EvaluateDispatchParams,
   EvaluatedTask,
-  SkillProvider,
-  WorkflowDefinition,
-  WorkflowStage,
 } from "./types.js";
 
-function isEvidenceSensitiveStage(
-  stageDef: WorkflowStage,
-  workflow: WorkflowDefinition,
-): boolean {
-  if (stageDef.replan) {
-    return true;
+const PROTECTED_RUN_KEYS = [
+  "delivery_target",
+  "base_remote",
+  "push_remote",
+  "worktree_container",
+] as const;
+
+/**
+ * Validates protected run environment parameters across all sources:
+ * environmentDefaults, stage.parameters, stage.configs, request.parameters.
+ *
+ * Rules (Section 8.1):
+ * - If a run value is supplied, it is authoritative.
+ * - Conflicting non-empty declarations across any sources are rejected.
+ * - Repeating equal values is allowed.
+ * - null cannot clear a fixed run value and is rejected for protected fields.
+ */
+function validateAndResolveProtectedParams(
+  environmentDefaults?: Record<string, unknown>,
+  stageParameters?: Record<string, unknown>,
+  stageConfigs?: Record<string, unknown>,
+  requestParameters?: Record<string, unknown>,
+): Record<string, unknown> {
+  const resolved: Record<string, unknown> = {};
+
+  const sources: Array<{ name: string; params?: Record<string, unknown> }> = [
+    { name: "environmentDefaults", params: environmentDefaults },
+    { name: "stage parameters", params: stageParameters },
+    { name: "stage configs", params: stageConfigs },
+    { name: "request parameters", params: requestParameters },
+  ];
+
+  for (const key of PROTECTED_RUN_KEYS) {
+    let establishedSource: string | undefined;
+    let establishedValue: unknown;
+
+    for (const source of sources) {
+      if (!source.params || !(key in source.params)) {
+        continue;
+      }
+      const val = source.params[key];
+      if (val === undefined) {
+        continue;
+      }
+      if (val === null) {
+        throw new Error(
+          `Protected parameter '${key}' in ${source.name} cannot be null.`,
+        );
+      }
+      if (typeof val === "string" && val.trim() === "") {
+        throw new Error(
+          `Protected parameter '${key}' in ${source.name} cannot be empty string.`,
+        );
+      }
+
+      if (establishedSource !== undefined) {
+        if (establishedValue !== val) {
+          throw new Error(
+            `Conflicting parameter '${key}': ${source.name} specified '${String(val)}', but ${establishedSource} specified '${String(establishedValue)}'.`,
+          );
+        }
+      } else {
+        establishedSource = source.name;
+        establishedValue = val;
+      }
+    }
+
+    if (establishedValue !== undefined) {
+      resolved[key] = establishedValue;
+    }
   }
-  if (workflow.initial_stage && stageDef.id === workflow.initial_stage) {
-    return true;
-  }
-  const sensitiveLogicalTasks = new Set([
-    "issue_plan",
-    "scope_replan",
-    "issue_land",
-    "pipeline_refactor_redeliver",
-    "issue_finalize",
-    "workspace_cleanup",
-  ]);
-  if (stageDef.logical_task && sensitiveLogicalTasks.has(stageDef.logical_task)) {
-    return true;
-  }
-  const sensitiveIds = new Set([
-    "workspace_cleanup",
-    "issue_finalize",
-    "scope_replan",
-    "stage_1_plan",
-    "stage_2_land",
-    "stage_5_redeliver",
-  ]);
-  if (sensitiveIds.has(stageDef.id)) {
-    return true;
-  }
-  return false;
+
+  return resolved;
 }
 
 /**
@@ -64,61 +107,8 @@ export function evaluateDispatch(
   // 1. Resolve canonical stage definition
   const stageDef = resolveCanonicalStage(workflow, request.stage);
 
-  // 2. Check provider override rules (Section 5.3)
-  let resolvedProvider: SkillProvider;
-  const isSensitive = isEvidenceSensitiveStage(stageDef, workflow);
-
-  if (isSensitive) {
-    if (request.provider) {
-      if (
-        (request.provider.type &&
-          request.provider.type !== stageDef.provider?.type) ||
-        (request.provider.target &&
-          request.provider.target !== stageDef.provider?.target)
-      ) {
-        throw new Error(
-          `Cannot override provider for evidence-sensitive stage '${stageDef.id}'.`,
-        );
-      }
-      resolvedProvider = {
-        type: "skill",
-        target: stageDef.provider!.target,
-        args: request.provider.args
-          ? [...request.provider.args]
-          : stageDef.provider?.args
-            ? [...stageDef.provider.args]
-            : [],
-      };
-    } else {
-      resolvedProvider = {
-        type: "skill",
-        target: stageDef.provider!.target,
-        args: stageDef.provider?.args ? [...stageDef.provider.args] : [],
-      };
-    }
-  } else {
-    // Ordinary stages allow provider override
-    if (request.provider) {
-      const pType = request.provider.type ?? "skill";
-      if (pType !== "skill") {
-        throw new Error(`Provider 'type' must be 'skill', received '${pType}'`);
-      }
-      if (!request.provider.target || !request.provider.target.trim()) {
-        throw new Error("Provider 'target' must be a non-empty string.");
-      }
-      resolvedProvider = {
-        type: "skill",
-        target: request.provider.target.trim(),
-        args: request.provider.args ? [...request.provider.args] : [],
-      };
-    } else {
-      resolvedProvider = {
-        type: "skill",
-        target: stageDef.provider!.target,
-        args: stageDef.provider?.args ? [...stageDef.provider.args] : [],
-      };
-    }
-  }
+  // 2. Validate and resolve provider override (Section 7.4 & F10)
+  const resolvedProvider = validateProviderOverride(stageDef, request.provider);
 
   // 3. Resolve scope (Section 5.2)
   if (request.scope === null) {
@@ -156,71 +146,82 @@ export function evaluateDispatch(
       DEFAULT_RECEIPT_TEMPLATE;
   }
 
-  // 5. Parameter merging (Section 5.1):
-  // defaults (from environmentDefaults) -> stage.parameters -> stage.configs -> request.parameters
-  const envKeys = [
-    "delivery_target",
-    "base_remote",
-    "push_remote",
-    "worktree_container",
-  ] as const;
-  for (const key of envKeys) {
-    const reqVal = request.parameters?.[key];
-    const envVal = environmentDefaults?.[key];
-    if (
-      reqVal !== undefined &&
-      reqVal !== null &&
-      envVal !== undefined &&
-      envVal !== null
-    ) {
-      if (reqVal !== envVal) {
-        throw new Error(
-          `Conflicting parameter '${key}': request specified '${String(reqVal)}', but run environment is '${String(envVal)}'.`,
-        );
-      }
-    }
-  }
+  // 5. Protected run environment constraints (Section 8.1 & F02)
+  const protectedParams = validateAndResolveProtectedParams(
+    environmentDefaults,
+    stageDef.parameters,
+    stageDef.configs,
+    request.parameters,
+  );
 
-  const mergedParameters: Record<string, unknown> = {};
+  // 6. Parameter merging: environmentDefaults -> stage.parameters -> stage.configs -> request.parameters
+  const rawMerged: Record<string, unknown> = {};
   if (environmentDefaults) {
     for (const [key, value] of Object.entries(environmentDefaults)) {
       if (value !== undefined) {
-        mergedParameters[key] = value;
+        rawMerged[key] = value;
       }
     }
   }
   if (stageDef.parameters) {
     for (const [key, value] of Object.entries(stageDef.parameters)) {
-      mergedParameters[key] = value;
+      rawMerged[key] = value;
     }
   }
   if (stageDef.configs) {
     for (const [key, value] of Object.entries(stageDef.configs)) {
-      mergedParameters[key] = value;
+      rawMerged[key] = value;
     }
   }
   if (request.parameters) {
     for (const [key, value] of Object.entries(request.parameters)) {
-      mergedParameters[key] = value;
+      rawMerged[key] = value;
     }
   }
+  // Enforce resolved protected params
+  for (const [key, value] of Object.entries(protectedParams)) {
+    rawMerged[key] = value;
+  }
 
-  // 6. Resolve originating_stage if replan or provided
-  const rawOriginating =
-    request.originating_stage ??
-    (request.parameters?.originating_stage as string | undefined);
+  // 7. Resolve originating_stage if replan or provided (Section 8.2 & F11)
+  const explicitRequestOrigin = request.originating_stage;
+  const explicitParamOrigin = request.parameters?.originating_stage as
+    | string
+    | undefined;
+
   let canonicalOriginating: string | undefined;
-  if (rawOriginating) {
-    const originStageDef = resolveCanonicalStage(workflow, rawOriginating);
-    if (originStageDef.replan) {
+
+  if (explicitRequestOrigin && explicitParamOrigin) {
+    const originFromReq = resolveCanonicalStage(workflow, explicitRequestOrigin);
+    const originFromParam = resolveCanonicalStage(workflow, explicitParamOrigin);
+    if (originFromReq.id !== originFromParam.id) {
       throw new Error(
-        `Invalid originating_stage '${rawOriginating}': replan stage cannot originate from another replan stage.`,
+        `Conflicting originating_stage: request specified '${explicitRequestOrigin}' (${originFromReq.id}), but parameters specified '${explicitParamOrigin}' (${originFromParam.id}).`,
       );
     }
-    canonicalOriginating = originStageDef.id;
+    canonicalOriginating = originFromReq.id;
+  } else if (explicitRequestOrigin) {
+    canonicalOriginating = resolveCanonicalStage(
+      workflow,
+      explicitRequestOrigin,
+    ).id;
+  } else if (explicitParamOrigin) {
+    canonicalOriginating = resolveCanonicalStage(
+      workflow,
+      explicitParamOrigin,
+    ).id;
   }
 
-  // 7. Calculate delivery dispatch
+  if (canonicalOriginating) {
+    const originDef = resolveCanonicalStage(workflow, canonicalOriginating);
+    if (isReplanStage(originDef)) {
+      throw new Error(
+        `Invalid originating_stage '${canonicalOriginating}': replan stage cannot originate from another replan stage.`,
+      );
+    }
+  }
+
+  // 8. Calculate delivery dispatch
   const deliveryResult = calculateDeliveryDispatch(
     workflow,
     deliveryState,
@@ -233,17 +234,28 @@ export function evaluateDispatch(
     completedStages,
   );
 
-  // 8. Assemble EvaluatedTask and return
+  const finalOriginatingStage =
+    deliveryResult.originatingStage ?? canonicalOriginating;
+
+  // Propagate canonical originating_stage into merged parameters (F11)
+  if (finalOriginatingStage) {
+    rawMerged.originating_stage = finalOriginatingStage;
+  }
+
+  // Deep clone mergedParameters to isolate mutable nested parameters from request/definition objects (F12)
+  const mergedParameters = structuredClone(rawMerged);
+
+  // 9. Assemble EvaluatedTask
   const task: EvaluatedTask = {
     stage: stageDef.id,
-    logicalTask: stageDef.logical_task!,
+    logicalTask: stageDef.logical_task,
     provider: resolvedProvider,
-    auxiliary: Boolean(stageDef.auxiliary),
-    replan: Boolean(stageDef.replan),
+    auxiliary: isAuxiliaryStage(stageDef),
+    replan: isReplanStage(stageDef),
     issueId: deliveryResult.currentIssueId,
     attempt: deliveryResult.attempt,
     deliveryAttempt: deliveryResult.deliveryAttempt,
-    originatingStage: deliveryResult.originatingStage ?? canonicalOriginating,
+    originatingStage: finalOriginatingStage,
     receiptTemplate: resolvedReceiptTemplate,
     scope: resolvedScope,
     parameters: mergedParameters,

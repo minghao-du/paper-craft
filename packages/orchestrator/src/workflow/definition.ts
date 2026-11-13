@@ -2,12 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  ProviderOverride,
-  ResolveTaskIntentOptions,
-  TaskIntent,
   WorkflowDefinition,
   WorkflowStage,
 } from "./types.js";
+import {
+  resolveCanonicalStage,
+} from "./stage.js";
+
+export { resolveCanonicalStage } from "./stage.js";
 
 const candidateTemplate = fileURLToPath(
   new URL(
@@ -40,51 +42,6 @@ const fallbackDefault = fileURLToPath(
 export const DEFAULT_WORKFLOW_PATH = fs.existsSync(candidateDefault)
   ? candidateDefault
   : fallbackDefault;
-
-/**
- * Resolves a stage reference (exact id or logical_task alias) against workflow stages.
- * Rules:
- * - Exact id matches first. If exact id and logical_task collide, exact id wins.
- * - If no exact id matches, matches logical_task.
- * - If logical_task matches multiple stages, throws ambiguous error with candidate ids.
- * - Unmatched reference throws error; never fabricates a missing stage.
- */
-export function resolveCanonicalStage(
-  workflow: WorkflowDefinition,
-  stageRef: string,
-): WorkflowStage {
-  if (typeof stageRef !== "string" || !stageRef.trim()) {
-    throw new Error("Stage reference must be a non-empty string.");
-  }
-  const ref = stageRef.trim();
-
-  const stages = workflow.stages ?? [];
-
-  // 1. Exact id priority
-  const exactMatch = stages.find((s) => s.id === ref);
-  if (exactMatch) {
-    return exactMatch;
-  }
-
-  // 2. Logical_task alias matching
-  const aliasMatches = stages.filter((s) => s.logical_task === ref);
-  if (aliasMatches.length === 1) {
-    return aliasMatches[0];
-  }
-  if (aliasMatches.length > 1) {
-    const candidateIds = aliasMatches.map((s) => `'${s.id}'`).join(", ");
-    throw new Error(
-      `Ambiguous stage reference '${ref}': matches multiple stages (${candidateIds}). Please specify an explicit stage ID.`,
-    );
-  }
-
-  // 3. Completely unmatched -> reject
-  throw new Error(
-    `Stage '${ref}' is not defined in workflow '${workflow.name}'.`,
-  );
-}
-
-export const resolveStageDefinition = resolveCanonicalStage;
 
 function normalizeDependencyList(
   raw: unknown,
@@ -237,6 +194,39 @@ function validateWorkflow(
       );
     }
 
+    // Contradictory declarations for constrained built-in roles
+    if (
+      Boolean(rawStage.auxiliary) &&
+      (rawStage.logical_task === "issue_work" ||
+        rawStage.logical_task === "pipeline_refactor_execute")
+    ) {
+      throw new Error(
+        `Workflow stage '${stageId}' cannot declare auxiliary: true for content-changing role '${rawStage.logical_task}'.`,
+      );
+    }
+
+    if (
+      Boolean(rawStage.replan) &&
+      (rawStage.logical_task === "workspace_prepare" ||
+        rawStage.logical_task === "workspace_cleanup")
+    ) {
+      throw new Error(
+        `Workflow stage '${stageId}' cannot declare replan: true for auxiliary role '${rawStage.logical_task}'.`,
+      );
+    }
+
+    if (Boolean(rawStage.replan) && rawStage.logical_task === "issue_plan") {
+      throw new Error(
+        `Workflow stage '${stageId}' cannot declare replan: true for initial planning role 'issue_plan'.`,
+      );
+    }
+
+    if (Boolean(rawStage.auxiliary) && rawStage.logical_task === "scope_replan") {
+      throw new Error(
+        `Workflow stage '${stageId}' cannot declare auxiliary: true for replan role 'scope_replan'.`,
+      );
+    }
+
     if (mode === "source") {
       rawStage.auxiliary = rawStage.auxiliary ?? false;
       rawStage.replan = rawStage.replan ?? false;
@@ -336,6 +326,12 @@ function validateWorkflow(
 
   // Cross-reference checks for stage references
   const stageList = wf.stages as Array<Record<string, unknown>>;
+  const wfProxy: WorkflowDefinition = {
+    name: wf.name as string,
+    completion_policy: wf.completion_policy as any,
+    stages: stageList as unknown as WorkflowStage[],
+  };
+
   for (const rawStage of stageList) {
     const stageId = rawStage.id as string;
 
@@ -533,94 +529,3 @@ export function loadAndValidateWorkflow(
 
   return validateWorkflow(rawWf, mode, baseDir);
 }
-
-/**
- * Backward compatibility helper for lifecycle/dispatch.ts during refactoring.
- * Internally uses canonical stage resolution.
- */
-export function resolveTaskIntent(
-  workflow: WorkflowDefinition,
-  stage: string,
-  providerOverride?: ProviderOverride,
-  options?: ResolveTaskIntentOptions,
-): TaskIntent {
-  const stageDef = resolveCanonicalStage(workflow, stage);
-
-  const canonicalStage = stageDef.id;
-  const stageProvider = stageDef.provider;
-  const providerType =
-    providerOverride?.type || stageProvider?.type || "skill";
-  const providerTarget = providerOverride?.target || stageProvider?.target;
-  const providerArgs = providerOverride?.target
-    ? (providerOverride.args ?? [])
-    : (providerOverride?.args ?? stageProvider?.args ?? []);
-
-  if (providerType !== "skill") {
-    throw new Error(
-      `Provider 'type' must be 'skill', received '${providerType}'`,
-    );
-  }
-  if (!providerTarget) {
-    throw new Error(
-      `Provider 'target' must be defined in stage '${stage}' or provided in prepare request.`,
-    );
-  }
-
-  const provider = {
-    type: "skill" as const,
-    target: providerTarget,
-    args: [...providerArgs],
-  };
-
-  const template =
-    options?.template ||
-    stageDef.receipt_template ||
-    stageDef.template ||
-    DEFAULT_RECEIPT_TEMPLATE;
-
-  const auxiliary = Boolean(stageDef.auxiliary);
-  const replan = Boolean(stageDef.replan);
-
-  const config = options?.configSnapshot ?? {};
-  const context = options?.context ?? {};
-  const repository =
-    (config.delivery_target as string | undefined) ||
-    (context.delivery_target as string | undefined) ||
-    (context.repository as string | undefined);
-
-  const params: Record<string, unknown> = {
-    ...(stageDef.parameters ?? {}),
-    ...(stageDef.configs ?? {}),
-    ...(options?.parameters ?? {}),
-  };
-
-  const defaults: Record<string, unknown> = {
-    delivery_target: repository,
-    base_remote: config.base_remote || context.base_remote,
-    push_remote: config.push_remote || context.push_remote,
-    worktree_container:
-      config.worktree_container || context.worktree_container,
-  };
-
-  for (const [key, value] of Object.entries(defaults)) {
-    if (!(key in params) && value !== undefined && value !== null) {
-      params[key] = value;
-    }
-  }
-
-  const scope =
-    options?.scope !== undefined ? options.scope : stageDef.scope || "";
-
-  return {
-    canonical_stage: canonicalStage,
-    stage_def: stageDef,
-    provider,
-    auxiliary,
-    replan,
-    template,
-    scope,
-    parameters: params,
-  };
-}
-
-export { evaluateDispatch } from "./dispatch.js";

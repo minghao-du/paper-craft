@@ -295,40 +295,41 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
   });
 });
 
+const baseWf: WorkflowDefinition = {
+  name: 'test-wf',
+  version: '1.0.0',
+  completion_policy: 'issue_delivery',
+  initial_stage: 's1',
+  stages: [
+    {
+      id: 's1',
+      logical_task: 'plan',
+      provider: { type: 'skill', target: 'pc-issue-plan' },
+    },
+    {
+      id: 's2',
+      logical_task: 'work',
+      provider: { type: 'skill', target: 'pc-issue-work' },
+    },
+    {
+      id: 'plan',
+      logical_task: 'alias_collision_target',
+      provider: { type: 'skill', target: 'pc-issue-plan' },
+    },
+    {
+      id: 'dupe_task_1',
+      logical_task: 'shared_task',
+      provider: { type: 'skill', target: 'pc-workspace' },
+    },
+    {
+      id: 'dupe_task_2',
+      logical_task: 'shared_task',
+      provider: { type: 'skill', target: 'pc-workspace' },
+    },
+  ],
+};
+
 describe('Workflow Stage Resolution & Validation Domain Rules (W01, W02, W03)', () => {
-  const baseWf: WorkflowDefinition = {
-    name: 'test-wf',
-    version: '1.0.0',
-    completion_policy: 'issue_delivery',
-    initial_stage: 's1',
-    stages: [
-      {
-        id: 's1',
-        logical_task: 'plan',
-        provider: { type: 'skill', target: 'pc-issue-plan' },
-      },
-      {
-        id: 's2',
-        logical_task: 'work',
-        provider: { type: 'skill', target: 'pc-issue-work' },
-      },
-      {
-        id: 'plan',
-        logical_task: 'alias_collision_target',
-        provider: { type: 'skill', target: 'pc-issue-plan' },
-      },
-      {
-        id: 'dupe_task_1',
-        logical_task: 'shared_task',
-        provider: { type: 'skill', target: 'pc-workspace' },
-      },
-      {
-        id: 'dupe_task_2',
-        logical_task: 'shared_task',
-        provider: { type: 'skill', target: 'pc-workspace' },
-      },
-    ],
-  };
 
   it('W01: exact id takes priority over logical_task collision', () => {
     // Stage id 'plan' collides with Stage s1's logical_task 'plan'.
@@ -513,7 +514,7 @@ describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () 
     },
   };
 
-  it('rejects provider override for evidence-sensitive stages', () => {
+  it('rejects provider override for evidence-sensitive stages and protects execution arguments (F10)', () => {
     const sensitiveStages = [
       'stage_1_plan',
       'stage_2_land',
@@ -538,6 +539,38 @@ describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () 
         }),
       ).toThrowError(new RegExp(`Cannot override provider for evidence-sensitive stage '${stage}'`));
     }
+
+    // F10: Passing empty args to workspace_cleanup erases '--cleanup' and is rejected
+    expect(() =>
+      evaluateDispatch({
+        workflow,
+        deliveryState: initialDeliveryState,
+        request: {
+          stage: 'workspace_cleanup',
+          provider: {
+            type: 'skill',
+            target: 'pc-workspace',
+            args: [],
+          },
+        },
+      }),
+    ).toThrowError(/Cannot override provider for evidence-sensitive stage 'workspace_cleanup'/);
+
+    // F10: Passing matching args to workspace_cleanup is accepted
+    const cleanupEval = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'workspace_cleanup',
+        provider: {
+          type: 'skill',
+          target: 'pc-workspace',
+          args: ['--cleanup'],
+        },
+      },
+    });
+    expect(cleanupEval.task.provider.target).toBe('pc-workspace');
+    expect(cleanupEval.task.provider.args).toEqual(['--cleanup']);
   });
 
   it('allows provider override for ordinary stages and defaults args to empty array', () => {
@@ -641,7 +674,7 @@ describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () 
     expect(custom.task.receiptTemplate).toBe('/custom/path/receipt.md');
   });
 
-  it('shallow merges parameters and enforces identity parameter agreement', () => {
+  it('shallow merges parameters and enforces identity parameter agreement (F02)', () => {
     // Conflicting repository environment default throws
     expect(() =>
       evaluateDispatch({
@@ -659,7 +692,91 @@ describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () 
       }),
     ).toThrowError(/Conflicting parameter 'delivery_target'/);
 
-    // Parameter shallow override with explicit null preserved
+    // F02: Stage parameters conflict with environment defaults
+    const wfWithStageParam: WorkflowDefinition = {
+      ...workflow,
+      stages: workflow.stages.map((s) =>
+        s.id === 'stage_2_work'
+          ? {
+              ...s,
+              parameters: { delivery_target: 'repo/stage_param' },
+              configs: { base_remote: 'origin' },
+            }
+          : s,
+      ),
+    };
+
+    expect(() =>
+      evaluateDispatch({
+        workflow: wfWithStageParam,
+        deliveryState: initialDeliveryState,
+        environmentDefaults: {
+          delivery_target: 'repo/env_default',
+        },
+        request: {
+          stage: 'stage_2_work',
+        },
+      }),
+    ).toThrowError(/Conflicting parameter 'delivery_target'/);
+
+    // F02: Stage configs conflict with stage parameters
+    const wfWithConfigConflict: WorkflowDefinition = {
+      ...workflow,
+      stages: workflow.stages.map((s) =>
+        s.id === 'stage_2_work'
+          ? {
+              ...s,
+              parameters: { base_remote: 'upstream' },
+              configs: { base_remote: 'origin' },
+            }
+          : s,
+      ),
+    };
+
+    expect(() =>
+      evaluateDispatch({
+        workflow: wfWithConfigConflict,
+        deliveryState: initialDeliveryState,
+        request: {
+          stage: 'stage_2_work',
+        },
+      }),
+    ).toThrowError(/Conflicting parameter 'base_remote'/);
+
+    // F02: null cannot clear a protected parameter
+    expect(() =>
+      evaluateDispatch({
+        workflow,
+        deliveryState: initialDeliveryState,
+        environmentDefaults: {
+          push_remote: 'origin',
+        },
+        request: {
+          stage: 'stage_2_work',
+          parameters: {
+            push_remote: null,
+          },
+        },
+      }),
+    ).toThrowError(/Protected parameter 'push_remote'.*cannot be null/);
+
+    // F02: Repeating equal values across sources is allowed
+    const equalEval = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      environmentDefaults: {
+        delivery_target: 'repo/same',
+      },
+      request: {
+        stage: 'stage_2_work',
+        parameters: {
+          delivery_target: 'repo/same',
+        },
+      },
+    });
+    expect(equalEval.task.parameters.delivery_target).toBe('repo/same');
+
+    // Parameter shallow override with explicit null for ordinary param preserved
     const evalRes = evaluateDispatch({
       workflow,
       deliveryState: initialDeliveryState,
@@ -680,5 +797,66 @@ describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () 
     expect(evalRes.task.parameters.base_remote).toBe('origin');
     expect(evalRes.task.parameters.feature_flag).toBe(true);
     expect(evalRes.task.parameters.nullable_param).toBeNull();
+  });
+
+  it('F05: evaluateDispatch rejects ambiguous stage alias with candidate ids', () => {
+    expect(() =>
+      evaluateDispatch({
+        workflow: baseWf,
+        deliveryState: initialDeliveryState,
+        request: {
+          stage: 'shared_task',
+        },
+      }),
+    ).toThrowError(
+      /Ambiguous stage reference 'shared_task': matches multiple stages \('dupe_task_1', 'dupe_task_2'\)/,
+    );
+  });
+
+  it('F11: inferred origin during replan is populated into task.originatingStage and task.parameters.originating_stage', () => {
+    const evaluation = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'scope_replan',
+      },
+      completedStages: [
+        {
+          dispatch_id: 'disp_prev_work',
+          stage: 'stage_2_work',
+          issue_id: '100',
+          execution_status: 'succeeded',
+        },
+      ],
+    });
+
+    expect(evaluation.task.originatingStage).toBe('stage_2_work');
+    expect(evaluation.task.parameters.originating_stage).toBe('stage_2_work');
+  });
+
+  it('F12: mutating returned task parameters does not mutate request object', () => {
+    const reqParameters = {
+      nested: { flag: true, counts: [1, 2] },
+      plain_key: 'original',
+    };
+
+    const evaluation = evaluateDispatch({
+      workflow,
+      deliveryState: initialDeliveryState,
+      request: {
+        stage: 'stage_2_work',
+        parameters: reqParameters,
+      },
+    });
+
+    // Mutate evaluated task parameters
+    evaluation.task.parameters.plain_key = 'modified';
+    (evaluation.task.parameters.nested as any).flag = false;
+    (evaluation.task.parameters.nested as any).counts.push(3);
+
+    // Verify original request parameters were completely isolated
+    expect(reqParameters.plain_key).toBe('original');
+    expect(reqParameters.nested.flag).toBe(true);
+    expect(reqParameters.nested.counts).toEqual([1, 2]);
   });
 });

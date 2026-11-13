@@ -135,6 +135,19 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
   if (options.plan_dispatch_id) {
     const targetPlanId = options.plan_dispatch_id;
 
+    if (
+      !options.next_stage ||
+      typeof options.next_stage !== "string" ||
+      !options.next_stage.trim()
+    ) {
+      throw new Error("Plan acceptance requires an explicit 'next_stage'.");
+    }
+
+    const canonicalNextStage = resolveCanonicalStage(
+      state.workflow_snapshot,
+      options.next_stage,
+    ).id;
+
     // 1. Look for existing acceptance record for this exact plan_dispatch_id
     const accepted = (state.decisions ?? []).find(
       (d) => d.plan_dispatch_id === targetPlanId,
@@ -143,7 +156,7 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     if (accepted) {
       if (
         accepted.decision !== options.decision ||
-        accepted.next_stage !== options.next_stage
+        accepted.next_stage !== canonicalNextStage
       ) {
         throw new Error(
           `Conflicting plan acceptance retry: original accepted decision was '${accepted.decision}' with next_stage '${accepted.next_stage}', received '${options.decision}' with next_stage '${options.next_stage}'.`,
@@ -158,7 +171,7 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
       return accepted;
     }
 
-    // 2. First acceptance checks
+    // 2. Control guards
     if (state.active_dispatch) {
       throw new Error(
         `Cannot accept plan while dispatch '${state.active_dispatch.dispatch_id}' is active. Complete it first.`,
@@ -183,82 +196,13 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
       );
     }
 
-    if (state.workflow_snapshot.completion_policy === "basic") {
-      throw new Error(
-        "Workflow with 'basic' completion policy does not accept planning results.",
-      );
-    }
-
-    // Locate source completion in state.completed_stages
+    // Physical receipt check in Lifecycle
     const source = (state.completed_stages ?? []).find(
       (c) => c.dispatch_id === targetPlanId,
     );
     if (!source) {
       throw new Error(
         `Planning dispatch '${targetPlanId}' not found in completed stages.`,
-      );
-    }
-
-    const rootIssueId = String(state.root_issue_id);
-    if (
-      source.issue_id != null &&
-      String(source.issue_id).trim() !== rootIssueId
-    ) {
-      throw new Error(
-        `Planning dispatch '${targetPlanId}' belongs to issue '${source.issue_id}', expected root issue '${rootIssueId}'.`,
-      );
-    }
-
-    if (source.execution_status !== "succeeded") {
-      throw new Error(
-        `Planning dispatch '${targetPlanId}' execution status is '${source.execution_status}', expected 'succeeded'.`,
-      );
-    }
-
-    const stageDef = state.workflow_snapshot.stages.find(
-      (s) => s.id === source.stage,
-    );
-    if (!stageDef) {
-      throw new Error(
-        `Planning dispatch stage '${source.stage}' not found in workflow snapshot.`,
-      );
-    }
-
-    const isInitialPlanStage =
-      (stageDef.logical_task === "issue_plan" ||
-        stageDef.provider?.target === "pc-issue-plan" ||
-        source.stage === "stage_1_plan") &&
-      !stageDef.replan &&
-      stageDef.logical_task !== "scope_replan";
-    if (!isInitialPlanStage) {
-      throw new Error(
-        `Dispatch '${targetPlanId}' stage '${source.stage}' is not an initial planning stage.`,
-      );
-    }
-
-    const expectedProvider = stageDef.provider;
-    const actualProvider = source.provider ?? expectedProvider;
-    if (
-      expectedProvider &&
-      actualProvider &&
-      (expectedProvider.target !== actualProvider.target ||
-        expectedProvider.type !== actualProvider.type)
-    ) {
-      throw new Error(
-        `Planning dispatch provider mismatch: expected '${expectedProvider.target}', got '${actualProvider.target}'.`,
-      );
-    }
-
-    const res = source.result;
-    if (!res || typeof res !== "object" || Array.isArray(res)) {
-      throw new Error(
-        `Planning dispatch '${targetPlanId}' result must be an object.`,
-      );
-    }
-    const outcome = (res as Record<string, unknown>).outcome;
-    if (outcome !== "direct" && outcome !== "decomposed") {
-      throw new Error(
-        `Planning dispatch '${targetPlanId}' outcome must be 'direct' or 'decomposed', got '${String(outcome)}'.`,
       );
     }
 
@@ -272,50 +216,14 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
       );
     }
     const resolvedReceipt = path.resolve(source.receipt_path);
-    if (!fs.existsSync(resolvedReceipt) || fs.statSync(resolvedReceipt).size === 0) {
+    if (
+      !fs.existsSync(resolvedReceipt) ||
+      fs.statSync(resolvedReceipt).size === 0
+    ) {
       throw new Error(
         `Planning receipt at '${resolvedReceipt}' does not exist or is empty.`,
       );
     }
-
-    // Freshness check: no later planning attempt for same root issue with step_index > source.step_index
-    const laterPlanning = (state.completed_stages ?? []).some((c) => {
-      if (c.dispatch_id === targetPlanId) return false;
-      if (c.step_index <= source.step_index) return false;
-      const cStageDef = state.workflow_snapshot.stages.find((s) => s.id === c.stage);
-      const isCPlan =
-        cStageDef?.logical_task === "issue_plan" ||
-        cStageDef?.provider?.target === "pc-issue-plan" ||
-        c.stage === "stage_1_plan";
-      const cIssue = c.issue_id != null ? String(c.issue_id).trim() : rootIssueId;
-      return isCPlan && cIssue === rootIssueId;
-    });
-    if (laterPlanning) {
-      throw new Error(
-        `Planning dispatch '${targetPlanId}' is superseded by a later planning dispatch.`,
-      );
-    }
-
-    // No non-auxiliary business stage completed after this planning dispatch
-    const laterNonAuxStage = (state.completed_stages ?? []).some((c) => {
-      if (c.step_index <= source.step_index) return false;
-      const cStageDef = state.workflow_snapshot.stages.find((s) => s.id === c.stage);
-      return cStageDef && !cStageDef.auxiliary && c.stage !== source.stage;
-    });
-    if (laterNonAuxStage) {
-      throw new Error(
-        `Cannot accept plan '${targetPlanId}': a subsequent non-auxiliary stage has already completed.`,
-      );
-    }
-
-    if (!options.next_stage || typeof options.next_stage !== "string" || !options.next_stage.trim()) {
-      throw new Error("Plan acceptance requires an explicit 'next_stage'.");
-    }
-
-    const canonicalNextStage = resolveCanonicalStage(
-      state.workflow_snapshot,
-      options.next_stage,
-    ).id;
 
     const deliveryResult = applyDeliveryDecision({
       workflow: state.workflow_snapshot,
@@ -365,13 +273,20 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
   assertResolveShape(options, state);
 
   if (options.decision === "finish") {
+    if (state.active_dispatch) {
+      throw new Error(
+        `Cannot finish workflow: active dispatch '${state.active_dispatch.dispatch_id}' is still in flight.`,
+      );
+    }
+    if (state.protocol_error) {
+      throw new Error(
+        `Cannot finish workflow: active protocol error exists: ${state.protocol_error.message}`,
+      );
+    }
     assertCanFinish({
       workflow: state.workflow_snapshot,
       deliveryState: toDeliveryState(state),
       completedStages: state.completed_stages ?? [],
-      activeDispatch: state.active_dispatch,
-      protocolError: state.protocol_error,
-      rootIssueId: String(state.root_issue_id),
     });
   }
 
