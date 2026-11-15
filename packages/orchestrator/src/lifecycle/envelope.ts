@@ -1,6 +1,6 @@
 /**
- * Task Input Envelope protocol: construction, validation, and loading.
- * Pure protocol logic: does NOT inspect workspace-config.json.
+ * Task Input Envelope lifecycle operations: construction and loading backed by Protocol validation.
+ * Filesystem access and receipt template defaults are handled here.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -35,12 +35,10 @@ export class EnvelopeCorruptedError extends EnvelopeError {
   }
 }
 
-// Validation lives in ../protocol; re-exported for existing lifecycle callers.
+// Re-exported for lifecycle callers.
 export {
   EnvelopeValidationError,
   isObject,
-  validateTaskInputEnvelope as validateEnvelope,
-  assertTaskInputEnvelope as assertValidEnvelope,
   type JsonObject,
 } from "../protocol/index.js";
 
@@ -54,9 +52,10 @@ export function loadEnvelope(filename: string, validate = true): unknown {
   if (!fs.existsSync(absolute)) {
     throw new Error(`Envelope file not found: ${absolute}`);
   }
+  const raw = fs.readFileSync(absolute, "utf8");
   let data: unknown;
   try {
-    data = JSON.parse(fs.readFileSync(absolute, "utf8"));
+    data = JSON.parse(raw);
   } catch (error) {
     throw new EnvelopeCorruptedError(
       `Corrupted envelope JSON at ${absolute}: ${error}`,
@@ -120,7 +119,6 @@ export function createEnvelope(
         replans_used: Number(o.replans_used ?? 0),
         replans_max: Number(o.replans_max ?? 2),
       },
-      validate: o.validate !== false,
     });
   }
 
@@ -131,7 +129,7 @@ export function createEnvelope(
     ? path.resolve(options.contract.receipt_path)
     : "";
 
-  const envelope: TaskInputEnvelope = {
+  const candidate = {
     schema_version: options.schema_version ?? "1.0",
     task: {
       logical_stage: String(options.task.logical_stage),
@@ -178,9 +176,6 @@ export function createEnvelope(
     },
   };
 
-  if (options.validate !== false) {
-    assertTaskInputEnvelope(envelope);
-  }
-
-  return envelope;
+  assertTaskInputEnvelope(candidate);
+  return candidate;
 }

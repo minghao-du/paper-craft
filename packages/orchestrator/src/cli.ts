@@ -57,8 +57,6 @@ export function readReportText(raw: string): string {
   }
 }
 
-export const parseReportInput = readReportText;
-
 type ArgOption = { type: "string" | "boolean"; multiple?: boolean };
 
 const INIT_OPTIONS: Record<string, ArgOption> = {

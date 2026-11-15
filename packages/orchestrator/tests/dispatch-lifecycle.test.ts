@@ -17,8 +17,6 @@ import {
   type RuntimeState,
 } from '../src/lifecycle/index.js';
 import {
-  getPendingCommitPath,
-  getStateFilePath,
   loadRun,
   replaceRun,
 } from '../src/run-store/index.js';
@@ -30,6 +28,10 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Recovery fixtures deliberately access the persisted storage layout.
+const getStateFilePath = (root: string): string => path.join(root, 'state.json');
+const getPendingCommitPath = (root: string): string => path.join(root, 'pending-commit.json');
 
 describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
   // T1: init -> dispatch -> complete -> inspect

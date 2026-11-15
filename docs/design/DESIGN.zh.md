@@ -65,9 +65,10 @@ Orchestrator 通过平台适配器启动新的专业 agent，加载 `skills/<tar
 
 技能指令指导 agent 进行判断、路由和恢复。固定辅助代码执行机械操作，并在运行时校验外部 JSON；TypeScript 类型本身不能校验文件或 agent 输出。
 
-- **Orchestrator 辅助代码（`packages/orchestrator/`）**：由三个高内聚核心模块及轻量 CLI 入口构成：
+- **Orchestrator 辅助代码（`packages/orchestrator/`）**：由四个高内聚核心模块及轻量 CLI 入口构成：
   - **Lifecycle**：负责派发身份、授权语义、报告关联、信封协议、幂等性，以及 `init`、`dispatch`、`complete`、`resolve` 和 `inspect` 五个生命周期操作的组织协调。`init` 严格收窄为创建或恢复运行并移除快捷计划输入；`resolve` 通过 `plan_dispatch_id` 引用已记录的规划完成结果来接受规划，负责请求身份、新鲜度校验与幂等重放。
   - **Workflow**：负责交付序列构造、阶段定义加载与校验、完成策略（completion policies）、重试/重规划预算以及验收证据检查。在接受规划时，内部校验依赖顺序并构造单根或拆分子任务交付序列，相关辅助函数保持为内部实现不对外导出，且不原地修改调用方输入。
+  - **Protocol**：负责信封与报告的结构定义、模式版本、纯结构校验与传输解析，不包含文件系统访问。
   - **RunStore**：负责运行目录文件布局、原子提交（状态与信封）及通过 pending commit 记录进行中断恢复。
   - **CLI（`cli.ts`、`envelope-cli.ts`）**：负责参数解析、输入媒介处理与终端输出格式化，不承载交付规则，不直接修改底层文件。
 - **配置辅助代码（`packages/workspace-config/`）**：TypeScript 模块解析并校验 orchestrator 使用的项目配置。
