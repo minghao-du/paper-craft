@@ -411,7 +411,6 @@ export function initWorkflow(o: InitOptions): RuntimeState {
     replaceRun(root, state);
   } else {
     commitRun(root, {
-      is_initial: true,
       expected_previous_state: null,
       target_state: state,
     });

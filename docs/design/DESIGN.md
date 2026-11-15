@@ -65,9 +65,10 @@ This protocol establishes two operational invariants:
 
 Skill instructions guide agent judgment, routing, and recovery. Fixed helpers perform mechanical work and validate external JSON at runtime; TypeScript types alone do not validate files or agent output.
 
-- **Orchestrator helpers (`packages/orchestrator/`)**: Structured into three cohesive modules and thin CLI entry points:
+- **Orchestrator helpers (`packages/orchestrator/`)**: Structured into four cohesive modules and thin CLI entry points:
   - **Lifecycle**: owns dispatch identity, authorization, report correlation, envelope protocols, idempotency, and operation orchestration across `init`, `dispatch`, `complete`, `resolve`, and `inspect`. `init` is strictly narrowed to run creation and resumption with shortcut plan inputs removed; `resolve` accepts planning results by referencing recorded completions via `plan_dispatch_id`, enforcing request identity, freshness, and idempotent replay.
   - **Workflow**: owns domain delivery sequence construction, stage definition loading and validation, completion policies, retry/replan budgets, and evidence checks. When accepting plans, it internally validates order and constructs direct or decomposed delivery sequences, keeping planning helpers as internal unexported implementations without mutating caller inputs.
+  - **Protocol**: owns envelope and report structural definitions, schema versioning, pure structural validation, and transport parsing without filesystem access.
   - **RunStore**: owns run directory file layout, atomic commits (state and envelopes), and crash recovery via pending commit records.
   - **CLI (`cli.ts`, `envelope-cli.ts`)**: handles command arguments, input media, and terminal formatting without embedding workflow policies or direct file mutation.
 - **Configuration helpers (`packages/workspace-config/`)**: TypeScript modules resolve and validate the project configuration used by the orchestrator.

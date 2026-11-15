@@ -274,5 +274,4 @@ export interface EnvelopeCreateOptions {
     replans_used?: number;
     replans_max?: number;
   };
-  validate?: boolean;
 }

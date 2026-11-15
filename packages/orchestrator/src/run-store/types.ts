@@ -17,7 +17,6 @@ export interface PendingCommit<TState = unknown> {
 }
 
 export interface RunCommit<TState = unknown> {
-  is_initial?: boolean;
   expected_previous_state: TState | null;
   target_state: TState;
   envelope?: PendingEnvelope | null;

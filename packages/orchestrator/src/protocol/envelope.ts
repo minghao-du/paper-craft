@@ -5,7 +5,7 @@
 import { isObject, ProtocolError, type JsonObject } from "./errors.js";
 
 export interface TaskInputEnvelope {
-  schema_version: string;
+  schema_version: "1.0";
   task: {
     logical_stage: string;
     step_index: number;
@@ -14,7 +14,7 @@ export interface TaskInputEnvelope {
     current_issue_id: string;
   };
   provider: {
-    type: string;
+    type: "skill";
     target: string;
     args?: string[];
   };

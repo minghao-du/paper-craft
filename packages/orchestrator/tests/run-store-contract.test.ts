@@ -6,6 +6,7 @@ import {
   commitRun,
   inspectRunStorage,
   loadRun,
+  loadRunIfExists,
   replaceRun,
   StorageInconsistentError,
   StorageIOError,
@@ -190,4 +191,128 @@ test("a pending removal failure leaves the written state recoverable", () => {
   unlink.mockRestore();
   expect(loadRun(root)).toEqual(target);
   expect(fs.existsSync(pendingPath)).toBe(false);
+}, 5_000);
+
+test.each([
+  {
+    description: "undefined expected_previous_state",
+    commit: { target_state: target },
+  },
+  {
+    description: "null target_state",
+    commit: { expected_previous_state: null, target_state: null as unknown },
+  },
+  {
+    description: "undefined target_state",
+    commit: { expected_previous_state: null },
+  },
+  {
+    description: "undefined envelope content",
+    commit: {
+      expected_previous_state: null,
+      target_state: target,
+      envelope: { filename: "01-input.json", content: undefined as unknown },
+    },
+  },
+])(
+  "undefined or missing mandatory commit value ($description) throws STORAGE_INVALID_INPUT without writing files",
+  ({ commit }) => {
+    expect(() => commitRun(root, commit as unknown as Parameters<typeof commitRun>[1])).toThrow(
+      expect.objectContaining({ code: "STORAGE_INVALID_INPUT" }),
+    );
+    expect(fs.readdirSync(root)).toEqual([]);
+  },
+  5_000,
+);
+
+test("persisted null state is treated as corrupt/inconsistent, not absence", () => {
+  fs.writeFileSync(statePath, "null\n");
+
+  expect(() => loadRunIfExists(root)).toThrow(StorageInconsistentError);
+  expect(() => loadRun(root)).toThrow(StorageInconsistentError);
+  expect(fs.readFileSync(statePath, "utf8")).toBe("null\n");
+}, 5_000);
+
+test("null pending target throws StorageInconsistentError on recovery and does not apply", () => {
+  writeJson(statePath, previous);
+  writeJson(pendingPath, {
+    version: "1.0",
+    expected_previous_state: previous,
+    target_state: null,
+  });
+  const pendingBytes = fs.readFileSync(pendingPath, "utf8");
+  const stateBytes = fs.readFileSync(statePath, "utf8");
+
+  expect(() => loadRun(root)).toThrow(StorageInconsistentError);
+  expect(fs.readFileSync(statePath, "utf8")).toBe(stateBytes);
+  expect(fs.readFileSync(pendingPath, "utf8")).toBe(pendingBytes);
+}, 5_000);
+
+test("invalid replacement target in replaceRun fails before recovery of pending commit or archival of corrupt file", () => {
+  // Case A: pending commit is preserved without being recovered
+  writeJson(statePath, previous);
+  writeJson(pendingPath, {
+    version: "1.0",
+    expected_previous_state: previous,
+    target_state: target,
+  });
+  const pendingBytes = fs.readFileSync(pendingPath, "utf8");
+  const stateBytes = fs.readFileSync(statePath, "utf8");
+
+  expect(() => replaceRun(root, null as unknown as typeof target)).toThrow(
+    expect.objectContaining({ code: "STORAGE_INVALID_INPUT" }),
+  );
+  expect(fs.readFileSync(pendingPath, "utf8")).toBe(pendingBytes);
+  expect(fs.readFileSync(statePath, "utf8")).toBe(stateBytes);
+
+  // Case B: corrupt file is preserved without being archived
+  fs.unlinkSync(pendingPath);
+  fs.writeFileSync(statePath, "{not json");
+
+  expect(() => replaceRun(root, undefined as unknown as typeof target)).toThrow(
+    expect.objectContaining({ code: "STORAGE_INVALID_INPUT" }),
+  );
+  expect(fs.readFileSync(statePath, "utf8")).toBe("{not json");
+  expect(fs.readdirSync(root).some((file) => file.includes(".corrupt-"))).toBe(
+    false,
+  );
+}, 5_000);
+
+test("inspectRunStorage marks null state.json as stateCorrupt", () => {
+  fs.writeFileSync(statePath, "null\n");
+
+  const inspected = inspectRunStorage(root);
+  expect(inspected.exists).toBe(true);
+  expect(inspected.stateExists).toBe(true);
+  expect(inspected.stateCorrupt).toBe(true);
+  expect(inspected.state).toBeNull();
+  expect(inspected.pendingCorrupt).toBe(false);
+  expect(fs.readFileSync(statePath, "utf8")).toBe("null\n");
+}, 5_000);
+
+test("commitRun creation retry succeeds when existing state matches target and fails on conflict", () => {
+  // Initial creation succeeds
+  commitRun(root, {
+    expected_previous_state: null,
+    target_state: target,
+  });
+  expect(loadRun(root)).toEqual(target);
+
+  // Creation retry with identical target succeeds (idempotent)
+  expect(() =>
+    commitRun(root, {
+      expected_previous_state: null,
+      target_state: target,
+    }),
+  ).not.toThrow();
+  expect(loadRun(root)).toEqual(target);
+
+  // Creation with conflicting target fails
+  expect(() =>
+    commitRun(root, {
+      expected_previous_state: null,
+      target_state: next,
+    }),
+  ).toThrow(StorageInconsistentError);
+  expect(loadRun(root)).toEqual(target);
 }, 5_000);

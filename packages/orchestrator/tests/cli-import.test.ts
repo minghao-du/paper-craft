@@ -7,6 +7,9 @@
  * - Does not mutate process.exitCode
  * - Exposes callable main() and helper exports
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('Orchestrator CLI Import Isolation', () => {
@@ -23,7 +26,7 @@ describe('Orchestrator CLI Import Isolation', () => {
       expect(cliModule).toBeDefined();
       expect(typeof cliModule.main).toBe('function');
       expect(typeof cliModule.loadDispatchRequest).toBe('function');
-      expect(typeof cliModule.parseReportInput).toBe('function');
+      expect(typeof cliModule.readReportText).toBe('function');
 
       // Verify no side effects occurred on import
       expect(process.exitCode).toBe(originalExitCode);
@@ -75,6 +78,26 @@ describe('Orchestrator CLI Import Isolation', () => {
       stdoutSpy.mockRestore();
       consoleErrorSpy.mockRestore();
       consoleLogSpy.mockRestore();
+    }
+  });
+
+  it('readReportText handles inline JSON and file paths', async () => {
+    const { readReportText } = await import('../src/cli.js');
+    expect(readReportText('  {"execution_status": "succeeded"}  ')).toBe(
+      '{"execution_status": "succeeded"}',
+    );
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-report-test-'));
+    try {
+      const reportFile = path.join(tempDir, 'report.json');
+      fs.writeFileSync(reportFile, '{"execution_status": "failed"}', 'utf8');
+      expect(readReportText(reportFile)).toBe('{"execution_status": "failed"}');
+
+      expect(() =>
+        readReportText(path.join(tempDir, 'nonexistent.json')),
+      ).toThrow('Report file not found');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });

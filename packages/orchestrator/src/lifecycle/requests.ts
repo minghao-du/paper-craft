@@ -3,7 +3,6 @@
  */
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { parseReportInput } from "../protocol/index.js";
 import type {
   CompactReport,
   NormalizedDispatchRequest,
@@ -348,8 +347,6 @@ export function parseHistoricalDispatchRequest(
       record.rework_issue != null ? String(record.rework_issue).trim() : null,
   };
 }
-
-export const parseCompleteReport = parseReportInput;
 
 export function compareCompleteReports(
   a: CompactReport,

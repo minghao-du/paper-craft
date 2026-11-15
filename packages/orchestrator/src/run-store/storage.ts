@@ -46,9 +46,8 @@ function removePendingCommit(pendingPath: string): void {
   );
 }
 
-/** Atomically replaces one JSON file with a flushed, same-directory temporary file. */
-function atomicWriteJson(filePath: string, data: unknown): void {
-  const content = JSON.stringify(data, null, 2) + "\n";
+/** Atomically replaces one file with a flushed, same-directory temporary file. */
+function atomicWriteString(filePath: string, content: string): void {
   const dir = path.dirname(filePath);
   filesystemOperation("create directory", dir, () =>
     fs.mkdirSync(dir, { recursive: true }),
@@ -83,6 +82,11 @@ function atomicWriteJson(filePath: string, data: unknown): void {
     }
     throw error;
   }
+}
+
+function atomicWriteJson(filePath: string, data: unknown): void {
+  const content = JSON.stringify(data, null, 2) + "\n";
+  atomicWriteString(filePath, content);
 }
 
 function getStateFilePath(root: string): string {
@@ -162,13 +166,111 @@ function applyEnvelope(
   root: string,
   envelope: PendingEnvelope,
   conflictErrorMessage: string,
+  serializedContent?: string,
 ): void {
   const envPath = validateAndResolveEnvelopePath(root, envelope.filename);
   if (
     !assertEnvelopeCompatible(envPath, envelope.content, conflictErrorMessage)
   ) {
-    atomicWriteJson(envPath, envelope.content);
+    if (serializedContent !== undefined) {
+      atomicWriteString(envPath, serializedContent);
+    } else {
+      atomicWriteJson(envPath, envelope.content);
+    }
   }
+}
+
+function encodeJson(data: unknown, description: string): string {
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(data, null, 2);
+  } catch (error) {
+    throw new StorageError(
+      `Invalid commit input: failed to serialize ${description} to JSON: ${String(error)}`,
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+  if (serialized === undefined) {
+    throw new StorageError(
+      `Invalid commit input: ${description} cannot be serialized to JSON`,
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+  return serialized + "\n";
+}
+
+interface PendingValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
+function validatePendingStructure(raw: unknown): PendingValidationResult {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { valid: false, error: "pending commit record must be an object" };
+  }
+  const record = raw as Record<string, unknown>;
+  if (record.version !== "1.0") {
+    return { valid: false, error: "pending commit version must be '1.0'" };
+  }
+  if (
+    !("expected_previous_state" in record) ||
+    record.expected_previous_state === undefined
+  ) {
+    return {
+      valid: false,
+      error: "pending commit must contain expected_previous_state",
+    };
+  }
+  if (
+    record.expected_previous_state !== null &&
+    (typeof record.expected_previous_state !== "object" ||
+      Array.isArray(record.expected_previous_state))
+  ) {
+    return {
+      valid: false,
+      error:
+        "pending commit expected_previous_state must be an object or null",
+    };
+  }
+  if (
+    !("target_state" in record) ||
+    record.target_state === null ||
+    record.target_state === undefined ||
+    typeof record.target_state !== "object" ||
+    Array.isArray(record.target_state)
+  ) {
+    return {
+      valid: false,
+      error: "pending commit must contain non-null target_state",
+    };
+  }
+  if (
+    "envelope" in record &&
+    record.envelope !== null &&
+    record.envelope !== undefined
+  ) {
+    const env = record.envelope;
+    if (typeof env !== "object" || Array.isArray(env) || env === null) {
+      return {
+        valid: false,
+        error: "pending commit envelope must be an object",
+      };
+    }
+    const envRec = env as Record<string, unknown>;
+    if (!("filename" in envRec) || typeof envRec.filename !== "string") {
+      return {
+        valid: false,
+        error: "pending commit envelope must have a string filename",
+      };
+    }
+    if (!("content" in envRec) || envRec.content === undefined) {
+      return {
+        valid: false,
+        error: "pending commit envelope content must not be undefined",
+      };
+    }
+  }
+  return { valid: true };
 }
 
 /** Reads and validates the persisted shape and envelope path before recovery. */
@@ -178,36 +280,33 @@ function readPendingCommit<TState>(
 ): PendingCommit<TState> {
   const malformed = `Malformed pending-commit record at ${pendingPath}`;
   const raw = readJson(pendingPath, malformed);
-  if (
-    raw === null ||
-    typeof raw !== "object" ||
-    Array.isArray(raw) ||
-    !("version" in raw) ||
-    raw.version !== "1.0" ||
-    !("expected_previous_state" in raw) ||
-    !("target_state" in raw)
-  ) {
+  const validation = validatePendingStructure(raw);
+  if (!validation.valid) {
     throw new StorageInconsistentError(malformed);
   }
 
-  if ("envelope" in raw && raw.envelope !== null) {
-    const envelope = raw.envelope;
-    if (
-      typeof envelope !== "object" ||
-      Array.isArray(envelope) ||
-      !("filename" in envelope) ||
-      !("content" in envelope)
-    ) {
-      throw new StorageInconsistentError(malformed);
-    }
-    validateAndResolveEnvelopePath(root, envelope.filename);
+  const candidate = raw as PendingCommit<TState>;
+  if (candidate.envelope) {
+    validateAndResolveEnvelopePath(root, candidate.envelope.filename);
   }
 
-  return raw as PendingCommit<TState>;
+  return candidate;
 }
 
 function readState<TState>(statePath: string): TState {
-  return readJson<TState>(statePath, `Malformed state file at ${statePath}`);
+  const raw = readJson<TState>(
+    statePath,
+    `Malformed state file at ${statePath}`,
+  );
+  if (
+    raw === null ||
+    raw === undefined ||
+    typeof raw !== "object" ||
+    Array.isArray(raw)
+  ) {
+    throw new StorageInconsistentError("Persisted state cannot be null");
+  }
+  return raw;
 }
 
 /**
@@ -224,7 +323,7 @@ export function loadRun<TState = unknown>(root: string): TState {
   if (pathExists(pendingPath)) {
     const pending = readPendingCommit<TState>(resolvedRoot, pendingPath);
     const stateExists = pathExists(statePath);
-    const diskState = stateExists ? readState(statePath) : undefined;
+    const diskState = stateExists ? readState<TState>(statePath) : undefined;
     const matchesExpected = stateExists
       ? isDeepStrictEqual(diskState, pending.expected_previous_state)
       : pending.expected_previous_state === null;
@@ -277,7 +376,133 @@ export function commitRun<TState = unknown>(
   root: string,
   commit: RunCommit<TState>,
 ): void {
+  if (!commit || typeof commit !== "object" || Array.isArray(commit)) {
+    throw new StorageError(
+      "Invalid commit input: commit must be an object",
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+
+  if (
+    !("expected_previous_state" in commit) ||
+    commit.expected_previous_state === undefined
+  ) {
+    throw new StorageError(
+      "Invalid commit input: expected_previous_state is required and cannot be undefined",
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+
+  if (
+    commit.expected_previous_state !== null &&
+    (typeof commit.expected_previous_state !== "object" ||
+      Array.isArray(commit.expected_previous_state))
+  ) {
+    throw new StorageError(
+      "Invalid commit input: expected_previous_state must be an object or null",
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+
+  if (
+    !("target_state" in commit) ||
+    commit.target_state === null ||
+    commit.target_state === undefined ||
+    typeof commit.target_state !== "object" ||
+    Array.isArray(commit.target_state)
+  ) {
+    throw new StorageError(
+      "Invalid commit input: target_state must be a non-null object",
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+
   const resolvedRoot = path.resolve(root);
+
+  let envelopePath: string | null = null;
+  if (commit.envelope !== undefined && commit.envelope !== null) {
+    if (typeof commit.envelope !== "object" || Array.isArray(commit.envelope)) {
+      throw new StorageError(
+        "Invalid commit input: envelope must be an object",
+        "STORAGE_INVALID_INPUT",
+      );
+    }
+    if (
+      !("content" in commit.envelope) ||
+      commit.envelope.content === undefined
+    ) {
+      throw new StorageError(
+        "Invalid commit input: envelope content must not be undefined",
+        "STORAGE_INVALID_INPUT",
+      );
+    }
+    envelopePath = validateAndResolveEnvelopePath(
+      resolvedRoot,
+      commit.envelope.filename,
+    );
+  }
+
+  // Preflight serialization before any filesystem mutation
+  const serializedTarget = encodeJson(commit.target_state, "target_state");
+  const parsedTarget = JSON.parse(serializedTarget);
+
+  let serializedEnvelopeContent: string | null = null;
+  let parsedEnvelopeContent: unknown = undefined;
+  if (commit.envelope) {
+    serializedEnvelopeContent = encodeJson(
+      commit.envelope.content,
+      "envelope content",
+    );
+    parsedEnvelopeContent = JSON.parse(serializedEnvelopeContent);
+  }
+
+  if (commit.expected_previous_state !== null) {
+    encodeJson(commit.expected_previous_state, "expected_previous_state");
+  }
+
+  const pendingRecord: PendingCommit<TState> = {
+    version: "1.0",
+    expected_previous_state: commit.expected_previous_state,
+    target_state: commit.target_state,
+    envelope: commit.envelope
+      ? {
+          filename: commit.envelope.filename,
+          content: commit.envelope.content,
+        }
+      : null,
+  };
+  const serializedPending = encodeJson(pendingRecord, "pending commit");
+  const parsedPending = JSON.parse(serializedPending);
+
+  const pendingValidation = validatePendingStructure(parsedPending);
+  if (!pendingValidation.valid) {
+    throw new StorageError(
+      `Invalid commit input: ${pendingValidation.error}`,
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+
+  if (!isDeepStrictEqual(parsedPending.target_state, parsedTarget)) {
+    throw new StorageError(
+      "Invalid commit input: serialized target_state does not match pending-commit target_state",
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+
+  if (commit.envelope) {
+    if (
+      !isDeepStrictEqual(
+        parsedPending.envelope?.content,
+        parsedEnvelopeContent,
+      )
+    ) {
+      throw new StorageError(
+        "Invalid commit input: serialized envelope content does not match pending-commit envelope content",
+        "STORAGE_INVALID_INPUT",
+      );
+    }
+  }
+
   const pendingPath = getPendingCommitPath(resolvedRoot);
   if (pathExists(pendingPath)) {
     throw new StorageError(
@@ -286,15 +511,11 @@ export function commitRun<TState = unknown>(
     );
   }
 
-  const envelopePath = commit.envelope
-    ? validateAndResolveEnvelopePath(resolvedRoot, commit.envelope.filename)
-    : null;
-
   const statePath = getStateFilePath(resolvedRoot);
   const stateExists = pathExists(statePath);
-  const diskState = stateExists ? readState(statePath) : undefined;
+  const diskState = stateExists ? readState<TState>(statePath) : undefined;
 
-  if (commit.is_initial || commit.expected_previous_state === null) {
+  if (commit.expected_previous_state === null) {
     if (stateExists && !isDeepStrictEqual(diskState, commit.target_state)) {
       throw new StorageInconsistentError(
         "Initial commit conflict: state.json already exists",
@@ -319,23 +540,18 @@ export function commitRun<TState = unknown>(
     );
   }
 
-  const pending: PendingCommit<TState> = {
-    version: "1.0",
-    expected_previous_state: commit.expected_previous_state,
-    target_state: commit.target_state,
-    envelope: commit.envelope ?? null,
-  };
-  atomicWriteJson(pendingPath, pending);
+  atomicWriteString(pendingPath, serializedPending);
 
   if (commit.envelope) {
     applyEnvelope(
       resolvedRoot,
       commit.envelope,
       "Envelope file exists with conflicting content",
+      serializedEnvelopeContent!,
     );
   }
 
-  atomicWriteJson(statePath, commit.target_state);
+  atomicWriteString(statePath, serializedTarget);
 
   removePendingCommit(pendingPath);
 }
@@ -472,8 +688,36 @@ export function loadRunIfExists<TState = unknown>(root: string): TState | null {
   return loadRun<TState>(resolvedRoot);
 }
 
+function validateAndSerializeTargetState(targetState: unknown): string {
+  if (
+    targetState === null ||
+    targetState === undefined ||
+    typeof targetState !== "object" ||
+    Array.isArray(targetState)
+  ) {
+    throw new StorageError(
+      "Invalid commit input: target_state must be a non-null object",
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+  const serialized = encodeJson(targetState, "target_state");
+  const parsed = JSON.parse(serialized);
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed)
+  ) {
+    throw new StorageError(
+      "Invalid commit input: target_state cannot be serialized to a JSON object",
+      "STORAGE_INVALID_INPUT",
+    );
+  }
+  return serialized;
+}
+
 /**
  * Explicitly replaces any existing run with target_state (force semantics).
+ * Validates targetState before inspecting old storage or archiving corrupt files.
  * Loading the old run may recover a pending commit before the dispatch artifact
  * check. When storage is inconsistent, dispatch artifacts block archiving.
  * Otherwise, corrupt evidence is renamed to `<name>.corrupt-<timestamp>`
@@ -485,6 +729,7 @@ export function replaceRun<TState = unknown>(
   root: string,
   targetState: TState,
 ): void {
+  validateAndSerializeTargetState(targetState);
   const resolvedRoot = path.resolve(root);
   let existing: TState | null;
   let checkedArtifacts = false;
@@ -512,7 +757,6 @@ export function replaceRun<TState = unknown>(
     rejectIfDispatchArtifactsExist(resolvedRoot);
   }
   commitRun<TState>(resolvedRoot, {
-    is_initial: existing === null,
     expected_previous_state: existing,
     target_state: targetState,
   });
