@@ -1,0 +1,3 @@
+{
+  "{scripts,packages,tests}/**/*.ts": "eslint --no-error-on-unmatched-pattern"
+}

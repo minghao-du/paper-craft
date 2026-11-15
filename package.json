@@ -15,7 +15,9 @@
     "docs:i18n:list": "node --import tsx scripts/docs/docs-i18n.ts list",
     "docs:i18n:check": "node --import tsx scripts/docs/docs-i18n.ts check",
     "docs:i18n:record": "node --import tsx scripts/docs/docs-i18n.ts record",
-    "docs:check": "node --import tsx scripts/docs/docs-i18n.ts check"
+    "docs:check": "node --import tsx scripts/docs/docs-i18n.ts check",
+    "check": "pnpm lint && pnpm typecheck && pnpm docs:check && pnpm test",
+    "prepare": "husky"
   },
   "packageManager": "pnpm@12.8.1",
   "devDependencies": {
@@ -23,6 +25,8 @@
     "@types/mdast": "^4.0.4",
     "@types/node": "^26.6.3",
     "eslint": "^10.11.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
     "prettier": "^3.9.9",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
