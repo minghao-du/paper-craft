@@ -866,8 +866,9 @@ describe('Dispatch Evaluation & Provider Override Rules (evaluateDispatch)', () 
 
     // Mutate evaluated task parameters
     evaluation.task.parameters.plain_key = 'modified';
-    (evaluation.task.parameters.nested as any).flag = false;
-    (evaluation.task.parameters.nested as any).counts.push(3);
+    const nested = evaluation.task.parameters.nested as { flag: boolean; counts: number[] };
+    nested.flag = false;
+    nested.counts.push(3);
 
     // Verify original request parameters were completely isolated
     expect(reqParameters.plain_key).toBe('original');

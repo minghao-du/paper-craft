@@ -10,7 +10,6 @@ import {
   CleanupCandidate,
   CleanupRequest,
   CleanupResult,
-  DetachedCleanupCandidate,
   ExternalCleanupReport,
   OwnershipEvidence,
   PreparedWorkspace,

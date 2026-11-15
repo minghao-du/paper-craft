@@ -299,7 +299,7 @@ describe("Plan Acceptance Lifecycle (Phase 2B)", () => {
           decision: "continue",
           reason: "Using deprecated plan",
           plan: "plan.json",
-        } as any),
+        } as unknown as Parameters<typeof resolveDecision>[0]),
       ).toThrow(/Resolve option 'plan' has been removed/);
 
       expect(() =>
@@ -308,7 +308,7 @@ describe("Plan Acceptance Lifecycle (Phase 2B)", () => {
           decision: "continue",
           reason: "Using deprecated child_issues",
           child_issues: ["801"],
-        } as any),
+        } as unknown as Parameters<typeof resolveDecision>[0]),
       ).toThrow(/Resolve option 'child_issues' has been removed/);
 
       // Forbidden combinations with plan_dispatch_id

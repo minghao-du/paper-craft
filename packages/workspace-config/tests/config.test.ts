@@ -19,8 +19,6 @@ import {
   prepareWorkspaceConfigInitialization,
   resolveWorkspaceConfig,
   saveWorkspaceConfigInitialization,
-  type LoadWorkspaceConfigOptions,
-  type SavedWorkspaceConfig,
 } from '../src/index.js';
 
 const require = createRequire(import.meta.url);

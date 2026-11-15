@@ -1,26 +1,20 @@
 import type {
   ApplyDeliveryDecisionParams,
   CompletionRecordView,
-  DeliveryDecision,
   DeliveryDecisionResult,
   DeliveryItem,
   DeliverySequence,
   DeliveryState,
   IssueBudgets,
-  WorkflowBudgets,
   WorkflowDefinition,
   WorkflowStage,
 } from "./types.js";
 import { WorkflowIntegrityError } from "./types.js";
 import {
-  allocatesDeliveryAttempt,
-  invalidatesLanding,
   isAuxiliaryStage,
   isCleanupStage,
-  isContentChangingStage,
   isFinalizationStage,
   isInitialPlanStage,
-  isLandingStage,
   isReplanStage,
   isVerificationStage,
   resolveCanonicalStage,
@@ -196,7 +190,6 @@ export function calculateDeliveryDispatch(
     isVerificationStage(stageDef) ||
     isFinalizationStage(stageDef) ||
     isCleanupStage(stageDef);
-  const isContentChanging = isContentChangingStage(stageDef);
 
   // 1. Issue ownership
   const designated =

@@ -4,7 +4,6 @@ import { isDeepStrictEqual } from "node:util";
 import { commitRun, loadRun } from "../run-store/index.js";
 import {
   evaluateDispatch,
-  resolveCanonicalStage,
 } from "../workflow/index.js";
 import { createEnvelope } from "./envelope.js";
 import { toDeliveryState, applyNextDeliveryState } from "./domain-state.js";
@@ -18,7 +17,6 @@ import {
   parseHistoricalDispatchRequest,
 } from "./requests.js";
 import type {
-  Dispatch,
   DispatchOptions,
   DispatchResult,
   NormalizedDispatchRequest,

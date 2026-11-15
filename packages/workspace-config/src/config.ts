@@ -209,10 +209,8 @@ function loadWorkspaceConfigHelper(
   const primaryCheckout = findPrimaryCheckout(sourceCheckout);
 
   let resolvedConfigPath: string;
-  let isExplicit = false;
 
   if (options.configPath !== undefined) {
-    isExplicit = true;
     resolvedConfigPath = path.isAbsolute(options.configPath)
       ? resolvePath(options.configPath)
       : resolvePath(path.resolve(sourceCheckout, options.configPath));

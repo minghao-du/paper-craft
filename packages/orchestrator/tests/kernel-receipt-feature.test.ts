@@ -157,7 +157,8 @@ if __name__ == "__main__":
       objective: 'Audit pipeline rules',
       provider: {
         type: 'skill',
-        target: 'pc-pipeline-snakemake',
+        target: 'pc-pipeline-refactor',
+        args: ['--audit'],
       },
       workdir: testEnv.dir,
     });

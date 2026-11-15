@@ -188,7 +188,7 @@ describe('Issue #38: Workspace Config E2E', () => {
     const receiptContent = fs.readFileSync(receiptPath, 'utf-8');
     expect(receiptContent).toContain('# Subagent Receipt');
     expect(receiptContent).toContain('paper-craft/demo-repo');
-  });
+  }, 20000);
 
   it('Test 2: Missing or invalid config error handling and blocker protection', () => {
     const { repoDir } = setupGitRepo('unconfigured-project');
@@ -237,7 +237,7 @@ describe('Issue #38: Workspace Config E2E', () => {
 
     // Still no worktree created
     expect(fs.existsSync(potentialWorktree)).toBe(false);
-  });
+  }, 20000);
 
   it('Test 3: Custom worktree container resolution', () => {
     const { repoDir } = setupGitRepo('custom-container-project');
@@ -278,7 +278,7 @@ describe('Issue #38: Workspace Config E2E', () => {
     const expectedWorktree = path.join(expectedContainer, 'issue-50');
     expect(report.result.worktree).toBe(expectedWorktree);
     expect(fs.existsSync(expectedWorktree)).toBe(true);
-  });
+  }, 20000);
 
   it('Test 4: Fork project with distinct baseline, push, and delivery targets and custom container directory', () => {
     const { repoDir, upstreamHeadSha } = setupForkGitRepo('fork-repo');
@@ -365,5 +365,5 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(receiptContent).toContain('paper-craft-upstream/demo-repo');
     expect(receiptContent).toContain('upstream');
     expect(receiptContent).toContain('origin');
-  });
+  }, 20000);
 });

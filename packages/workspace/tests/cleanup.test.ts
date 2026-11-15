@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup } from '../src/cleanup.js';
 import { resolvePath } from '../src/git.js';
-import { WorkspaceError } from '../src/types.js';
+import { CleanupCandidate, WorkspaceError } from '../src/types.js';
 
 interface TestContext {
   tempDir: string;
@@ -700,7 +700,7 @@ describe('Workspace Cleanup (cleanup)', () => {
           {
             branch: 'issue-99',
             created: true,
-          } as any,
+          } as unknown as CleanupCandidate,
         ],
         protectedPaths: [],
       }),
@@ -713,7 +713,7 @@ describe('Workspace Cleanup (cleanup)', () => {
         rootIssueId: '99',
         candidates: [
           {
-            kind: 'invalid_kind' as any,
+            kind: 'invalid_kind' as unknown as 'task_branch',
             branch: 'issue-99',
           },
         ],
@@ -730,7 +730,7 @@ describe('Workspace Cleanup (cleanup)', () => {
           {
             kind: 'task_branch',
             branch: 'issue-99',
-            created: 'false' as any,
+            created: 'false' as unknown as boolean,
           },
         ],
         protectedPaths: [],
@@ -758,7 +758,7 @@ describe('Workspace Cleanup (cleanup)', () => {
           // Candidate B is missing kind
           {
             branch: 'issue-100',
-          } as any,
+          } as unknown as CleanupCandidate,
         ],
         protectedPaths: [],
       }),

@@ -9,7 +9,6 @@ import {
   BUILTIN_AUXILIARY_ROLES,
   BUILTIN_NON_AUXILIARY_NON_REPLAN_ROLES,
   BUILTIN_REPLAN_ROLES,
-  resolveCanonicalStage,
 } from "./stage.js";
 
 export { resolveCanonicalStage } from "./stage.js";
@@ -326,11 +325,6 @@ function validateWorkflow(
 
   // Cross-reference checks for stage references
   const stageList = wf.stages as Array<Record<string, unknown>>;
-  const wfProxy: WorkflowDefinition = {
-    name: wf.name as string,
-    completion_policy: wf.completion_policy as any,
-    stages: stageList as unknown as WorkflowStage[],
-  };
 
   for (const rawStage of stageList) {
     const stageId = rawStage.id as string;

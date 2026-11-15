@@ -377,11 +377,11 @@ describe('Stage-Provider Decoupling Core Features', () => {
       '--root-issue', '70',
     ]);
     const result = runDispatchTaskCli(testEnv.dir, {
-      stage: 'issue_verify',
-      objective: 'Run verification script',
+      stage: 'issue_work',
+      objective: 'Run implementation script',
       provider: {
         type: 'skill',
-        target: 'pc-issue-verify',
+        target: 'pc-issue-work',
         args: [
           '--suite=e2e', '--timeout=60', '--strict', '--repo-dir',
           '/tmp/path with spaces', '', '--', "a'b\"c", '--strict',
