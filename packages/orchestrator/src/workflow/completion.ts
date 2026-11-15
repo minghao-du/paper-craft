@@ -350,7 +350,9 @@ export function evaluateCompletion(params: {
             >) {
               const branch = candidate.branch as string | undefined;
               const worktree = candidate.worktree as string | undefined;
-              const pushRemote = candidate.push_remote as string | undefined;
+              const pushRemote = (candidate.push_remote ?? candidate.pushRemote) as
+                | string
+                | undefined;
 
               if (
                 (worktree && !paths.has(worktree)) ||
