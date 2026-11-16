@@ -1,3 +1,6 @@
+# Private scratch, drafts, and migration ledgers
+_ignore/
+
 # Snakemake runtime cache and metadata
 .snakemake/
 

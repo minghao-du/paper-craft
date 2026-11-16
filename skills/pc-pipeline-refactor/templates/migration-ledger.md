@@ -1,6 +1,7 @@
 # Pipeline Migration Ledger
 
 **Pipeline Root**: `<repo-root>`  
+**Ledger Location**: `<repo-root>/_ignore/migration-ledger.md`  
 **Remote Environment**: `<remote-ssh-alias>:<remote-repo-root>` (or `N/A`)  
 **Target Architecture Reference**: `pc-pipeline-snakemake`  
 **Date**: `<YYYY-MM-DD>`  

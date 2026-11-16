@@ -27,7 +27,7 @@ For the supplied target and scope, apply these constraints.
 - **Out-of-scope guardrail:** If computational logic changes or scientific parameter alterations are required, do NOT alter them or expand the task. Report `out_of_scope` with the rationale.
 - **Professional conclusions:**
   - `completed`: Pipeline files reorganized and paths synced with verification evidence (`changedFiles`, `verificationEvidence`).
-  - `plan_ready`: Audit completed and migration ledger generated for caller/human review (`ledgerPath`, `proposedChanges`, `summary`). No files moved or modified.
+  - `plan_ready`: Audit completed and migration ledger generated for caller/human review (`ledgerPath` defaulting to `<repo-root>/_ignore/migration-ledger.md`, `proposedChanges`, `summary`). No files moved or modified.
   - `no_change`: Layout already conforms; no modifications necessary (`verificationEvidence`).
   - `out_of_scope`: Computational or scientific logic changes required. Identify affected objectives, rationale, changes already made, current consistency, and remaining recovery work.
   - `blocked`: Environment, dependency, or permissions barrier.
@@ -37,13 +37,13 @@ For the supplied target and scope, apply these constraints.
 Before beginning refactoring, ensure the following inputs are available:
 1. **Target pipeline & repository path:** Directory root of the target workflow (e.g. `workflow/`, `Snakefile`, `config/`).
 2. **Refactoring brief & scope:** Specific stages, rules, scripts, or structural debt targeted for migration.
-3. **Approved migration ledger (optional for execution pass):** Pre-approved migration ledger path or predecessor receipt when executing a previously confirmed plan.
+3. **Approved migration ledger (optional for execution pass):** Pre-approved migration ledger path (defaults to `<repo-root>/_ignore/migration-ledger.md`, with fallback to legacy `<repo-root>/migration-ledger.md` if present) or predecessor receipt when executing a previously confirmed plan.
 4. **Compute environment:** Local workstation environment and remote HPC connection details specified in `.paper-craft/compute.md` or configuration.
 5. **Migration ledger template:** Template located at [templates/migration-ledger.md](templates/migration-ledger.md).
 
 ## Core Principles
 
-- **`ledger`**: The explicit source-to-target path mapping that gates every filesystem operation.
+- **`ledger`**: The explicit source-to-target path mapping that gates every filesystem operation, saved by default at `<repo-root>/_ignore/migration-ledger.md`.
   Never move, rename, or delete files without an approved ledger.
 - **`mirror`**: The strict structural symmetry between script submodules and results directories.
   Every analytical subfolder in `workflow/scripts/<stage>/` must be reflected 1:1 in `results/<stage>/`.
@@ -74,7 +74,7 @@ Audit for common structural debt:
 1. **Sequential Number Prefixes**: Check for `01_`, `02_` stage prefixes in `workflow/rules/`, `workflow/scripts/`, `summary/`, and output roots.
 2. **Flat Script Clutter**: Identify loose script files exposed directly in parent stage folders instead of cohesive submodules.
 3. **Asymmetric Output Layouts**: Detect mismatches between script submodules and result directories.
-4. **Data Hygiene Violations**: Check for unpartitioned datasets in `data/`, plural-versus-singular folder inconsistencies (e.g., `processed/embeddings/` vs `processed/embedding/`), or non-data scratch files in data directories.
+4. **Data Hygiene Violations**: Check for unpartitioned datasets in `data/`, plural-versus-singular folder inconsistencies (e.g., `processed/embeddings/` vs `processed/embedding/`), non-data scratch files in data directories, or missing `.gitignore` entries for private draft directories such as `_ignore/`.
 5. **Log Smells**: Locate unpartitioned log files lingering in repository roots or parent `logs/` folders without rule-level and wildcard-level partitioning.
 6. **Abandoned Scratch Directories**: List obsolete scratch directories on remote hosts. Return Git worktree cleanup candidates to the caller for `pc-workspace`.
 7. **Cluster Orchestration Debt**: Locate standalone `.sbatch` scripts, shell submission loops, or monolithic allocations wrapping local `snakemake -j` execution instead of using native executor profiles.
@@ -87,7 +87,7 @@ Every structural debt item across all tiers (`data/`, `processed/`, `results/`, 
 ### Phase 2: Migration Ledger Generation
 
 Synthesize audit findings into an explicit migration contract before touching code or filesystem structures.
-Populate the migration ledger following the template in [templates/migration-ledger.md](templates/migration-ledger.md).
+Ensure `_ignore/` exists under the target repository root (`mkdir -p _ignore`), then populate the migration ledger at `<repo-root>/_ignore/migration-ledger.md` (or caller-supplied ledger path) following the template in [templates/migration-ledger.md](templates/migration-ledger.md).
 
 The ledger must specify:
 1. **Source-to-Target Mappings**: Full path pairs for every rule, script, directory, output artifact, and configuration reference.
@@ -99,8 +99,8 @@ The ledger must specify:
 
 **Completion Criterion**:
 The migration ledger is reviewed and confirmed with the user or caller.
-When invoked in planning mode or as an audit step, record the migration ledger, return conclusion `plan_ready` with the ledger path and summary, and halt before any filesystem modification.
-When invoked with an approved ledger or when confirmed by the interactive caller, proceed to Phase 3.
+When invoked in planning mode or as an audit step, ensure directory `_ignore/` is created, record the migration ledger at `_ignore/migration-ledger.md` (or custom path), return conclusion `plan_ready` with the ledger path and summary, and halt before any filesystem modification.
+When invoked with an approved ledger (resolving from custom path, `<repo-root>/_ignore/migration-ledger.md`, or falling back to `<repo-root>/migration-ledger.md`) or when confirmed by the interactive caller, proceed to Phase 3.
 No file is moved, converted, or deleted until the ledger is settled.
 
 ---
@@ -118,6 +118,7 @@ Execution steps:
 4. **Internal Script References**: Update hardcoded directory defaults or relative output paths within standalone execution scripts.
 5. **Test Fixtures**: Update mock paths and test assertions in `tests/` to reflect new directory structures.
 6. **Cluster Scheduling Extraction**: Extract Slurm directives (`#SBATCH`) from legacy submission scripts into rule `threads:` and `resources:` (e.g., `mem_mb`, `runtime`). Scaffold or update `config/profiles/slurm/config.yaml`. Mark legacy `.sbatch` scripts for deletion in Phase 4.
+7. **Target Git Hygiene**: Verify that the target repository's `.gitignore` includes `_ignore/`. If missing, append `_ignore/` to `.gitignore` so that migration ledgers and local drafts remain uncommitted.
 
 **Completion Criterion**:
 Zero references to legacy paths remain in `workflow/`, `config/`, and `tests/`.
@@ -184,7 +185,7 @@ Local Git working tree is clean and synchronized with upstream.
 
 ## Task Outputs
 
-1. **Migration ledger:** Fully populated and verified `migration-ledger.md`.
+1. **Migration ledger:** Fully populated and verified `<repo-root>/_ignore/migration-ledger.md` (or caller-specified ledger path).
 2. **Refactored workflow codebase:** Reorganized rules, scripts, configs, and cluster profiles.
 3. **Git commits:** Clean commits preserving history (`git mv`).
 4. **Verification logs:** Small-data smoke execution output and DAG dry-run logs.
