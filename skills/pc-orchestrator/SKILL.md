@@ -153,6 +153,12 @@ Before routing, check the four required fields (`execution_status`, `result`, `r
 the execution-status enum, an object-valued `result`, the assigned absolute receipt path, and a one-sentence summary.
 Check routing fields and reported execution environment against the dispatched task requirements.
 
+#### Same-Conversation Continuation for Premature or In-Flight `stage_2_work` Returns
+When a dispatched `stage_2_work` (`pc-issue-work`) subagent returns before completing required work — for example, reporting or implying that an external/HPC job was merely submitted (`submitted`, `pending`, `running`, or `in_flight`), missing terminal job verification when external computation is required, or lacking a verified `commit` and Step 4 self-review:
+1. **Do NOT call `complete`**, **do NOT advance to `stage_2_land`**, and **do NOT launch a fresh subagent**. Keep `active_dispatch` open on the current dispatch.
+2. **Resume the same subagent conversation via `send_message`** using the active `stage_2_work` subagent's `conversationId`, instructing it to stay in that conversation and continue timer-backed waiting (e.g. `schedule`) until the external job reaches verified terminal completion, output checks pass, Step 4 self-review finishes, and Step 5 commits the verified changes.
+3. **Unreachable-conversation fallback:** Only if the original `stage_2_work` `conversationId` is irrecoverably unreachable (e.g. lost across a hard process crash), record the interruption against the active dispatch and dispatch a takeover subagent with `attempt_intent: "same"` (preserving the delivery budget) and the prior monitoring snapshot / receipt so it monitors the existing `job_id` instead of submitting a duplicate run.
+
 If a compact report is missing, unparseable, contradictory, or the referenced receipt file does not exist,
 the Orchestrator follows Constitution's **Fail Fast**:
 - Submit the report defect via the lifecycle kernel helper (`packages/orchestrator/src/cli.ts complete`), which records the protocol error against the active dispatch. Never edit `state.json` directly.
@@ -193,6 +199,7 @@ For each stage defined in the loaded workflow:
    - Launch one fresh specialist subagent only from a response with `"launch_granted": true`. Use the returned provider and paths with the [Standardized Slim Prompt](#standardized-slim-prompt-standard-15-lines).
    - If the response is lost or grants no launch, follow [Dispatch recovery](#dispatch-recovery).
 4. **Complete Dispatch & Verify Receipt**:
+   - Before calling `complete` for `stage_2_work`, verify the [Pre-Landing Acceptance Check](#same-conversation-continuation-for-premature-or-in-flight-stage_2_work-returns): confirm `stage_2_work` did not return prematurely with an unfinished or unverified external/HPC job (either `external_compute: "none"` for pure-code/local tasks, or verified terminal job completion with checked artifacts, Step 4 self-review, and verified `commit`). If premature, keep `active_dispatch` open and send it back to the same `conversationId` via `send_message`.
    - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --dispatch-id "<dispatch_id>" --report '<compact_json_report>'`.
    - The kernel validates report integrity (the 4 required fields), tags completion with the active dispatch's `issue_id`, and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
    - Completing a task preserves any existing pause decision (`halt`/`wait_user`). If execution outcome is unknown or in flight, verify against original execution rather than guessing or restarting.

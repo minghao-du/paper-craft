@@ -23,6 +23,7 @@
 ```
 
 Replace the example result with the assigned task's native conclusion and routing facts.
+For `pc-issue-work`, include `"external_compute": "none"` (for local/pure-code tasks) or verified terminal job metadata (`job_id`, terminal state, exit code, and verified artifact paths) in `result` and `## Verification`.
 The compact report and receipt must agree. Include a result object for blocked or failed
 execution too, preserving partial findings and an explicit reason when no conclusion is available.
 

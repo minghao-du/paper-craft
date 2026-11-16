@@ -73,23 +73,26 @@ Apply these universal principles to all local and remote computation, training, 
 1. **Maximize synchronous wait before backgrounding (Prevent pseudo-backgrounding):**
    When executing interactive commands expected to finish within normal command timeframes (builds, unit tests, remote probes, git/ssh operations, data transfers), always configure the execution tool's wait timeout to the maximum supported synchronous duration before allowing backgrounding. Never allow a short command (e.g. 10–30s) to prematurely drop into an asynchronous background handle due to an unnecessarily tight timeout.
 
-2. **Passive-first suspension (Event-driven over active polling):**
+2. **Passive-first suspension (Event-driven and timer-backed waiting):**
    Whenever a command, job, or subagent is in-flight (running asynchronously in the background, submitted to SLURM, or dispatched to a remote worker):
    - **If the execution harness or platform provides reactive notifications, message events, or callback wakeups** (e.g. task-completion notifications, subagent responses):
-     The agent **MUST yield control immediately** — conclude the current conversational turn by emitting a concise progress summary and calling no further tools. Rely entirely on the harness's event-driven wake-up.
-   - **If the platform requires autonomous polling without native completion callbacks** (e.g. external cluster queue, detached daemon without event hook):
-     Calculate a concrete deadline using the adaptive backoff ladder below. The agent MUST NOT use busy-waiting loops, sub-minute polling, or shell `sleep` commands in conversational turns. If unattended suspension is unsupported by the platform, report the limitation and the required resume time to the user instead of polling.
+     Yield control only while the asynchronous operation remains active, and rely on the harness's event-driven wake-up.
+   - **If the platform requires autonomous polling without native completion callbacks** (e.g. external HPC/SLURM queue or detached daemon):
+     1. **Persist a monitoring snapshot outside the git worktree** (e.g. in the receipt directory or `.paper-craft/` outside the source checkout) recording `job_id`, execution host/cluster, status/accounting check commands, log path, expected output paths, check count, current interval, and next-check timestamp. If resuming from an existing snapshot or predecessor receipt with an active `job_id`, inspect and monitor that existing job instead of submitting a duplicate run.
+     2. **Use non-blocking platform timers (`schedule`):** When the harness provides a non-blocking timer tool (such as `schedule` with `DurationSeconds`), schedule the next wakeup using the adaptive backoff ladder below (2 minutes up to 12 hours per step) and end the conversational turn **only while that timer is active** so this subagent stays suspended in the same conversation until woken up. Never use busy-waiting loops, sub-minute polling, or shell `sleep` commands.
+     3. **Never exit early while a required job is in-flight:** Do NOT conclude the subagent turn without an active timer or return a final report to the caller/orchestrator while any required external job is still `SUBMITTED`, `PENDING`, `QUEUED`, or `RUNNING`. Only if neither reactive callbacks nor non-blocking timers exist on the platform (or timer/access fails irrecoverably) should you return `blocked` — never `succeeded` — with the persisted snapshot details and resume instructions.
 
 3. **Strict zero busy-probing invariants:**
    - **Zero consecutive status calls:** An agent MUST NEVER invoke task-inspection tools, process-checking commands (`ps`, status checks), or log-tailing commands in consecutive turns without an intervening external trigger or an elapsed backoff deadline.
    - **Early returns do not reset deadlines:** If an execution wait handle or status query returns before the scheduled deadline without a definitive terminal state, the agent MUST immediately re-suspend without initiating speculative diagnostic probes.
    - **Log silence is not a stall:** Log silence alone is insufficient evidence of a hang. Progress checks must only fetch bounded tails (<= 20 lines) and never dump full buffers into context.
 
-4. **Tracking and adaptive backoff ladder (when autonomous polling is strictly required):**
-   - Retain exact job ID or PID, execution environment, logs, and completion probe. Distinguish pending, running, failed, and successfully completed states. The success probe must return zero only on verified success. For SLURM, track queue wait and execution separately, and confirm terminal state and exit code through accounting when a job leaves the queue.
-   - Estimate remaining runtime from comparable runs, input size, or measured progress, and mark uncertain estimates. Keep one current monitoring snapshot in the task record or execution log with job identity, state, progress, estimate, basis, check count, current interval, and absolute next-check time. Resume from this snapshot after interruption.
+4. **Tracking, adaptive backoff ladder, and mid-run failure recovery:**
+   - Retain exact job ID or PID, execution environment, logs, and completion probe. Distinguish pending, running, failed, and successfully completed states. The success probe must return zero only on verified success. For SLURM, track queue wait and execution separately, and confirm terminal state and exit code through accounting (`sacct`) when a job leaves the queue.
+   - Estimate remaining runtime from comparable runs, input size, or measured progress, and mark uncertain estimates. Keep one current monitoring snapshot outside the git worktree with job identity, state, progress, estimate, basis, check count, current interval, and absolute next-check time. Resume from this snapshot after interruption.
    - Check submission immediately. While queued, start with a 2-minute interval and back off on unchanged healthy queue state. On observing execution start or restart, reset to a 2-minute interval. After healthy running checks, advance through 5, 10, and 20 minutes, then double the interval up to a **12-hour maximum**. Advance only one step per check. When remaining runtime can be estimated reliably, also cap the interval at half that remaining time (2-minute minimum). Shorten to 2–5 minutes only to investigate confirmed slowdown or query failure.
-   - At each elapsed deadline, batch a compact status/progress check and read only new log content or a bounded tail. Update the snapshot and return to waiting while healthy.
+   - At each elapsed deadline, batch a compact status/progress check and read only new log content or a bounded tail. Update the snapshot and return to waiting (`schedule`) while healthy.
+   - **Mid-run failure recovery:** If a check reveals a terminal job failure (`FAILED`, `TIMEOUT`, `OUT_OF_MEMORY`, or non-zero exit code), inspect accounting and a bounded log tail (`<= 20` lines) in this same conversation and worktree. If the failure stems from a recoverable code, path, or resource configuration defect, repair it, resubmit, update the monitoring snapshot, and resume timer-backed waiting. Return `blocked` or `failed` to the caller only for unrecoverable failures or external hard blockers (missing inputs, permissions, or exhausted quota).
 
 ### Step 4: Subagent self-review and repair
 
@@ -124,12 +127,15 @@ A task is complete only when all criteria are met:
 1. **Functional verification:** All new and existing tests pass cleanly.
 2. **Static verification:** Configured static analysis and lint tools report zero errors or warnings.
 3. **Test budget:** All individual tests execute within 120 seconds.
-4. **Clean working tree:** No untracked transient cruft, unstaged modifications, or unwanted files remain in the working directory.
-5. **Self-review:** Step 4 is complete for the delivered changes, with evidence for required reviews and any skeptic skip.
+4. **External compute gate (conditional):**
+   - **Pure-code / local tasks (no external or HPC jobs required):** Explicitly record `external_compute: "none"` in the receipt and compact `result` (and skip `pc-skeptic` with reason per Step 4).
+   - **Tasks requiring HPC or remote computation:** Reporting `execution_status: "succeeded"` or creating the final delivery commit while any required job is `submitted`, `pending`, or `running` is strictly forbidden. Every required external job must reach verified terminal success (e.g. `COMPLETED` with exit code `0:0`), with verified output artifacts on disk and passing post-run validation checks before Step 4 and Step 5 complete.
+5. **Clean working tree:** No untracked transient cruft, unstaged modifications, or unwanted files remain in the working directory.
+6. **Self-review:** Step 4 is complete for the delivered changes, with evidence for required reviews and any skeptic skip.
 
 ## Task Outputs
 
 1. **Git commits / Diff:** Clean, conventional commits on the feature branch, or git diff / commit SHA capturing verified changes.
-2. **Verification evidence:** Test execution outputs, benchmark metrics, or check results demonstrating passing quality gates. Include self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker.
+2. **Verification evidence:** Test execution outputs, benchmark metrics, or check results demonstrating passing quality gates. Include `external_compute` status (`"none"` or verified terminal `job_id`, exit status, and checked output artifact paths), self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker. In the compact JSON `result`, set `"external_compute": "none"` for local/pure-code tasks or include verified terminal job metadata (`"external_compute": { "status": "completed", "job_id": "...", ... }`).
 3. **Summary:** Concise report of implementation details and verification evidence.
 4. **Environment:** `repository` (`owner/repo`), absolute `working_directory` / `worktree`, `branch`, `baseBranch`, and final verified `commit` SHA. Refresh `commit` after implementation so the next worker can validate the delivered HEAD. Include this context in any assigned result file, including blocked or rework results when available.
