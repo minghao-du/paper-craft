@@ -60,7 +60,7 @@ Prerequisite input verification is blocked; the task cannot proceed:
   2. Implement minimal code to pass the tests.
   3. Refactor while keeping tests passing.
 - Keep individual test execution well within the project budget (under 120 seconds).
-- Ensure all project-configured quality gates pass:
+- Ensure all project-configured quality gates pass using the project's local environment (`.venv/bin/`, `uv run`, `node_modules/.bin/`) and honoring `.paper-craft/compute.md`:
   - Static type checks (e.g. `npm run typecheck`, `pyright`, `mypy`)
   - Linting and formatting (e.g. `npm run lint`, `ruff check`, `cargo clippy`)
   - Automated test suite (e.g. `npm test`, `pytest`, `cargo test`)
@@ -106,26 +106,27 @@ After implementation and verification finish, complete self-review before the fi
 4. Reassess which reviews the repairs affect, including shared dependencies and changed claims or evidence. Use one fresh read-only subagent for affected clean-code and code-reuse reviews against the updated changes, running only the affected skills. Use a separate fresh subagent for an affected skeptic review. Retain unaffected review results with a reason. Repeat repair and affected re-review until every required review is complete and all confirmed defects and unresolved skeptic concerns are resolved.
 5. If a required subagent cannot run, fails, or lacks necessary evidence, preserve completed work and report a blocked outcome with the missing review or evidence and recovery action. Resume the outstanding reviews before declaring completion.
 
-### Step 5: Selective staging and pre-commit audit
+### Step 5: Pre-commit quality gates, selective staging, and commit
 
-Maintain zero transient artifacts in git history by staging files selectively:
-1. **Selective staging:** Stage modified or new source and test files individually using per-file commands:
+Before creating the final delivery commit, pass all applicable project quality gates and maintain zero transient artifacts in git history:
+1. **Pre-commit quality gates:** Inspect `PRE-MERGE-CHECKLIST.md` in the repo root, or the `Pre-PR Quality Checklist` / `Pre-Merge Checklist` section in `AGENTS.md` / `CLAUDE.md`, together with `.paper-craft/compute.md` when present. Run all checks permitted in the current execution environment using the project's declared toolchain (preferring local project environments such as `.venv/bin/` or `node_modules/.bin/` over ambient global tools) and confirm passing verification for any checks that must run remotely per `.paper-craft/compute.md`. Resolve every failure in scope before staging.
+2. **Selective staging:** Stage modified or new source and test files individually using per-file commands:
    ```bash
    git add <file>
    ```
    Never use indiscriminate staging commands (`git add .`, `git add -A`, or `git commit -a`).
-2. **Pre-commit cached diff audit:** Before creating any commit, audit the staged cache:
+3. **Pre-commit cached diff audit:** Before creating any commit, audit the staged cache:
    ```bash
    git diff --cached --name-only
    ```
    Inspect all staged paths against forbidden transient patterns (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`). If any forbidden path is staged, unstage it immediately (`git reset HEAD <file>`).
-3. **Commit:** Commit only verified source code, tests, and documentation using conventional commit messages.
+4. **Commit:** Commit only verified source code, tests, and documentation using conventional commit messages.
 
 ## Quality Requirements & Completion Criteria
 
 A task is complete only when all criteria are met:
 1. **Functional verification:** All new and existing tests pass cleanly.
-2. **Static verification:** Configured static analysis and lint tools report zero errors or warnings.
+2. **Static verification:** Configured static analysis, formatting, and lint gates (including any `PRE-MERGE-CHECKLIST.md` or `AGENTS.md`/`CLAUDE.md` pre-merge checklist) pass cleanly after the final Step 4 repair.
 3. **Test budget:** All individual tests execute within 120 seconds.
 4. **External compute gate (conditional):**
    - **Pure-code / local tasks (no external or HPC jobs required):** Explicitly record `external_compute: "none"` in the receipt and compact `result` (and skip `pc-skeptic` with reason per Step 4).
@@ -136,6 +137,6 @@ A task is complete only when all criteria are met:
 ## Task Outputs
 
 1. **Git commits / Diff:** Clean, conventional commits on the feature branch, or git diff / commit SHA capturing verified changes.
-2. **Verification evidence:** Test execution outputs, benchmark metrics, or check results demonstrating passing quality gates. Include `external_compute` status (`"none"` or verified terminal `job_id`, exit status, and checked output artifact paths), self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker. In the compact JSON `result`, set `"external_compute": "none"` for local/pure-code tasks or include verified terminal job metadata (`"external_compute": { "status": "completed", "job_id": "...", ... }`).
+2. **Verification evidence:** Test execution outputs, benchmark metrics, or static quality gate command results demonstrating passing quality gates. Include `quality_gates: "passed"` (or a compact gate summary object) and `external_compute` status (`"none"` or verified terminal `job_id`, exit status, and checked output artifact paths) in the compact JSON `result`, plus full command outputs, self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker in the Markdown receipt. In the compact JSON `result`, set `"external_compute": "none"` for local/pure-code tasks or include verified terminal job metadata (`"external_compute": { "status": "completed", "job_id": "...", ... }`).
 3. **Summary:** Concise report of implementation details and verification evidence.
 4. **Environment:** `repository` (`owner/repo`), absolute `working_directory` / `worktree`, `branch`, `baseBranch`, and final verified `commit` SHA. Refresh `commit` after implementation so the next worker can validate the delivered HEAD. Include this context in any assigned result file, including blocked or rework results when available.

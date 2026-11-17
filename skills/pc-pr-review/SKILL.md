@@ -132,18 +132,20 @@ Scan changed files for artifacts that should never be committed:
 
 ### Step 5: Run automated quality checks
 
-Run the repository's configured static and dynamic validation commands.
-**Probe tool availability before executing:** Always check whether the linter/checker binary actually exists (e.g. `which ruff || test -f .venv/bin/ruff`) before running. If a tool in the table below is not installed in the repository environment, fall back to the repo's existing configured tooling (e.g. `flake8`, `black --check`) rather than failing with exit code 127.
+Before running any check, inspect `.paper-craft/compute.md` (if present) and honor its execution boundary:
+- When `.paper-craft/compute.md` restricts local execution to static checks/linting (disallowing local tests or business code), execute **only** static/lint/format checks locally and verify automated test execution from the implementation receipt or remote compute evidence rather than invoking `pytest` / test suites locally.
+
+Resolve check tools strictly from the project's declared configuration (`pyproject.toml`, `package.json`, `PRE-MERGE-CHECKLIST.md`, or `AGENTS.md`) and project-local environment (`.venv/bin/<tool>`, `uv run`, `node_modules/.bin/<tool>`). When a project-specific checklist from Step 3 specifies exact check commands, run those commands; skip any tool absent from both project configuration and project-local environment and record it as not configured.
 
 | Tool Indicator | Check Commands |
 |----------------|----------------|
-| `package.json` (TypeScript/JS) | `npm run typecheck && npm run lint && npm test` |
-| `pyproject.toml` with ruff | Probe first (`which ruff || test -f .venv/bin/ruff`); run `ruff check . && pytest` if installed, else run available linters/tests |
+| `package.json` (TypeScript/JS) | `npm run typecheck && npm run lint && npm test` (omit `npm test` locally if `.paper-craft/compute.md` forbids local tests) |
+| `pyproject.toml` with declared `ruff` or `.venv/bin/ruff` | Verify project-local tool (`test -f .venv/bin/ruff` or `uv run ruff --version`); run `.venv/bin/ruff check .` (plus `.venv/bin/pytest` only when `.paper-craft/compute.md` allows local tests), else run project-declared linters/tests |
 | `pixi.toml` | `pixi run check` or `pixi run test` |
 | `Makefile` with `check` | `make check` |
 | `build.zig` | `zig build test && zig fmt --check src/ tests/` |
 | `go.mod` | `go test ./... && go vet ./...` |
-| `Snakefile` | Run main entry: `snakemake --lint -s workflow/Snakefile` (never run lint on standalone `.smk` rule files) |
+| `Snakefile` | Run main entry via project env (e.g. `.venv/bin/snakemake --lint -s workflow/Snakefile`), applying any project baseline exclusions from Step 3 |
 
 - **CI / GitHub Actions Checks**: Before checking remote CI status via `gh pr checks`, verify whether the repository actually configures CI (`test -d .github/workflows`). If no workflow files exist, mark remote CI checks as `not configured (skipped)` and do not treat absent checks as a failure.
 
