@@ -55,6 +55,7 @@ export interface WorkspaceTaskInput {
   };
   environment?: {
     working_directory?: string;
+    primary_checkout?: string;
     repository?: string;
     delivery_target?: string;
     base_remote?: string;
@@ -792,10 +793,12 @@ export function mapPreparedWorkspaceToResult(
     push_remote: prepared.pushRemote,
     working_directory: prepared.path,
     worktree: prepared.path,
+    ...(prepared.primaryCheckout ? { primary_checkout: prepared.primaryCheckout } : {}),
     branch: prepared.branch,
     baseBranch: prepared.baseBranch,
     commit: prepared.commit,
     created: prepared.disposition === 'created',
+    ...(prepared.sharedPaths?.length ? { shared_paths: prepared.sharedPaths } : {}),
   };
 }
 
@@ -924,6 +927,15 @@ export function buildMarkdownReceipt(opts: BuildReceiptOptions): string {
 
   const art = opts.artifacts;
   const workdir = String(art.working_directory ?? 'N/A');
+  const primaryCheckout = art.primary_checkout ? String(art.primary_checkout) : null;
+  const sharedPathsSummary = Array.isArray(art.shared_paths) && art.shared_paths.length > 0
+    ? art.shared_paths
+        .map((s) => {
+          const rec = s as { path?: unknown; status?: unknown };
+          return `${String(rec.path ?? '')} (${String(rec.status ?? '')})`;
+        })
+        .join(', ')
+    : null;
   const repo = String(art.repository ?? 'N/A');
   const deliveryTarget = String(art.delivery_target ?? repo);
   const baseRemote = String(art.base_remote ?? 'origin');
@@ -955,7 +967,7 @@ export function buildMarkdownReceipt(opts: BuildReceiptOptions): string {
 - Base remote: \`${baseRemote}\`
 - Push remote: \`${pushRemote}\`
 - Worktree path: \`${worktree}\`
-- Base branch: \`${baseB}\`
+${primaryCheckout ? `- Primary checkout: \`${primaryCheckout}\`\n` : ''}${sharedPathsSummary ? `- Shared paths: ${sharedPathsSummary}\n` : ''}- Base branch: \`${baseB}\`
 - Branch: \`${branch}\`
 - Commit SHA: \`${commit}\``;
 

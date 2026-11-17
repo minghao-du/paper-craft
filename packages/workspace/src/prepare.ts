@@ -20,17 +20,19 @@ import {
   type WorktreeEntry,
 } from './git.js';
 import {
-  WorkspaceError,
-  type PrepareRequest,
-  type PreparedWorkspace,
-  type WorkspaceOverrides,
-} from './types.js';
-import {
-  resolveWorkspaceConfig,
-  parseRepoFromUrl,
   type ResolvedWorkspaceConfig,
   type ResolveWorkspaceConfigOptions,
+  parseRepoFromUrl,
+  resolveWorkspaceConfig,
 } from '../../workspace-config/src/index.js';
+import { syncSharedPathsInWorktree } from './ignored-policy.js';
+import {
+  type PrepareRequest,
+  type PreparedWorkspace,
+  type SharedPathStatus,
+  WorkspaceError,
+  type WorkspaceOverrides,
+} from './types.js';
 
 interface ResolveOptions {
   repoDir: string;
@@ -266,6 +268,7 @@ export function prepare(request: PrepareRequest): PreparedWorkspace {
 
   let disposition: 'created' | 'reused';
   let finalCommit: string;
+  let sharedPaths: SharedPathStatus[] | undefined;
 
   if (isExisting) {
     // REUSE existing registered worktree
@@ -326,6 +329,14 @@ export function prepare(request: PrepareRequest): PreparedWorkspace {
           { expectedHead, actualHead: finalCommit, targetPath },
         );
       }
+    }
+
+    sharedPaths =
+      config.shared_paths.length > 0
+        ? syncSharedPathsInWorktree(primary, targetPath, config.shared_paths)
+        : undefined;
+    if (sharedPaths?.some((entry) => entry.status === 'linked')) {
+      requireClean(targetPath);
     }
 
     disposition = 'reused';
@@ -401,6 +412,11 @@ export function prepare(request: PrepareRequest): PreparedWorkspace {
       );
     }
 
+    sharedPaths =
+      config.shared_paths.length > 0
+        ? syncSharedPathsInWorktree(primary, targetPath, config.shared_paths)
+        : undefined;
+
     requireClean(targetPath);
 
     if (targetBranch !== null) {
@@ -421,6 +437,7 @@ export function prepare(request: PrepareRequest): PreparedWorkspace {
     repository: config.delivery_target,
     deliveryTarget: config.delivery_target,
     sourceCheckout: source,
+    primaryCheckout: primary,
     path: targetPath,
     branch: targetBranch,
     commit: finalCommit,
@@ -428,5 +445,6 @@ export function prepare(request: PrepareRequest): PreparedWorkspace {
     baseRemote: config.base_remote,
     pushRemote: config.push_remote,
     disposition,
+    ...(sharedPaths ? { sharedPaths } : {}),
   };
 }

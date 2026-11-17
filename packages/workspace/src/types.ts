@@ -29,10 +29,16 @@ export interface PrepareRequest {
   expectedRepository?: string;
 }
 
+export interface SharedPathStatus {
+  path: string;
+  status: 'linked' | 'reused' | 'skipped_absent';
+}
+
 export interface PreparedWorkspace {
   repository: string;
   deliveryTarget: string;
   sourceCheckout: string;
+  primaryCheckout?: string;
   path: string;
   branch: string | null;
   commit: string;
@@ -40,6 +46,7 @@ export interface PreparedWorkspace {
   baseRemote: string;
   pushRemote: string;
   disposition: 'created' | 'reused';
+  sharedPaths?: SharedPathStatus[];
 }
 
 export type PreparedWorkspaceResult = {
@@ -50,10 +57,12 @@ export type PreparedWorkspaceResult = {
   push_remote: string;
   working_directory: string;
   worktree: string;
+  primary_checkout?: string;
   branch: string | null;
   baseBranch: string;
   commit: string;
   created: boolean;
+  shared_paths?: SharedPathStatus[];
 };
 
 // ============================================================================

@@ -92,6 +92,9 @@ export function createEnvelope(
       },
       environment: {
         working_directory: String(o.working_directory || process.cwd()),
+        ...(o.primary_checkout !== undefined
+          ? { primary_checkout: String(o.primary_checkout) }
+          : {}),
         repository: String(o.delivery_target || o.repository || "local/repo"),
         base_branch: String(o.base_branch || "main"),
         branch: (o.branch as string) ?? null,
@@ -147,6 +150,13 @@ export function createEnvelope(
     },
     environment: {
       working_directory: workdir,
+      ...(options.environment.primary_checkout !== undefined
+        ? {
+            primary_checkout: options.environment.primary_checkout
+              ? path.resolve(options.environment.primary_checkout)
+              : options.environment.primary_checkout,
+          }
+        : {}),
       repository: String(options.environment.repository),
       base_branch: String(options.environment.base_branch || "main"),
       branch: options.environment.branch ?? null,

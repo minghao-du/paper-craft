@@ -20,6 +20,7 @@ export interface TaskInputEnvelope {
   };
   environment: {
     working_directory: string;
+    primary_checkout?: string;
     repository?: string;
     delivery_target?: string;
     base_remote?: string;
@@ -168,6 +169,7 @@ export function validateTaskInputEnvelope(data: unknown): string[] {
   section("environment", (env) => {
     text(env, "working_directory", "environment");
     for (const field of [
+      "primary_checkout",
       "repository",
       "delivery_target",
       "base_remote",

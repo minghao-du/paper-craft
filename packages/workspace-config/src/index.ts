@@ -26,6 +26,7 @@ export {
   probeGitRemotes,
   probeDefaultBranch,
   loadWorkspaceConfig,
+  normalizeRelativePathList,
   validateWorkspaceConfig,
   resolveWorkspaceConfig,
 } from './config.js';

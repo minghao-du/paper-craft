@@ -21,6 +21,9 @@ export interface ResolvedWorkspaceConfig {
   replans_max: number;
   repo_checkout: string;
   worktree_container_resolved: string;
+  shared_paths: string[];
+  cleanable_ignored: string[];
+  protected_ignored: string[];
 }
 
 export interface WorkspaceConfigOverrides {
@@ -33,6 +36,9 @@ export interface WorkspaceConfigOverrides {
   default_workflow?: string;
   delivery_attempts_max?: number;
   replans_max?: number;
+  shared_paths?: string[];
+  cleanable_ignored?: string[];
+  protected_ignored?: string[];
 }
 
 export interface ResolveWorkspaceConfigOptions {
@@ -55,6 +61,63 @@ export interface SavedWorkspaceConfig {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Validate and normalize a list of repository-relative paths or patterns.
+ */
+export function normalizeRelativePathList(
+  value: unknown,
+  fieldName: string,
+  options: { allowGlobs?: boolean } = {},
+): { items: string[]; errors: string[] } {
+  const allowGlobs = options.allowGlobs ?? false;
+  if (!Array.isArray(value)) {
+    return { items: [], errors: [`Field '${fieldName}' must be an array of strings`] };
+  }
+  const items: string[] = [];
+  const errors: string[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < value.length; i += 1) {
+    const raw = value[i];
+    if (typeof raw !== 'string' || !raw.trim()) {
+      errors.push(`Field '${fieldName}[${i}]' must be a non-empty string`);
+      continue;
+    }
+    const posix = raw.trim().replace(/\\/g, '/');
+    if (posix.startsWith('/') || /^[a-zA-Z]:\//.test(posix)) {
+      errors.push(`Field '${fieldName}[${i}]' must be a relative path, received '${raw}'`);
+      continue;
+    }
+    let normalized = posix;
+    while (normalized.startsWith('./')) {
+      normalized = normalized.slice(2);
+    }
+    normalized = normalized.replace(/\/+$/, '');
+    if (!normalized || normalized === '.') {
+      errors.push(`Field '${fieldName}[${i}]' must point inside the repository, received '${raw}'`);
+      continue;
+    }
+    const segments = normalized.split('/');
+    if (segments.some((s) => s === '' || s === '.' || s === '..')) {
+      errors.push(`Field '${fieldName}[${i}]' contains invalid or traversal path segment '${raw}'`);
+      continue;
+    }
+    if (normalized === '.git' || normalized.startsWith('.git/')) {
+      errors.push(`Field '${fieldName}[${i}]' cannot target '.git' metadata ('${raw}')`);
+      continue;
+    }
+    if (!allowGlobs && /[*?[\]]/.test(normalized)) {
+      errors.push(`Field '${fieldName}[${i}]' must be a literal relative path without wildcards, received '${raw}'`);
+      continue;
+    }
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      items.push(normalized);
+    }
+  }
+  return { items, errors };
 }
 
 /** Like pathlib.resolve(strict=False), resolve existing symlink prefixes too. */
@@ -303,6 +366,16 @@ export function validateWorkspaceConfig(data: unknown, repoRoot?: string): strin
       errors.push(`Field '${field}' must be an integer >= 0`);
     }
   }
+  const pathListFields: Array<[string, boolean]> = [
+    ['shared_paths', false],
+    ['cleanable_ignored', true],
+    ['protected_ignored', true],
+  ];
+  for (const [field, allowGlobs] of pathListFields) {
+    if (field in data && data[field] !== undefined) {
+      errors.push(...normalizeRelativePathList(data[field], field, { allowGlobs }).errors);
+    }
+  }
   if (repoRoot && fs.existsSync(repoRoot)) {
     const remotes = probeGitRemotes(repoRoot);
     for (const field of ['base_remote', 'push_remote']) {
@@ -404,6 +477,19 @@ export function resolveWorkspaceConfig(options: ResolveWorkspaceConfigOptions): 
     ? resolvePath(container)
     : resolvePath(path.resolve(primaryCheckout, container));
 
+  const resolvePathList = (
+    key: 'shared_paths' | 'cleanable_ignored' | 'protected_ignored',
+    allowGlobs: boolean,
+  ): string[] => {
+    const raw = overrides[key] !== undefined ? overrides[key] : configData[key];
+    if (raw === undefined) return [];
+    const { items, errors } = normalizeRelativePathList(raw, key, { allowGlobs });
+    if (errors.length) {
+      throw new Error(`Invalid workspace configuration:\n  - ${errors.join('\n  - ')}`);
+    }
+    return items;
+  };
+
   const resolved: ResolvedWorkspaceConfig = {
     schema_version: SCHEMA_VERSION,
     delivery_target: deliveryTarget,
@@ -426,6 +512,9 @@ export function resolveWorkspaceConfig(options: ResolveWorkspaceConfigOptions): 
     ),
     repo_checkout: primaryCheckout,
     worktree_container_resolved: worktreeContainerResolved,
+    shared_paths: resolvePathList('shared_paths', false),
+    cleanable_ignored: resolvePathList('cleanable_ignored', true),
+    protected_ignored: resolvePathList('protected_ignored', true),
   };
 
   const errors = validateWorkspaceConfig(resolved, primaryCheckout);

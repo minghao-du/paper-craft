@@ -268,6 +268,13 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
     (state.config_snapshot?.base_branch as string | undefined) ||
     (state.context?.base_branch as string | undefined) ||
     "main";
+  const primaryCheckoutRaw =
+    (state.config_snapshot?.repo_checkout as string | undefined) ||
+    (state.context?.repo_checkout as string | undefined) ||
+    (state.context?.primary_checkout as string | undefined);
+  const primaryCheckout = primaryCheckoutRaw?.trim()
+    ? path.resolve(primaryCheckoutRaw.trim())
+    : undefined;
 
   const envelope = createEnvelope({
     schema_version: "1.0",
@@ -281,6 +288,7 @@ export function dispatchTask(options: DispatchOptions): DispatchResult {
     provider: task.provider,
     environment: {
       working_directory: workingDirectory,
+      ...(primaryCheckout ? { primary_checkout: primaryCheckout } : {}),
       repository,
       base_branch: baseBranch,
       branch: resolvedBranch,

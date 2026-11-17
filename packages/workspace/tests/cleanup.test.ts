@@ -780,4 +780,261 @@ describe('Workspace Cleanup (cleanup)', () => {
     expect(result.outcome).toBe('incomplete');
     expect(result.unresolved).toEqual(['stale-worktree-outside-scope']);
   });
+
+  it('auto-cleans regenerable caches and unlinks managed shared_paths symlinks without touching primary targets', () => {
+    fs.writeFileSync(
+      path.join(ctx.repoDir, '.gitignore'),
+      '.paper-craft/\n.venv\n.venv/\n.pytest_cache/\n__pycache__/\n*.pyc\n.snakemake/\n.custom_cache/\n',
+      'utf-8',
+    );
+    runGit(ctx.repoDir, 'add', '.gitignore');
+    runGit(ctx.repoDir, 'commit', '-m', 'Add ignore patterns');
+    runGit(ctx.repoDir, 'push', 'origin', 'main');
+
+    const primaryPython = path.join(ctx.repoDir, '.venv', 'bin', 'python3');
+    fs.mkdirSync(path.dirname(primaryPython), { recursive: true });
+    fs.writeFileSync(primaryPython, '#!/bin/sh\n', 'utf-8');
+
+    const configDir = path.join(ctx.repoDir, '.paper-craft');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, 'workspace-config.json'),
+      JSON.stringify(
+        {
+          schema_version: '1.0',
+          delivery_target: 'owner/test-repo',
+          base_remote: 'origin',
+          push_remote: 'origin',
+          base_branch: 'main',
+          worktree_container: '../worktrees',
+          shared_paths: ['.venv'],
+          cleanable_ignored: ['.custom_cache'],
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    runGit(ctx.repoDir, 'checkout', '-b', 'issue-70');
+    fs.writeFileSync(path.join(ctx.repoDir, 'issue-70.txt'), 'task 70\n', 'utf-8');
+    runGit(ctx.repoDir, 'add', 'issue-70.txt');
+    runGit(ctx.repoDir, 'commit', '-m', 'Task 70');
+    const taskCommit = runGit(ctx.repoDir, 'rev-parse', 'HEAD');
+    runGit(ctx.repoDir, 'push', '-u', 'origin', 'issue-70');
+
+    const worktreeDir = path.join(ctx.tempDir, 'worktrees', 'issue-70');
+    runGit(ctx.repoDir, 'checkout', 'main');
+    runGit(ctx.repoDir, 'worktree', 'add', worktreeDir, 'issue-70');
+    fs.symlinkSync(path.join(ctx.repoDir, '.venv'), path.join(worktreeDir, '.venv'));
+    fs.mkdirSync(path.join(worktreeDir, '.pytest_cache', 'v'), { recursive: true });
+    fs.writeFileSync(path.join(worktreeDir, '.pytest_cache', 'v', 'lastfailed'), '{}', 'utf-8');
+    fs.mkdirSync(path.join(worktreeDir, 'src', '__pycache__'), { recursive: true });
+    fs.writeFileSync(path.join(worktreeDir, 'src', '__pycache__', 'mod.pyc'), 'pyc', 'utf-8');
+    fs.mkdirSync(path.join(worktreeDir, '.snakemake', 'metadata'), { recursive: true });
+    fs.writeFileSync(path.join(worktreeDir, '.snakemake', 'metadata', 'm'), 'meta', 'utf-8');
+    fs.mkdirSync(path.join(worktreeDir, '.custom_cache'), { recursive: true });
+    fs.writeFileSync(path.join(worktreeDir, '.custom_cache', 'c.bin'), 'cache', 'utf-8');
+
+    runGit(ctx.repoDir, 'merge', '--no-ff', 'issue-70', '-m', 'Merge PR #70');
+    const mergeCommit = runGit(ctx.repoDir, 'rev-parse', 'HEAD');
+    runGit(ctx.repoDir, 'push', 'origin', 'main');
+
+    const detachedDir = path.join(ctx.tempDir, 'worktrees', 'verify-70');
+    runGit(ctx.repoDir, 'worktree', 'add', '--detach', detachedDir, mergeCommit);
+    fs.symlinkSync(path.join(ctx.repoDir, '.venv'), path.join(detachedDir, '.venv'));
+    fs.mkdirSync(path.join(detachedDir, '.pytest_cache'), { recursive: true });
+    fs.writeFileSync(path.join(detachedDir, '.pytest_cache', 'README.md'), 'cache', 'utf-8');
+
+    const ghRunner = (args: string[]) => {
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return JSON.stringify({
+          state: 'MERGED',
+          headRefName: 'issue-70',
+          headRefOid: taskCommit,
+          baseRefName: 'main',
+          mergeCommit: { oid: mergeCommit },
+          headRepository: { name: 'test-repo' },
+          headRepositoryOwner: { login: 'owner' },
+        });
+      }
+      if (args[0] === 'repo' && args[1] === 'view') {
+        return JSON.stringify({
+          nameWithOwner: 'owner/test-repo',
+          defaultBranchRef: { name: 'main' },
+        });
+      }
+      throw new Error(`Unexpected gh: ${args.join(' ')}`);
+    };
+
+    const result = cleanup(
+      {
+        sourceCheckout: ctx.repoDir,
+        rootIssueId: '70',
+        candidates: [
+          {
+            kind: 'task_branch',
+            worktree: worktreeDir,
+            branch: 'issue-70',
+            commit: taskCommit,
+            baseBranch: 'main',
+            deliveryTarget: 'owner/test-repo',
+            baseRemote: 'origin',
+            pushRemote: 'origin',
+            pr: 70,
+            created: true,
+            consumersFinished: true,
+          },
+          {
+            kind: 'detached',
+            worktree: detachedDir,
+            commit: mergeCommit,
+            ownershipEvidence: { rootIssueId: '70', issue: '70', source: 'verify-receipt' },
+            consumersFinished: true,
+            verificationCompleted: true,
+          },
+        ],
+        protectedPaths: [],
+      },
+      { ghRunner },
+    );
+
+    expect(result.outcome).toBe('cleaned');
+    expect(fs.existsSync(worktreeDir)).toBe(false);
+    expect(fs.existsSync(detachedDir)).toBe(false);
+    // Primary checkout's .venv target must remain untouched
+    expect(fs.existsSync(primaryPython)).toBe(true);
+  });
+
+  it('retains worktree and preserves caches when unapproved/protected ignored files exist or PR is unmerged', () => {
+    fs.writeFileSync(
+      path.join(ctx.repoDir, '.gitignore'),
+      '.paper-craft/\n.pytest_cache/\nresults/\n.venv\n.venv/\n',
+      'utf-8',
+    );
+    runGit(ctx.repoDir, 'add', '.gitignore');
+    runGit(ctx.repoDir, 'commit', '-m', 'Add ignore rules');
+    runGit(ctx.repoDir, 'push', 'origin', 'main');
+
+    const configDir = path.join(ctx.repoDir, '.paper-craft');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, 'workspace-config.json'),
+      JSON.stringify(
+        {
+          schema_version: '1.0',
+          delivery_target: 'owner/test-repo',
+          base_remote: 'origin',
+          push_remote: 'origin',
+          base_branch: 'main',
+          worktree_container: '../worktrees',
+          protected_ignored: ['.pytest_cache/keep.txt'],
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    runGit(ctx.repoDir, 'checkout', '-b', 'issue-71');
+    fs.writeFileSync(path.join(ctx.repoDir, 'issue-71.txt'), 'task 71\n', 'utf-8');
+    runGit(ctx.repoDir, 'add', 'issue-71.txt');
+    runGit(ctx.repoDir, 'commit', '-m', 'Task 71');
+    const taskCommit = runGit(ctx.repoDir, 'rev-parse', 'HEAD');
+    runGit(ctx.repoDir, 'push', '-u', 'origin', 'issue-71');
+
+    const worktreeDir = path.join(ctx.tempDir, 'worktrees', 'issue-71');
+    runGit(ctx.repoDir, 'checkout', 'main');
+    runGit(ctx.repoDir, 'worktree', 'add', worktreeDir, 'issue-71');
+
+    // Mix of cleanable cache, protected_ignored, real .venv, and results/
+    const cacheFile = path.join(worktreeDir, '.pytest_cache', 'tmp.txt');
+    const keepFile = path.join(worktreeDir, '.pytest_cache', 'keep.txt');
+    const resultsFile = path.join(worktreeDir, 'results', 'out.csv');
+    const realVenvFile = path.join(worktreeDir, '.venv', 'pyvenv.cfg');
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.mkdirSync(path.dirname(resultsFile), { recursive: true });
+    fs.mkdirSync(path.dirname(realVenvFile), { recursive: true });
+    fs.writeFileSync(cacheFile, 'tmp', 'utf-8');
+    fs.writeFileSync(keepFile, 'keep', 'utf-8');
+    fs.writeFileSync(resultsFile, 'a,b\n1,2\n', 'utf-8');
+    fs.writeFileSync(realVenvFile, 'home = /usr/bin', 'utf-8');
+
+    const ghRunnerOpen = () =>
+      JSON.stringify({
+        state: 'OPEN',
+        headRefName: 'issue-71',
+        headRefOid: taskCommit,
+        baseRefName: 'main',
+        headRepository: { name: 'test-repo' },
+        headRepositoryOwner: { login: 'owner' },
+      });
+
+    const resDirty = cleanup(
+      {
+        sourceCheckout: ctx.repoDir,
+        rootIssueId: '71',
+        candidates: [
+          {
+            kind: 'task_branch',
+            worktree: worktreeDir,
+            branch: 'issue-71',
+            commit: taskCommit,
+            baseBranch: 'main',
+            deliveryTarget: 'owner/test-repo',
+            baseRemote: 'origin',
+            pushRemote: 'origin',
+            pr: 71,
+            created: true,
+            consumersFinished: true,
+          },
+        ],
+        protectedPaths: [],
+      },
+      { ghRunner: ghRunnerOpen },
+    );
+
+    expect(resDirty.outcome).toBe('incomplete');
+    expect(resDirty.candidates[0].worktree?.reasonCode).toBe('DIRTY_WORKTREE');
+    expect(resDirty.candidates[0].worktree?.reason).toContain('results/out.csv');
+    expect(resDirty.candidates[0].worktree?.reason).toContain('.pytest_cache/keep.txt');
+    expect(resDirty.candidates[0].worktree?.reason).toContain('.venv/pyvenv.cfg');
+    // Zero partial deletions occurred
+    expect(fs.existsSync(cacheFile)).toBe(true);
+    expect(fs.existsSync(keepFile)).toBe(true);
+    expect(fs.existsSync(resultsFile)).toBe(true);
+    expect(fs.existsSync(realVenvFile)).toBe(true);
+
+    // Even with only safe cache remaining, an OPEN PR must NOT delete the cache
+    fs.rmSync(keepFile);
+    fs.rmSync(path.join(worktreeDir, 'results'), { recursive: true, force: true });
+    fs.rmSync(path.join(worktreeDir, '.venv'), { recursive: true, force: true });
+
+    const resUnmerged = cleanup(
+      {
+        sourceCheckout: ctx.repoDir,
+        rootIssueId: '71',
+        candidates: [
+          {
+            kind: 'task_branch',
+            worktree: worktreeDir,
+            branch: 'issue-71',
+            commit: taskCommit,
+            baseBranch: 'main',
+            deliveryTarget: 'owner/test-repo',
+            baseRemote: 'origin',
+            pushRemote: 'origin',
+            pr: 71,
+            created: true,
+            consumersFinished: true,
+          },
+        ],
+        protectedPaths: [],
+      },
+      { ghRunner: ghRunnerOpen },
+    );
+    expect(resUnmerged.outcome).toBe('incomplete');
+    expect(resUnmerged.candidates[0].remoteBranch?.reasonCode).toBe('PR_VERIFICATION_FAILED');
+    expect(fs.existsSync(cacheFile)).toBe(true);
+  });
 });

@@ -327,4 +327,91 @@ describe('Workspace Preparation (prepare)', () => {
       expect((err as WorkspaceError).code).toBe('WORKTREE_CONFLICT');
     }
   });
+
+  it('links ignored shared_paths across issue, reuse, and detached worktrees and records primaryCheckout', () => {
+    fs.writeFileSync(
+      path.join(ctx.repoDir, '.gitignore'),
+      '.paper-craft/\n.venv\n.venv/\n.opt-cache\n',
+      'utf-8',
+    );
+    runGit(ctx.repoDir, 'add', '.gitignore');
+    runGit(ctx.repoDir, 'commit', '-m', 'Ignore .venv and .opt-cache');
+    runGit(ctx.repoDir, 'push', 'origin', 'main');
+
+    const venvDir = path.join(ctx.repoDir, '.venv', 'bin');
+    fs.mkdirSync(venvDir, { recursive: true });
+    fs.writeFileSync(path.join(venvDir, 'python3'), '#!/bin/sh\n', 'utf-8');
+
+    const configPath = path.join(ctx.repoDir, '.paper-craft', 'workspace-config.json');
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    cfg.shared_paths = ['.venv', '.opt-cache'];
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    const created = prepare({
+      sourceCheckout: ctx.repoDir,
+      target: { kind: 'issue', issue: 701 },
+    });
+    expect(created.primaryCheckout).toBe(ctx.repoDir);
+    expect(created.sharedPaths).toEqual([
+      { path: '.venv', status: 'linked' },
+      { path: '.opt-cache', status: 'skipped_absent' },
+    ]);
+    const worktreeVenv = path.join(created.path, '.venv');
+    expect(fs.lstatSync(worktreeVenv).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(worktreeVenv, 'bin', 'python3'))).toBe(true);
+
+    // Removing the symlink before reuse should restore it cleanly
+    fs.unlinkSync(worktreeVenv);
+    const reused = prepare({
+      sourceCheckout: ctx.repoDir,
+      target: { kind: 'issue', issue: 701 },
+    });
+    expect(reused.disposition).toBe('reused');
+    expect(reused.sharedPaths).toEqual([
+      { path: '.venv', status: 'linked' },
+      { path: '.opt-cache', status: 'skipped_absent' },
+    ]);
+    expect(fs.lstatSync(worktreeVenv).isSymbolicLink()).toBe(true);
+
+    // Detached verification worktrees also receive shared_paths symlinks
+    const detachedPath = path.join(ctx.tempDir, 'worktrees', 'verify-701');
+    const detached = prepare({
+      sourceCheckout: ctx.repoDir,
+      target: { kind: 'detached', commit: created.commit, path: detachedPath },
+    });
+    expect(detached.sharedPaths).toEqual([
+      { path: '.venv', status: 'linked' },
+      { path: '.opt-cache', status: 'skipped_absent' },
+    ]);
+    expect(fs.lstatSync(path.join(detachedPath, '.venv')).isSymbolicLink()).toBe(true);
+  });
+
+  it('rejects shared_paths that are unignored or ignored only with a trailing slash', () => {
+    fs.mkdirSync(path.join(ctx.repoDir, 'dir_slash'), { recursive: true });
+    fs.writeFileSync(path.join(ctx.repoDir, '.gitignore'), '.paper-craft/\ndir_slash/\n', 'utf-8');
+    runGit(ctx.repoDir, 'add', '.gitignore');
+    runGit(ctx.repoDir, 'commit', '-m', 'Ignore dir_slash with trailing slash only');
+    runGit(ctx.repoDir, 'push', 'origin', 'main');
+
+    const configPath = path.join(ctx.repoDir, '.paper-craft', 'workspace-config.json');
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+
+    cfg.shared_paths = ['unignored_env'];
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+    expect(() =>
+      prepare({
+        sourceCheckout: ctx.repoDir,
+        target: { kind: 'issue', issue: 702 },
+      }),
+    ).toThrowError(/not ignored by Git/);
+
+    cfg.shared_paths = ['dir_slash'];
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+    expect(() =>
+      prepare({
+        sourceCheckout: ctx.repoDir,
+        target: { kind: 'issue', issue: 703 },
+      }),
+    ).toThrowError(/trailing slash/);
+  });
 });

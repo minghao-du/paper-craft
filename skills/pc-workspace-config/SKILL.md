@@ -33,6 +33,9 @@ The configuration file is stored at `.paper-craft/workspace-config.json` (relati
 - `push_remote` (string, required): Git remote name used to push feature branches (`origin`).
 - `base_branch` (string, required): Mainline base branch name (e.g. `main` or `master`).
 - `worktree_container` (string, required): Directory container for task worktrees. Defaults to `../project-worktrees` (resolved relative to the repository root). Custom relative or absolute paths are supported.
+- `shared_paths` (string[], optional): Repository-relative, git-ignored paths in the primary checkout (such as `[".venv"]`) to symlink into linked worktrees during `pc-workspace` preparation (and unlink safely during cleanup without deleting primary targets).
+- `cleanable_ignored` (string[], optional): Additional repository-relative paths or glob patterns beyond the built-in regenerable cache list that `pc-workspace` cleanup may safely remove after merge/verification checks pass.
+- `protected_ignored` (string[], optional): Repository-relative paths or glob patterns that `pc-workspace` cleanup must never auto-remove (takes precedence over built-in defaults and `cleanable_ignored`).
 
 ### Project Scenarios
 

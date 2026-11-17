@@ -27,6 +27,14 @@ import {
   type WorktreeEntry,
 } from './git.js';
 import {
+  type IgnoredCleanupPlan,
+  type IgnoredCleanupPolicy,
+  executeIgnoredCleanupPlan,
+  listWorktreeStatus,
+  loadIgnoredCleanupPolicy,
+  planIgnoredCleanup,
+} from './ignored-policy.js';
+import {
   type CandidateCleanupResult,
   type CleanupCandidate,
   type CleanupRequest,
@@ -377,6 +385,37 @@ function verifyOwnershipAndCompletion(
 }
 
 /**
+ * Evaluate worktree cleanliness, classifying ignored entries against the safe
+ * cleanup policy without mutating the worktree.
+ */
+function evaluateWorktreeCleanliness(
+  target: string,
+  primary: string,
+  policy: IgnoredCleanupPolicy,
+): { clean: boolean; plan: IgnoredCleanupPlan | null; reason?: string } {
+  const status = listWorktreeStatus(target);
+  if (status.nonIgnored.length > 0) {
+    return {
+      clean: false,
+      plan: null,
+      reason: 'Candidate contains tracked, untracked, or ignored material.',
+    };
+  }
+  if (status.ignored.length === 0) {
+    return { clean: true, plan: null };
+  }
+  const plan = planIgnoredCleanup(target, primary, status.ignored, policy);
+  if (!plan.safe) {
+    return {
+      clean: false,
+      plan: null,
+      reason: `Candidate contains tracked, untracked, or ignored material (${plan.blockingPaths.join(', ')}).`,
+    };
+  }
+  return { clean: true, plan };
+}
+
+/**
  * Clean assigned candidates, retaining conflicts and reporting partial progress.
  */
 export function cleanup(
@@ -384,6 +423,7 @@ export function cleanup(
   options?: CleanupOptions,
 ): CleanupResult {
   const { source, primary, commonDir, protectedPaths } = validateRequest(request);
+  const ignoredPolicy = loadIgnoredCleanupPolicy(primary);
 
   const ghRunner = options?.ghRunner ?? defaultGhRunner;
   const results: CandidateCleanupResult[] = [];
@@ -618,22 +658,25 @@ export function cleanup(
           continue;
         }
 
-        if (!isClean(target, { includeIgnored: true })) {
+        const preflightClean = evaluateWorktreeCleanliness(target, primary, ignoredPolicy);
+        if (!preflightClean.clean) {
+          const reason =
+            preflightClean.reason ?? 'Candidate contains tracked, untracked, or ignored material.';
           candidateResult.worktree = {
             status: 'retained',
             reasonCode: 'DIRTY_WORKTREE',
-            reason: 'Candidate contains tracked, untracked, or ignored material.',
+            reason,
           };
           if (branch) {
             candidateResult.remoteBranch = {
               status: 'retained',
               reasonCode: 'DIRTY_WORKTREE',
-              reason: 'Candidate contains tracked, untracked, or ignored material.',
+              reason,
             };
             candidateResult.localBranch = {
               status: 'retained',
               reasonCode: 'DIRTY_WORKTREE',
-              reason: 'Candidate contains tracked, untracked, or ignored material.',
+              reason,
             };
           }
           results.push(candidateResult);
@@ -904,11 +947,22 @@ export function cleanup(
           headMatches = false;
         }
 
-        if (!headMatches || !isClean(target, { includeIgnored: true })) {
+        const removalCheck = headMatches
+          ? evaluateWorktreeCleanliness(target, primary, ignoredPolicy)
+          : { clean: false, plan: null };
+
+        if (headMatches && removalCheck.clean && removalCheck.plan) {
+          executeIgnoredCleanupPlan(target, removalCheck.plan);
+        }
+
+        if (!headMatches || !removalCheck.clean || !isClean(target, { includeIgnored: true })) {
+          const reason = removalCheck.reason
+            ? `Worktree changed during cleanup: ${removalCheck.reason}`
+            : 'Worktree changed during cleanup.';
           candidateResult.worktree = {
             status: 'retained',
             reasonCode: 'WORKTREE_CHANGED',
-            reason: 'Worktree changed during cleanup.',
+            reason,
           };
           if (branch) {
             candidateResult.localBranch = {

@@ -228,6 +228,8 @@ async function runPrepare(
           compactReport,
           artifacts: {
             working_directory: prepared.path,
+            ...(prepared.primaryCheckout ? { primary_checkout: prepared.primaryCheckout } : {}),
+            ...(prepared.sharedPaths?.length ? { shared_paths: prepared.sharedPaths } : {}),
             repository: prepared.repository,
             delivery_target: prepared.deliveryTarget,
             base_remote: prepared.baseRemote,

@@ -49,7 +49,7 @@ The Task Input Envelope adheres to a standardized 7-block schema (`schema_versio
   "schema_version": "1.0",
   "task": { "logical_stage": "...", "step_index": 0, "attempt": 1, "root_issue_id": "...", "current_issue_id": "..." },
   "provider": { "type": "skill", "target": "...", "args": [] },
-  "environment": { "working_directory": "...", "repository": "...", "base_branch": "...", "branch": "...", "commit": "..." },
+  "environment": { "working_directory": "...", "primary_checkout": "...", "repository": "...", "base_branch": "...", "branch": "...", "commit": "..." },
   "inputs": { "objective": "...", "scope": "...", "acceptance_criteria": [], "predecessor_receipts": [], "parameters": {} },
   "contract": { "receipt_path": "...", "receipt_template": "..." },
   "budgets": { "delivery_attempts_used": 0, "delivery_attempts_max": 3, "replans_used": 0, "replans_max": 2 }
@@ -105,17 +105,9 @@ The orchestrator assigns environments and decides preparation, reuse, and cleanu
 while `packages/workspace-config` provides unified configuration resolution and validation.
 The `pc-workspace` specialist skill serves as the cognitive wrapper preparing and validating Git checkouts
 before professional tasks start, while domain-specific skills retain their own focused helpers (including Python where appropriate).
-Every dispatch, including nested agents, supplies an absolute working directory and relevant repository,
-branch, and revision. Platforms bind the launch directory where supported. Prompt-only adapters require
-explicit per-command directory binding and entry validation. Professional skills consume prepared
-workspaces and own their project dependency, compute, and data checks.
+Every dispatch, including nested agents, supplies an absolute working directory (with optional `primary_checkout` when anchored to a primary repository) and relevant repository, branch, and revision. Platforms bind the launch directory where supported. Prompt-only adapters require explicit per-command directory binding, reading repository `AGENTS.md` (or `CLAUDE.md`) and referenced policies before executing commands, and entry validation. Professional skills consume prepared workspaces (including any configured `shared_paths` symlinks) and own their project dependency, compute, and data checks.
 
-Implementation, review, and pre-merge repairs share their feature worktree. Integrated acceptance uses
-an isolated checkout pinned to the integrated commit. Post-merge repairs and pipeline modifications
-use fresh feature worktrees. Research state has one fixed shared home, and retained artifacts have
-explicit durable locations. After successful completion, the workspace specialist cleans up eligible
-workspaces created for that run and records retained paths and reasons. Interrupted or failed work keeps
-its environments. Runtime state preserves assignments, preparation receipts, ownership, and cleanup results.
+Implementation, review, and pre-merge repairs share their feature worktree. Integrated acceptance uses an isolated checkout pinned to the integrated commit. Post-merge repairs and pipeline modifications use fresh feature worktrees. Research state has one fixed shared home, and retained artifacts have explicit durable locations. After successful completion and merge/verification checks, the workspace specialist safely unlinks managed `shared_paths` symlinks and removes known regenerable runtime caches (while retaining worktrees containing any protected or unapproved ignored material), cleans up eligible workspaces created for that run, and records retained paths and reasons. Interrupted or failed work keeps its environments. Runtime state preserves assignments, preparation receipts, ownership, and cleanup results.
 
 ## Workflow decoupling
 

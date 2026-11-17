@@ -49,7 +49,7 @@ Orchestrator 通过平台适配器启动新的专业 agent，加载 `skills/<tar
   "schema_version": "1.0",
   "task": { "logical_stage": "...", "step_index": 0, "attempt": 1, "root_issue_id": "...", "current_issue_id": "..." },
   "provider": { "type": "skill", "target": "...", "args": [] },
-  "environment": { "working_directory": "...", "repository": "...", "base_branch": "...", "branch": "...", "commit": "..." },
+  "environment": { "working_directory": "...", "primary_checkout": "...", "repository": "...", "base_branch": "...", "branch": "...", "commit": "..." },
   "inputs": { "objective": "...", "scope": "...", "acceptance_criteria": [], "predecessor_receipts": [], "parameters": {} },
   "contract": { "receipt_path": "...", "receipt_template": "..." },
   "budgets": { "delivery_attempts_used": 0, "delivery_attempts_max": 3, "replans_used": 0, "replans_max": 2 }
@@ -100,9 +100,9 @@ Orchestrator 校验全部四个报告字段并核验回执文件的物理存在�
 
 ## 工作空间归属
 
-Orchestrator 分配环境，决定准备、复用和清理的时机。`packages/workspace` 提供核心 TypeScript 实现（`prepare`、`cleanup`）与 CLI，而 `packages/workspace-config` 提供统一的配置解析与校验。`pc-workspace` 专业技能作为认知封装层，在专业任务开始前准备并验证 Git 检出目录，而其他专业技能继续保留各自专注的辅助工具（包括适当时使用 Python）。每次派发，包括内部子 agent，都提供绝对工作目录及相关仓库、分支和版本信息。平台支持时绑定启动目录。仅支持提示词的适配器要求每条命令显式绑定目录，并在入口核验环境。专业技能使用已准备的工作空间，负责项目依赖、计算环境和数据检查。
+Orchestrator 分配环境，决定准备、复用和清理的时机。`packages/workspace` 提供核心 TypeScript 实现（`prepare`、`cleanup`）与 CLI，而 `packages/workspace-config` 提供统一的配置解析与校验。`pc-workspace` 专业技能作为认知封装层，在专业任务开始前准备并验证 Git 检出目录，而其他专业技能继续保留各自专注的辅助工具（包括适当时使用 Python）。每次派发，包括内部子 agent，都提供绝对工作目录（锚定主仓库时可附带 `primary_checkout`）及相关仓库、分支和版本信息。平台支持时绑定启动目录。仅支持提示词的适配器要求每条命令显式绑定目录，在执行命令前读取仓库 `AGENTS.md`（或 `CLAUDE.md`）及其引用的策略文档，并在入口核验环境。专业技能使用已准备的工作空间（含配置的 `shared_paths` 软链接），负责项目依赖、计算环境和数据检查。
 
-实现、审查和合并前返工共用对应的功能 worktree。集成验收使用固定到集成提交的独立检出目录。合并后修复和 pipeline 修改使用新的功能 worktree。研究状态使用唯一固定的共享位置，需要保留的产物具有明确的持久位置。成功完成后，工作空间专业 agent 清理本次创建且符合条件的工作空间，并记录保留路径及原因。中断或失败的任务保留环境。运行时状态保存环境分配、准备回执、归属和清理结果。
+实现、审查和合并前返工共用对应的功能 worktree。集成验收使用固定到集成提交的独立检出目录。合并后修复和 pipeline 修改使用新的功能 worktree。研究状态使用唯一固定的共享位置，需要保留的产物具有明确的持久位置。成功完成且合并/验收校验通过后，工作空间专业 agent 安全解绑受管的 `shared_paths` 软链接并清理可再生的运行时缓存（若存在受保护或未列入安全列表的被忽略文件则仍保留工作区），清理本次创建且符合条件的工作空间，并记录保留路径及原因。中断或失败的任务保留环境。运行时状态保存环境分配、准备回执、归属和清理结果。
 
 ## 工作流解耦
 

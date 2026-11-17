@@ -103,7 +103,7 @@ Task Input Envelope: `<receipt_root>/<step_index>-input.json`
 
 Instructions:
 1. Read the Task Input Envelope at the path above to obtain your full task context, inputs, predecessor receipts, environment, and contract requirements.
-2. Bind your execution to `environment.working_directory` and follow the specialized instructions in the installed `<skill_name>` skill’s `SKILL.md`.
+2. Bind your execution to `environment.working_directory` (using `environment.primary_checkout` when referencing unlinked primary-repo assets), read `AGENTS.md` (or `CLAUDE.md` if absent) there plus any project/compute policies it references before running any command or editing files, and follow the specialized instructions in `<skill_name>`'s `SKILL.md`.
 3. Complete the assigned objective adhering to `inputs.acceptance_criteria`.
 4. Write your full durable Markdown receipt to `contract.receipt_path` matching `contract.receipt_template`.
 5. Return ONLY the standard compact JSON execution report:

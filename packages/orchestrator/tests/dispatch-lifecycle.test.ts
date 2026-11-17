@@ -57,6 +57,10 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         status: 'handed_off',
         provider: { type: 'skill', target: 'pc-workspace' },
       });
+      const envelopeJson = JSON.parse(
+        fs.readFileSync(dispatched.envelope_path, 'utf8'),
+      ) as { environment?: { primary_checkout?: string } };
+      expect(envelopeJson.environment?.primary_checkout).toBeTruthy();
       expect(inspectState({ receipt_root: env.dir })).toMatchObject({
         stage_status: 'in_progress',
         active_dispatch: { dispatch_id: dispatched.dispatch_id, status: 'handed_off' },

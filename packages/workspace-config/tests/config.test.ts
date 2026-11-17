@@ -19,6 +19,7 @@ import {
   prepareWorkspaceConfigInitialization,
   resolveWorkspaceConfig,
   saveWorkspaceConfigInitialization,
+  validateWorkspaceConfig,
 } from '../src/index.js';
 
 const require = createRequire(import.meta.url);
@@ -740,6 +741,39 @@ describe('workspace-config unit and CLI tests', () => {
       ).toThrow(/Validation failed during initialization/);
 
       expect(fs.existsSync(prep.configPath)).toBe(false);
+    });
+  });
+
+  describe('Shared paths & cleanup ignore policy fields', () => {
+    it('normalizes valid shared_paths, cleanable_ignored, and protected_ignored and rejects unsafe patterns', () => {
+      const { repoDir } = setupStandardRepo('shared-policy');
+      const prep = prepareWorkspaceConfigInitialization(repoDir);
+
+      saveWorkspaceConfigInitialization({
+        primaryCheckout: prep.primaryCheckout,
+        config: {
+          ...prep.draft,
+          shared_paths: ['./.venv/', '.venv', 'tools/env/'],
+          cleanable_ignored: ['./.cache/', '*.tmp'],
+          protected_ignored: ['results/', '.cache/keep.json'],
+        },
+      });
+
+      const resolved = resolveWorkspaceConfig({ repoDir, requireFile: true });
+      expect(resolved.shared_paths).toEqual(['.venv', 'tools/env']);
+      expect(resolved.cleanable_ignored).toEqual(['.cache', '*.tmp']);
+      expect(resolved.protected_ignored).toEqual(['results', '.cache/keep.json']);
+
+      const badErrors = validateWorkspaceConfig({
+        ...prep.draft,
+        shared_paths: ['../outside', '/abs/path', '.git/hooks', '*.venv'],
+        cleanable_ignored: ['../escape'],
+        protected_ignored: ['.'],
+      });
+      expect(badErrors.length).toBeGreaterThanOrEqual(6);
+      expect(badErrors.join('\n')).toContain('shared_paths');
+      expect(badErrors.join('\n')).toContain('cleanable_ignored');
+      expect(badErrors.join('\n')).toContain('protected_ignored');
     });
   });
 });

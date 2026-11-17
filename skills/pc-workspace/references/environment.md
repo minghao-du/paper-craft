@@ -3,7 +3,9 @@
 Before repository operations, resolve one absolute `working_directory` from the task or supplied
 environment file. `worktree` names the same directory in existing environment outputs.
 For direct invocation, an explicitly selected current checkout is an assignment too.
-Read required repository guidance there.
+Before running any project command or modifying files, read `AGENTS.md` (or `CLAUDE.md` if absent)
+in the assigned checkout together with any project or compute policy documents it references,
+and strictly follow their execution boundaries and environment rules.
 
 Verify the checkout root and repository identity against the assignment, the branch (or detached HEAD),
 and any expected commit before work. Resolve and record omitted direct-invocation revision fields from
@@ -21,7 +23,8 @@ working-tree scope. Apply this contract recursively. Return requests for a diffe
 caller before dispatching work there. Record the actual environment and refreshed HEAD on completion.
 
 Resolve one fixed research entry shared across checkouts from project guidance. Pass required artifact
-locations as absolute local paths or host-qualified remote paths. Ignored inputs and outputs need their
-existing locations or explicit task setup in a new worktree. Preserve the unique research home and
-retained artifacts independently of disposable code worktrees. Assigned external result files authorize
-writes at their exact paths.
+locations as absolute local paths or host-qualified remote paths. When `.paper-craft/workspace-config.json`
+configures `shared_paths`, `pc-workspace` links those git-ignored paths from the primary checkout into
+new or reused worktrees; use `environment.primary_checkout` (when supplied) to locate unlinked read-only
+assets in the primary checkout. Preserve the unique research home and retained artifacts independently of
+disposable code worktrees. Assigned external result files authorize writes at their exact paths.

@@ -252,6 +252,7 @@ export interface EnvelopeCreateOptions {
   };
   environment: {
     working_directory: string;
+    primary_checkout?: string;
     repository: string;
     base_branch?: string;
     branch?: string | null;
