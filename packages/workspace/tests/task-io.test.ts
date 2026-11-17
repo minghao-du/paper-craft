@@ -521,11 +521,21 @@ describe('Workspace Task-IO', () => {
             kind: 'task_branch',
             worktree: '/worktrees/issue-1',
             branch: 'issue-1',
+            commit: '0123456789abcdef0123456789abcdef01234567',
             pushRemote: 'origin',
           },
           worktree: { status: 'removed' },
           remoteBranch: { status: 'already_absent' },
           localBranch: { status: 'retained', reason: 'Checked out elsewhere' },
+        },
+        {
+          candidate: {
+            kind: 'detached',
+            worktree: '/worktrees/issue-1-verify',
+            commit: '123456789abcdef0123456789abcdef0123456789',
+            verificationCompleted: true,
+          },
+          worktree: { status: 'already_absent' },
         },
       ],
       unresolved: ['untracked-worktree-x'],
@@ -533,7 +543,7 @@ describe('Workspace Task-IO', () => {
 
     const external = mapCleanupResultToExternalReport(internalResult);
     expect(external.outcome).toBe('incomplete');
-    expect(external.removed_paths).toEqual(['/worktrees/issue-1']);
+    expect(external.removed_paths).toEqual(['/worktrees/issue-1', '/worktrees/issue-1-verify']);
     expect(external.retained_paths).toEqual([]);
     expect(external.removed_branches).toEqual([
       {

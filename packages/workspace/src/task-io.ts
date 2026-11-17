@@ -824,7 +824,7 @@ export function mapCleanupResultToExternalReport(
     const branchName = 'branch' in cand ? cand.branch : null;
 
     if (item.worktree) {
-      if (item.worktree.status === 'removed') {
+      if (item.worktree.status === 'removed' || item.worktree.status === 'already_absent') {
         if (worktreePath && !removedPaths.includes(worktreePath)) {
           removedPaths.push(worktreePath);
         }

@@ -362,7 +362,7 @@ async function runCleanup(
   try {
     const cleanupResult = cleanup(request);
     externalReport = mapCleanupResultToExternalReport(cleanupResult);
-    summary = `Removed ${externalReport.removed_paths.length} worktrees; retained ${externalReport.retained_paths.length} candidates.`;
+    summary = `Confirmed ${externalReport.removed_paths.length} worktrees absent. Retained ${externalReport.retained_paths.length} candidates.`;
   } catch (err) {
     status = 'blocked';
     const errMsg = err instanceof Error ? err.message : String(err);

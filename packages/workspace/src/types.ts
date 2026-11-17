@@ -148,6 +148,7 @@ export interface CleanupResult {
 // External 4-list contract compatible with Orchestrator/Workflow
 export interface ExternalCleanupReport {
   outcome: 'cleaned' | 'incomplete';
+  /** Worktree paths removed during cleanup or verified to be already absent. */
   removed_paths: string[];
   retained_paths: Array<{ path: string; reason: string }>;
   removed_branches: Array<{
