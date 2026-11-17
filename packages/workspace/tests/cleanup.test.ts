@@ -781,10 +781,10 @@ describe('Workspace Cleanup (cleanup)', () => {
     expect(result.unresolved).toEqual(['stale-worktree-outside-scope']);
   });
 
-  it('auto-cleans regenerable caches and unlinks managed shared_paths symlinks without touching primary targets', () => {
+  it('auto-cleans regenerable caches, OS metadata, and worktree _ignore while unlinking shared_paths symlinks without touching primary targets', () => {
     fs.writeFileSync(
       path.join(ctx.repoDir, '.gitignore'),
-      '.paper-craft/\n.venv\n.venv/\n.pytest_cache/\n__pycache__/\n*.pyc\n.snakemake/\n.custom_cache/\n',
+      '.paper-craft/\n.venv\n.venv/\n.pytest_cache/\n__pycache__/\n*.pyc\n.snakemake/\n.custom_cache/\n.DS_Store\n/_ignore/\n',
       'utf-8',
     );
     runGit(ctx.repoDir, 'add', '.gitignore');
@@ -794,6 +794,9 @@ describe('Workspace Cleanup (cleanup)', () => {
     const primaryPython = path.join(ctx.repoDir, '.venv', 'bin', 'python3');
     fs.mkdirSync(path.dirname(primaryPython), { recursive: true });
     fs.writeFileSync(primaryPython, '#!/bin/sh\n', 'utf-8');
+    const primaryIgnoreDoc = path.join(ctx.repoDir, '_ignore', 'proposal.md');
+    fs.mkdirSync(path.dirname(primaryIgnoreDoc), { recursive: true });
+    fs.writeFileSync(primaryIgnoreDoc, '# keep primary _ignore\n', 'utf-8');
 
     const configDir = path.join(ctx.repoDir, '.paper-craft');
     fs.mkdirSync(configDir, { recursive: true });
@@ -831,6 +834,10 @@ describe('Workspace Cleanup (cleanup)', () => {
     fs.writeFileSync(path.join(worktreeDir, '.pytest_cache', 'v', 'lastfailed'), '{}', 'utf-8');
     fs.mkdirSync(path.join(worktreeDir, 'src', '__pycache__'), { recursive: true });
     fs.writeFileSync(path.join(worktreeDir, 'src', '__pycache__', 'mod.pyc'), 'pyc', 'utf-8');
+    fs.writeFileSync(path.join(worktreeDir, '.DS_Store'), 'finder', 'utf-8');
+    fs.writeFileSync(path.join(worktreeDir, 'src', '.DS_Store'), 'finder', 'utf-8');
+    fs.mkdirSync(path.join(worktreeDir, '_ignore'), { recursive: true });
+    fs.writeFileSync(path.join(worktreeDir, '_ignore', 'migration-ledger.md'), '# ledger\n', 'utf-8');
     fs.mkdirSync(path.join(worktreeDir, '.snakemake', 'metadata'), { recursive: true });
     fs.writeFileSync(path.join(worktreeDir, '.snakemake', 'metadata', 'm'), 'meta', 'utf-8');
     fs.mkdirSync(path.join(worktreeDir, '.custom_cache'), { recursive: true });
@@ -845,6 +852,8 @@ describe('Workspace Cleanup (cleanup)', () => {
     fs.symlinkSync(path.join(ctx.repoDir, '.venv'), path.join(detachedDir, '.venv'));
     fs.mkdirSync(path.join(detachedDir, '.pytest_cache'), { recursive: true });
     fs.writeFileSync(path.join(detachedDir, '.pytest_cache', 'README.md'), 'cache', 'utf-8');
+    fs.mkdirSync(path.join(detachedDir, '_ignore'), { recursive: true });
+    fs.writeFileSync(path.join(detachedDir, '_ignore', 'audit.md'), '# audit\n', 'utf-8');
 
     const ghRunner = (args: string[]) => {
       if (args[0] === 'pr' && args[1] === 'view') {
@@ -902,8 +911,9 @@ describe('Workspace Cleanup (cleanup)', () => {
     expect(result.outcome).toBe('cleaned');
     expect(fs.existsSync(worktreeDir)).toBe(false);
     expect(fs.existsSync(detachedDir)).toBe(false);
-    // Primary checkout's .venv target must remain untouched
+    // Primary checkout's .venv target and _ignore/ must remain untouched
     expect(fs.existsSync(primaryPython)).toBe(true);
+    expect(fs.existsSync(primaryIgnoreDoc)).toBe(true);
   });
 
   it('retains worktree and preserves caches when unapproved/protected ignored files exist or PR is unmerged', () => {

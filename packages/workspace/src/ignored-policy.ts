@@ -9,9 +9,10 @@ import { isParentDir, resolvePath, runGit } from './git.js';
 import { type SharedPathStatus, WorkspaceError } from './types.js';
 
 /**
- * Default regenerable runtime/tool cache patterns safe to remove during
- * verified worktree cleanup. Real `.venv` directories are intentionally
- * excluded unless configured via `shared_paths` (symlink) or `cleanable_ignored`.
+ * Default regenerable runtime/tool cache, OS metadata, and disposable worktree
+ * `_ignore` patterns safe to remove during verified worktree cleanup. Real
+ * `.venv` directories are intentionally excluded unless configured via
+ * `shared_paths` (symlink) or `cleanable_ignored`.
  */
 export const DEFAULT_CLEANABLE_IGNORED: readonly string[] = [
   '.pytest_cache',
@@ -33,6 +34,8 @@ export const DEFAULT_CLEANABLE_IGNORED: readonly string[] = [
   '.turbo',
   'coverage',
   'node_modules',
+  '.DS_Store',
+  '_ignore',
 ];
 
 export interface IgnoredCleanupPolicy {
