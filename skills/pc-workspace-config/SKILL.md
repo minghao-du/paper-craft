@@ -1,13 +1,24 @@
 ---
 name: pc-workspace-config
-description: Initialize, inspect, or validate project workspace configuration (.paper-craft/workspace-config.json) for orchestrator and worktree automation.
+description: Initialize, review, or update project workspace configuration (.paper-craft/workspace-config.json). Inspect project conventions and propose evidence-backed changes for user confirmation.
 allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
 # /pc-workspace-config
 
-Manage project-level workspace configuration for paper-craft workflows.
-`pc-workspace-config` provides a one-time local initialization wizard and validator, saving a single git-ignored JSON configuration file (`.paper-craft/workspace-config.json`). Once initialized, `pc-orchestrator` and `packages/workspace` automatically consume this configuration without requiring repeated environment parameters. Configuration is anchored on the primary Git checkout; linked worktrees read the primary configuration by default.
+Manage the git-ignored `.paper-craft/workspace-config.json` in the project's primary Git checkout. `pc-orchestrator` and `packages/workspace` consume this configuration automatically, including from linked worktrees.
+
+## Review on invocation
+
+When the user invokes this skill, review the project configuration by default. Honor explicit requests for a narrower operation such as `show` or `validate`. Workflow entry validation stays read-only.
+
+1. **Load the baseline.** Resolve the primary checkout and read its saved configuration using `findPrimaryCheckout` and `loadWorkspaceConfig` from `packages/workspace-config/src/index.ts`. If the file is absent, build a read-only draft with `prepareWorkspaceConfigInitialization`. If the file cannot be parsed, report the error and ask how to repair it before replacing any content. Use `validateWorkspaceConfig` to identify invalid fields and include any supported repairs in the proposal.
+2. **Inspect project conventions.** Read project instructions and the relevant test or workflow configurations to identify where outputs actually go, including directories created only when a test runs. Use Git to check ignore rules and tracked paths. A directory's name, contents, or ignored status alone does not establish permission to delete it.
+   - Propose narrow `cleanable_ignored` entries only for outputs shown to be disposable, such as a dedicated smoke-test directory declared in test configuration. Prefer explicit repository-relative paths. For example, when the test configuration isolates intermediates, results, and logs under `processed/smoke`, `results/smoke`, and `logs/smoke`, propose those exact paths. Skip tracked paths, built-in cache rules, and entries already covered by the current configuration.
+   - Propose `shared_paths` for specific inputs intended to be shared from the primary checkout. Verify that the exact path can be ignored as a symlink and has no tracked content at or beneath it. Cleanup can unlink a managed link while retaining its primary checkout target.
+   - Keep formal results, raw inputs, and ambiguous paths out of `cleanable_ignored`. Preserve existing protections. Flag conflicts with `protected_ignored` and leave overlapping paths out of any proposed cleanup expansion.
+3. **Show the proposed changes.** Validate the draft with `validateWorkspaceConfig` before asking for approval. Present one diff against the current configuration, or the full draft for initialization. Cite the project files that justify each change. Explain that adding `cleanable_ignored` permits deletion of ignored files in those paths when an eligible task worktree is cleaned. Ask the user to approve the exact changes. If the existing configuration validates and there is no justified change, report that it is valid and leave the file untouched.
+4. **Apply the approved changes.** Re-read the file before writing. If it changed since the diff was shown, refresh the diff and confirm again. Preserve unrelated keys and existing list entries. Use `saveWorkspaceConfigInitialization` with the approved configuration and the resolved primary checkout. Enable `force` only for an approved update to an existing file. Run `validate` against the saved configuration and report the result. If the user declines or does not confirm, leave the file untouched.
 
 ---
 
@@ -66,6 +77,8 @@ PC_CONFIG="node --import <paper-craft-root>/node_modules/tsx/dist/loader.mjs <pa
 
 ### Initialize Configuration (`init`)
 Probe Git repository remotes, default branch, and GitHub repository URL, interactively confirming or setting values:
+
+These commands write configuration. For the skill's review flow, use the read-only draft and approval steps above.
 
 ```bash
 # Interactive wizard
