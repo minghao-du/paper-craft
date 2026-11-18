@@ -10,12 +10,16 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   atomicWriteText,
+  buildMarkdownReceipt,
+  buildPrepareReceiptArtifacts,
+  formatPrepareSummary,
   mapCleanupResultToExternalReport,
   mapPreparedWorkspaceToResult,
   mapToCleanupRequest,
   mapToPrepareRequest,
   normalizeIssue,
   loadEnvelope,
+  resolvePrepareIssueIds,
   WorkspaceTaskInput,
 } from '../src/task-io.js';
 import { loadEnvelope as loadOrchestratorEnvelope } from '../../orchestrator/src/lifecycle/envelope.js';
@@ -557,5 +561,276 @@ describe('Workspace Task-IO', () => {
       { branch: 'issue-1', reason: 'Checked out elsewhere' },
       { branch: null, reason: 'untracked-worktree-x' },
     ]);
+  });
+
+  it('maps orchestrator detached envelopes with issue audit metadata and primary_checkout fallback', () => {
+    const sha = '1111222233334444555566667777888899990000';
+    const wtDir = path.join(tmpDir, 'verify-wt');
+    const secondaryDir = path.join(tmpDir, 'secondary-checkout');
+
+    // 1. Standard orchestrator detached envelope (branch: null + commit + task issue IDs + parameters.worktree)
+    const standardDetached: WorkspaceTaskInput = {
+      schema_version: '1.0',
+      task: {
+        logical_stage: 'workspace_prepare',
+        step_index: 5,
+        attempt: 1,
+        root_issue_id: '150',
+        current_issue_id: '150',
+      },
+      environment: {
+        working_directory: tmpDir,
+        branch: null,
+        commit: sha,
+      },
+      inputs: {
+        parameters: {
+          worktree: wtDir,
+        },
+      },
+    };
+    const mappedStandard = mapToPrepareRequest({}, standardDetached);
+    expect(mappedStandard.request.target).toEqual({
+      kind: 'detached',
+      commit: sha,
+      path: resolvePath(wtDir),
+    });
+    expect(mappedStandard.request.sourceCheckout).toBe(resolvePath(tmpDir));
+
+    // 2. Branch omitted with only commit -> detached
+    const omittedBranch: WorkspaceTaskInput = {
+      task: { root_issue_id: '150', current_issue_id: '150' },
+      environment: { working_directory: tmpDir, commit: sha },
+      inputs: { parameters: { worktree: wtDir } },
+    };
+    expect(mapToPrepareRequest({}, omittedBranch).request.target).toEqual({
+      kind: 'detached',
+      commit: sha,
+      path: resolvePath(wtDir),
+    });
+
+    // 3. Envelope branch: null, commit: null + CLI --commit -> detached
+    const nullCommitCliOverride: WorkspaceTaskInput = {
+      task: { root_issue_id: '150', current_issue_id: '150' },
+      environment: { working_directory: tmpDir, branch: null, commit: null },
+      inputs: { parameters: { worktree: wtDir } },
+    };
+    expect(
+      mapToPrepareRequest({ commit: sha }, nullCommitCliOverride).request.target,
+    ).toEqual({
+      kind: 'detached',
+      commit: sha,
+      path: resolvePath(wtDir),
+    });
+
+    // 4. Detached without parameters.worktree uses environment.primary_checkout as sourceCheckout
+    const primaryFallbackDetached: WorkspaceTaskInput = {
+      task: { root_issue_id: '150', current_issue_id: '150' },
+      environment: {
+        primary_checkout: tmpDir,
+        working_directory: wtDir,
+        branch: null,
+        commit: sha,
+      },
+    };
+    const mappedFallback = mapToPrepareRequest({}, primaryFallbackDetached);
+    expect(mappedFallback.request.sourceCheckout).toBe(resolvePath(tmpDir));
+    expect(mappedFallback.request.target).toEqual({
+      kind: 'detached',
+      commit: sha,
+      path: resolvePath(wtDir),
+    });
+
+    // 5. Secondary normal checkout (issue mode with primary_checkout !== working_directory) must not promote working_directory to worktree
+    const secondaryIssue: WorkspaceTaskInput = {
+      task: { root_issue_id: '150', current_issue_id: '150' },
+      environment: {
+        primary_checkout: tmpDir,
+        working_directory: secondaryDir,
+      },
+    };
+    const mappedSecondary = mapToPrepareRequest({}, secondaryIssue);
+    expect(mappedSecondary.request.sourceCheckout).toBe(resolvePath(secondaryDir));
+    expect(mappedSecondary.request.target).toEqual({
+      kind: 'issue',
+      issue: 150,
+      branch: undefined,
+      path: undefined,
+      expectedHead: undefined,
+    });
+
+    // 6. Explicit CLI --issue alongside detached envelope still throws INVALID_INPUT
+    expect(() => mapToPrepareRequest({ issue: 150 }, standardDetached)).toThrow(WorkspaceError);
+    try {
+      mapToPrepareRequest({ issue: 150 }, standardDetached);
+      expect.unreachable('Expected INVALID_INPUT for explicit CLI issue with detached commit');
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkspaceError);
+      expect((err as WorkspaceError).code).toBe('INVALID_INPUT');
+      expect((err as WorkspaceError).message).toContain(
+        'Contradictory issue and detached commit declarations',
+      );
+    }
+
+    // 7. envBranch === null + CLI --branch message only labels (detached) when envCommit is present
+    expect(() =>
+      mapToPrepareRequest(
+        { branch: 'feat' },
+        { environment: { working_directory: tmpDir, branch: null } },
+      ),
+    ).toThrow(/envelope specified null\.$/);
+    expect(() =>
+      mapToPrepareRequest(
+        { branch: 'feat' },
+        { environment: { working_directory: tmpDir, branch: null, commit: sha } },
+      ),
+    ).toThrow(/envelope specified null \(detached\)\.$/);
+  });
+
+  it('presents detached summaries, issue IDs, receipt artifacts, and ownership cleanly', () => {
+    const sha = '1111222233334444555566667777888899990000';
+    const wtDir = resolvePath(path.join(tmpDir, 'verify-wt'));
+    const receiptPath = resolvePath(path.join(tmpDir, 'receipt.md'));
+    const envelope: WorkspaceTaskInput = {
+      task: {
+        logical_stage: 'workspace_prepare',
+        root_issue_id: '150',
+        current_issue_id: '150',
+        attempt: 1,
+      },
+      environment: {
+        working_directory: tmpDir,
+        repository: 'owner/repo',
+        delivery_target: 'owner/repo',
+        base_remote: 'upstream',
+        push_remote: 'origin',
+        base_branch: 'main',
+        branch: null,
+        commit: sha,
+      },
+      inputs: {
+        parameters: {
+          worktree: wtDir,
+        },
+      },
+      contract: {
+        receipt_path: receiptPath,
+      },
+    };
+
+    const { request } = mapToPrepareRequest({}, envelope);
+
+    // Issue ID extraction guards against empty strings
+    expect(resolvePrepareIssueIds(request.target, envelope)).toEqual({
+      rootIssueId: '150',
+      currentIssueId: '150',
+    });
+    expect(
+      resolvePrepareIssueIds(
+        { kind: 'issue', issue: 42 },
+        { task: { root_issue_id: '   ', current_issue_id: '' } },
+      ),
+    ).toEqual({
+      rootIssueId: undefined,
+      currentIssueId: '42',
+    });
+
+    const preparedDetached: PreparedWorkspace = {
+      repository: 'owner/repo',
+      deliveryTarget: 'owner/repo',
+      sourceCheckout: resolvePath(tmpDir),
+      primaryCheckout: resolvePath(tmpDir),
+      path: wtDir,
+      branch: null,
+      commit: sha,
+      baseBranch: 'main',
+      baseRemote: 'upstream',
+      pushRemote: 'origin',
+      disposition: 'created',
+    };
+
+    const summary = formatPrepareSummary(preparedDetached, request.target);
+    expect(summary).toBe(`Prepared detached worktree at ${wtDir} pinned to commit ${sha}`);
+
+    const succeededArtifacts = buildPrepareReceiptArtifacts({
+      status: 'succeeded',
+      prepared: preparedDetached,
+      receiptPath,
+    });
+    const succeededReceipt = buildMarkdownReceipt({
+      status: 'succeeded',
+      compactReport: {
+        execution_status: 'succeeded',
+        result: mapPreparedWorkspaceToResult(preparedDetached),
+        receipt_path: receiptPath,
+        summary,
+      },
+      artifacts: succeededArtifacts,
+      created: true,
+      logicalStage: 'workspace_prepare',
+      envelope,
+      rootIssueId: '150',
+      currentIssueId: '150',
+      summary,
+    });
+    expect(succeededReceipt).toContain('- Worktree ownership: created fresh detached worktree.');
+    expect(succeededReceipt).toContain(`Pinned to commit ${sha} (branch: detached HEAD)`);
+
+    // Feature and reused ownership + summary formatting
+    const featurePrepared: PreparedWorkspace = {
+      ...preparedDetached,
+      branch: 'issue-150',
+    };
+    expect(formatPrepareSummary(featurePrepared, { kind: 'issue', issue: 150 })).toBe(
+      `Prepared feature worktree for issue 150 at ${wtDir}`,
+    );
+    expect(
+      formatPrepareSummary(featurePrepared, { kind: 'branch', branch: 'issue-150', path: wtDir }),
+    ).toBe(`Prepared feature worktree on branch 'issue-150' at ${wtDir}`);
+    expect(
+      formatPrepareSummary({ ...preparedDetached, disposition: 'reused' }, request.target),
+    ).toBe(`Reused existing worktree at ${wtDir} with commit ${sha}`);
+
+    const featureReceipt = buildMarkdownReceipt({
+      status: 'succeeded',
+      compactReport: {
+        execution_status: 'succeeded',
+        result: mapPreparedWorkspaceToResult(featurePrepared),
+        receipt_path: receiptPath,
+        summary: formatPrepareSummary(featurePrepared, { kind: 'issue', issue: 150 }),
+      },
+      artifacts: buildPrepareReceiptArtifacts({
+        status: 'succeeded',
+        prepared: featurePrepared,
+        receiptPath,
+      }),
+      created: true,
+      logicalStage: 'workspace_prepare',
+      envelope,
+      rootIssueId: '150',
+      currentIssueId: '150',
+      summary: formatPrepareSummary(featurePrepared, { kind: 'issue', issue: 150 }),
+    });
+    expect(featureReceipt).toContain('- Worktree ownership: created fresh feature worktree.');
+
+    // Blocked artifacts preserve real envelope/request fields rather than degrading to 'N/A'
+    const blockedArtifacts = buildPrepareReceiptArtifacts({
+      status: 'blocked',
+      request,
+      envelope,
+      receiptPath,
+    });
+    expect(blockedArtifacts).toMatchObject({
+      working_directory: wtDir,
+      repository: 'owner/repo',
+      delivery_target: 'owner/repo',
+      base_remote: 'upstream',
+      push_remote: 'origin',
+      worktree: wtDir,
+      baseBranch: 'main',
+      branch: null,
+      commit: sha,
+      environment_receipt: receiptPath,
+    });
   });
 });

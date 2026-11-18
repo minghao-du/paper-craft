@@ -29,9 +29,11 @@ Cleanup envelopes (`task.logical_stage: workspace_cleanup`) route to §5 before 
 
 When invoked with `--input-envelope`, the CLI automatically:
 1. Loads and parses the input envelope (`schema_version: "1.0"`).
-2. Extracts source checkout (`environment.working_directory`), base branch (`environment.base_branch`), issue identity (`task.current_issue_id` or `task.root_issue_id`), branch (`environment.branch`), integrated revision (`environment.commit`), explicit worktree target (`inputs.parameters.worktree` if specified), and receipt path (`contract.receipt_path`).
+2. Extracts source checkout (`environment.working_directory`, falling back to `environment.primary_checkout` when resolving detached/branch worktrees), base branch (`environment.base_branch`), issue identity (`task.current_issue_id` or `task.root_issue_id`), branch (`environment.branch`), integrated revision (`environment.commit`), explicit worktree target (`inputs.parameters.worktree` if specified), and receipt path (`contract.receipt_path`).
 3. Validates source repository cleanliness, resolves default base branch from GitHub facts, and checks branch ref formats.
-4. Prepares or reuses the target worktree (creating `<resolved-container>/issue-<number>` or an explicit path, or checking out a detached revision for integrated verification) and symlinks any configured git-ignored `shared_paths` from the primary checkout.
+4. Prepares or reuses the target worktree and symlinks any configured git-ignored `shared_paths` from the primary checkout:
+   - When `environment.branch` is `null` (or omitted) and `environment.commit` is present, prepares a detached worktree pinned to `environment.commit` and preserves `task.current_issue_id` / `task.root_issue_id` as receipt audit metadata rather than treating them as a feature-branch target.
+   - Otherwise prepares or reuses `<resolved-container>/issue-<number>` (or explicit `inputs.parameters.worktree`), treating co-present `environment.branch` + `environment.commit` as `expected_head`.
 5. Writes the standard Markdown receipt file to `contract.receipt_path` adhering to the unified receipt contract.
 6. Emits the compact JSON report to stdout.
 

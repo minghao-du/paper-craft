@@ -215,6 +215,18 @@ function readOptionalString(value: unknown, fieldName: string): string | undefin
   return trimmed ? trimmed : undefined;
 }
 
+function readNonEmptyId(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 /**
  * Map CLI arguments and optional envelope to a PrepareRequest.
  */
@@ -240,7 +252,7 @@ export function mapToPrepareRequest(
     );
   }
 
-  // 1. Issue extraction
+  // 1. Issue extraction (audit metadata vs target intent decoupled below)
   const envIssue = normalizeIssue(taskSection.current_issue_id ?? taskSection.root_issue_id);
   if (args.issue !== undefined && envIssue !== null) {
     if (args.issue !== envIssue) {
@@ -250,7 +262,6 @@ export function mapToPrepareRequest(
       );
     }
   }
-  const issue = args.issue ?? envIssue ?? undefined;
 
   // 2. Base branch
   const argsBase = readOptionalString(args.base, 'base');
@@ -284,17 +295,18 @@ export function mapToPrepareRequest(
   const envBranchIsNull = envSection.branch === null;
   const argsBranch = readOptionalString(args.branch, 'branch');
   const envBranch = readOptionalString(envSection.branch, 'environment.branch');
-  if (envBranchIsNull && argsBranch !== undefined) {
-    throw new WorkspaceError(
-      'INVALID_INPUT',
-      `Conflicting 'branch' specified: CLI provided '${argsBranch}' but envelope specified null (detached).`,
-    );
-  }
   assertNoConflict('branch', argsBranch, envBranch);
 
   const argsCommit = readOptionalString(args.commit, 'commit');
   const envCommit = readOptionalString(envSection.commit, 'environment.commit');
   assertNoConflict('commit', argsCommit, envCommit);
+
+  if (envBranchIsNull && argsBranch !== undefined) {
+    throw new WorkspaceError(
+      'INVALID_INPUT',
+      `Conflicting 'branch' specified: CLI provided '${argsBranch}' but envelope specified null${envCommit ? ' (detached)' : ''}.`,
+    );
+  }
 
   const branch = argsBranch ?? envBranch;
   const rawCommit = argsCommit ?? envCommit;
@@ -318,10 +330,10 @@ export function mapToPrepareRequest(
         `Contradictory branch and detached commit declarations: branch '${branch}' cannot be combined with commit '${rawCommit}' unless envelope specifies both branch and commit.`,
       );
     }
-    if (issue !== undefined) {
+    if (args.issue !== undefined) {
       throw new WorkspaceError(
         'INVALID_INPUT',
-        `Contradictory issue and detached commit declarations: issue '${issue}' cannot be combined with commit '${rawCommit}' unless envelope specifies both branch and commit.`,
+        `Contradictory issue and detached commit declarations: issue '${args.issue}' cannot be combined with commit '${rawCommit}' unless envelope specifies both branch and commit.`,
       );
     }
     if (expectedHead && expectedHead !== rawCommit) {
@@ -333,6 +345,9 @@ export function mapToPrepareRequest(
     commit = rawCommit;
   }
 
+  // Detached mode keeps envelope issue IDs as audit metadata instead of a feature-branch target.
+  const issue = commit ? undefined : (args.issue ?? envIssue ?? undefined);
+
   // 5. Deterministic directory interpretation (source checkout vs target worktree)
   const explicitRepoDirRaw = readOptionalString(args.repoDir, 'repo_dir');
   const explicitRepoDir = explicitRepoDirRaw ? resolvePath(explicitRepoDirRaw) : undefined;
@@ -341,16 +356,21 @@ export function mapToPrepareRequest(
     'environment.working_directory',
   );
   const envWorkdir = envWorkdirRaw ? resolvePath(envWorkdirRaw) : undefined;
+  const envPrimaryCheckoutRaw = readOptionalString(
+    envSection.primary_checkout,
+    'environment.primary_checkout',
+  );
+  const envPrimaryCheckout = envPrimaryCheckoutRaw
+    ? resolvePath(envPrimaryCheckoutRaw)
+    : undefined;
 
   let worktree = explicitWorktree ? resolvePath(explicitWorktree) : undefined;
   let repoDir: string;
 
-  if (worktree) {
-    repoDir = explicitRepoDir ?? envWorkdir ?? resolvePath('.');
-  } else if (issue !== undefined) {
-    repoDir = explicitRepoDir ?? envWorkdir ?? resolvePath('.');
+  if (worktree || issue !== undefined) {
+    repoDir = explicitRepoDir ?? envWorkdir ?? envPrimaryCheckout ?? resolvePath('.');
   } else {
-    repoDir = explicitRepoDir ?? resolvePath('.');
+    repoDir = explicitRepoDir ?? envPrimaryCheckout ?? resolvePath('.');
     if (envWorkdir && envWorkdir !== repoDir) {
       worktree = envWorkdir;
     }
@@ -886,6 +906,140 @@ export function mapCleanupResultToExternalReport(
   };
 }
 
+export interface PrepareIssueIds {
+  rootIssueId?: string;
+  currentIssueId: string;
+}
+
+/**
+ * Extract trimmed, non-empty root and current issue identifiers for receipt metadata.
+ */
+export function resolvePrepareIssueIds(
+  target: PrepareTarget,
+  envelope?: WorkspaceTaskInput,
+): PrepareIssueIds {
+  const taskSection = envelope?.task ?? {};
+  const rootIssueId = readNonEmptyId(taskSection.root_issue_id);
+  const currentIssueId =
+    readNonEmptyId(taskSection.current_issue_id) ??
+    (target.kind === 'issue' ? String(target.issue) : 'N/A');
+  return { rootIssueId, currentIssueId };
+}
+
+/**
+ * Format the summary line for a succeeded prepare execution.
+ */
+export function formatPrepareSummary(
+  prepared: PreparedWorkspace,
+  target: PrepareTarget,
+): string {
+  if (prepared.disposition === 'reused') {
+    return `Reused existing worktree at ${prepared.path} with commit ${prepared.commit}`;
+  }
+  if (target.kind === 'detached' || prepared.branch === null) {
+    return `Prepared detached worktree at ${prepared.path} pinned to commit ${prepared.commit}`;
+  }
+  if (target.kind === 'issue') {
+    return `Prepared feature worktree for issue ${target.issue} at ${prepared.path}`;
+  }
+  return `Prepared feature worktree on branch '${prepared.branch}' at ${prepared.path}`;
+}
+
+export type BuildPrepareReceiptArtifactsParams =
+  | {
+      status: 'succeeded';
+      prepared: PreparedWorkspace;
+      receiptPath?: string;
+    }
+  | {
+      status: 'blocked';
+      request: PrepareRequest;
+      envelope?: WorkspaceTaskInput;
+      receiptPath?: string;
+    };
+
+/**
+ * Build receipt artifacts map for succeeded or blocked prepare executions.
+ */
+export function buildPrepareReceiptArtifacts(
+  params: BuildPrepareReceiptArtifactsParams,
+): Record<string, unknown> {
+  if (params.status === 'succeeded') {
+    const { prepared, receiptPath } = params;
+    return {
+      working_directory: prepared.path,
+      ...(prepared.primaryCheckout ? { primary_checkout: prepared.primaryCheckout } : {}),
+      ...(prepared.sharedPaths?.length ? { shared_paths: prepared.sharedPaths } : {}),
+      repository: prepared.repository,
+      delivery_target: prepared.deliveryTarget,
+      base_remote: prepared.baseRemote,
+      push_remote: prepared.pushRemote,
+      worktree: prepared.path,
+      baseBranch: prepared.baseBranch,
+      branch: prepared.branch,
+      commit: prepared.commit,
+      ...(receiptPath ? { environment_receipt: receiptPath } : {}),
+    };
+  }
+
+  const { request, envelope, receiptPath } = params;
+  const envSection = envelope?.environment ?? {};
+  const target = request.target;
+  const targetWorktree = target.path ?? 'N/A';
+
+  const deliveryTarget =
+    request.overrides?.deliveryTarget ??
+    readNonEmptyString(envSection.delivery_target) ??
+    request.expectedRepository ??
+    readNonEmptyString(envSection.repository) ??
+    'N/A';
+  const repository =
+    request.expectedRepository ??
+    readNonEmptyString(envSection.repository) ??
+    deliveryTarget;
+  const baseRemote =
+    request.overrides?.baseRemote ??
+    readNonEmptyString(envSection.base_remote) ??
+    'origin';
+  const pushRemote =
+    request.overrides?.pushRemote ??
+    readNonEmptyString(envSection.push_remote) ??
+    'origin';
+  const baseBranch =
+    request.overrides?.baseBranch ??
+    readNonEmptyString(envSection.base_branch) ??
+    'N/A';
+
+  let branch: string | null;
+  let commit: string;
+  if (target.kind === 'detached') {
+    branch = null;
+    commit = target.commit;
+  } else if (target.kind === 'branch') {
+    branch = target.branch;
+    commit = target.expectedHead ?? readNonEmptyString(envSection.commit) ?? 'N/A';
+  } else {
+    branch = target.branch ?? `issue-${target.issue}`;
+    commit = target.expectedHead ?? readNonEmptyString(envSection.commit) ?? 'N/A';
+  }
+
+  return {
+    working_directory: targetWorktree,
+    ...(envSection.primary_checkout
+      ? { primary_checkout: resolvePath(String(envSection.primary_checkout)) }
+      : {}),
+    repository,
+    delivery_target: deliveryTarget,
+    base_remote: baseRemote,
+    push_remote: pushRemote,
+    worktree: targetWorktree,
+    baseBranch,
+    branch,
+    commit,
+    ...(receiptPath ? { environment_receipt: receiptPath } : {}),
+  };
+}
+
 export interface BuildReceiptOptions {
   status: 'succeeded' | 'blocked' | 'failed';
   compactReport: CompactReceiptReport;
@@ -916,8 +1070,9 @@ export function buildMarkdownReceipt(opts: BuildReceiptOptions): string {
   const origDispatchId =
     predecessors.length > 0 ? path.parse(predecessors[predecessors.length - 1]).name : 'N/A';
 
-  const rootIssue = String(opts.rootIssueId ?? task.root_issue_id ?? 'N/A');
-  const currentIssue = String(opts.currentIssueId ?? task.current_issue_id ?? 'N/A');
+  const rootIssue = readNonEmptyId(opts.rootIssueId) ?? readNonEmptyId(task.root_issue_id) ?? 'N/A';
+  const currentIssue =
+    readNonEmptyId(opts.currentIssueId) ?? readNonEmptyId(task.current_issue_id) ?? 'N/A';
   const logicalStage = opts.logicalStage;
   const attempt = task.attempt ?? 1;
   const delUsed = budgets.delivery_attempts_used ?? 0;
@@ -952,6 +1107,11 @@ export function buildMarkdownReceipt(opts: BuildReceiptOptions): string {
   let recoveryText: string;
 
   if (opts.status === 'succeeded') {
+    const worktreeOwnership = opts.created
+      ? branch !== 'null'
+        ? 'created fresh feature worktree'
+        : 'created fresh detached worktree'
+      : 'reused existing registered worktree';
     verificationText = `- Git repository root: ${repo}
 - Target worktree directory: ${worktree}
 - Delivery target: ${deliveryTarget}
@@ -959,7 +1119,7 @@ export function buildMarkdownReceipt(opts: BuildReceiptOptions): string {
 - Push remote: ${pushRemote}
 - Cleanliness verified: Source repository and target worktree verified clean (no uncommitted or untracked files).
 - Branch and revision: Pinned to commit ${commit} (branch: ${branch !== 'null' ? branch : 'detached HEAD'}).
-- Worktree ownership: ${opts.created ? 'created fresh feature worktree' : 'reused existing registered worktree'}.`;
+- Worktree ownership: ${worktreeOwnership}.`;
 
     taskResultText = `Successfully ${opts.created ? 'created' : 'validated and reused'} Git execution environment at \`${worktree}\`.
 - Repository: \`${repo}\`

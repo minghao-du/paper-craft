@@ -12,13 +12,16 @@ import { prepare } from './prepare.js';
 import {
   atomicWriteText,
   buildMarkdownReceipt,
+  buildPrepareReceiptArtifacts,
   CompactReceiptReport,
+  formatPrepareSummary,
   loadEnvelope,
   mapCleanupResultToExternalReport,
   mapPreparedWorkspaceToResult,
   mapToCleanupRequest,
   mapToPrepareRequest,
   RawPrepareCliArgs,
+  resolvePrepareIssueIds,
   WorkspaceTaskInput,
 } from './task-io.js';
 
@@ -172,6 +175,86 @@ Options:
 `);
 }
 
+interface DeliverCommandReportOptions {
+  status: 'succeeded' | 'blocked';
+  result: Record<string, unknown>;
+  summary: string;
+  receiptPath?: string;
+  outputFormat: 'raw' | 'compact';
+  artifacts: Record<string, unknown>;
+  created: boolean;
+  logicalStage: string;
+  isCleanup?: boolean;
+  envelope?: WorkspaceTaskInput;
+  rootIssueId?: string;
+  currentIssueId?: string;
+  errorMessage?: string;
+  receiptSubject: string;
+  failedSummaryPrefix: string;
+  suppressRawOnBlocked?: boolean;
+}
+
+/**
+ * Persist optional Markdown receipt, emit compact/raw JSON report, and return exit code.
+ */
+function deliverCommandReport(opts: DeliverCommandReportOptions): number {
+  const compactReport: CompactReceiptReport = {
+    execution_status: opts.status,
+    result: opts.result,
+    receipt_path: opts.receiptPath || '',
+    summary: opts.summary,
+  };
+
+  let receiptWriteFailed = false;
+  if (opts.receiptPath) {
+    try {
+      const receiptContent = buildMarkdownReceipt({
+        status: opts.status,
+        compactReport,
+        artifacts: opts.artifacts,
+        created: opts.created,
+        logicalStage: opts.logicalStage,
+        isCleanup: opts.isCleanup,
+        envelope: opts.envelope,
+        rootIssueId: opts.rootIssueId,
+        currentIssueId: opts.currentIssueId,
+        summary: opts.summary,
+        errorMessage: opts.errorMessage,
+      });
+      atomicWriteText(opts.receiptPath, receiptContent);
+    } catch (receiptErr) {
+      receiptWriteFailed = true;
+      console.error(
+        `Failed to write ${opts.receiptSubject} receipt to ${opts.receiptPath}: ${receiptErr instanceof Error ? receiptErr.message : String(receiptErr)}`,
+      );
+    }
+  }
+
+  if (receiptWriteFailed) {
+    // Section 7.4: emit failed execution_status in compact report, keep real result, exit non-zero
+    const failedReport: CompactReceiptReport = {
+      execution_status: 'failed',
+      result: opts.result,
+      receipt_path: opts.receiptPath || '',
+      summary: `${opts.failedSummaryPrefix}: ${opts.summary}`,
+    };
+    if (opts.outputFormat === 'compact') {
+      console.log(JSON.stringify(failedReport, null, 2));
+    } else if (!opts.suppressRawOnBlocked || opts.status === 'succeeded') {
+      console.log(JSON.stringify(opts.result, null, 2));
+    }
+    return 1;
+  }
+
+  if (opts.outputFormat === 'compact') {
+    console.log(JSON.stringify(compactReport, null, 2));
+  } else if (!opts.suppressRawOnBlocked || opts.status === 'succeeded') {
+    console.log(JSON.stringify(opts.result, null, 2));
+  }
+
+  return opts.status === 'succeeded' ? 0 : 1;
+}
+
 async function runPrepare(
   args: CliArgs,
   envelope?: WorkspaceTaskInput,
@@ -187,147 +270,62 @@ async function runPrepare(
 
   const { request, receiptPath, outputFormat } = mapped;
   const taskSection = envelope?.task ?? {};
-  const currentIssueId = String(
-    taskSection.current_issue_id ??
-      (request.target.kind === 'issue' ? request.target.issue : 'N/A'),
-  );
-
-  let envResult: Record<string, unknown>;
-  let created: boolean;
-  let summary: string;
-  let receiptWriteFailed = false;
+  const logicalStage = taskSection.logical_stage || 'workspace_prepare';
+  const { rootIssueId, currentIssueId } = resolvePrepareIssueIds(request.target, envelope);
 
   try {
     const prepared = prepare(request);
-    created = prepared.disposition === 'created';
-    envResult = mapPreparedWorkspaceToResult(prepared);
+    const summary = formatPrepareSummary(prepared, request.target);
 
-    if (created) {
-      if (currentIssueId !== 'N/A') {
-        summary = `Prepared feature worktree for issue ${currentIssueId} at ${prepared.path}`;
-      } else if (prepared.branch) {
-        summary = `Prepared feature worktree on branch '${prepared.branch}' at ${prepared.path}`;
-      } else {
-        summary = `Prepared detached worktree at ${prepared.path} pinned to commit ${prepared.commit}`;
-      }
-    } else {
-      summary = `Reused existing worktree at ${prepared.path} with commit ${prepared.commit}`;
-    }
-
-    const compactReport: CompactReceiptReport = {
-      execution_status: 'succeeded',
-      result: envResult,
-      receipt_path: receiptPath || '',
+    return deliverCommandReport({
+      status: 'succeeded',
+      result: mapPreparedWorkspaceToResult(prepared),
       summary,
-    };
-
-    if (receiptPath) {
-      try {
-        const receiptContent = buildMarkdownReceipt({
-          status: 'succeeded',
-          compactReport,
-          artifacts: {
-            working_directory: prepared.path,
-            ...(prepared.primaryCheckout ? { primary_checkout: prepared.primaryCheckout } : {}),
-            ...(prepared.sharedPaths?.length ? { shared_paths: prepared.sharedPaths } : {}),
-            repository: prepared.repository,
-            delivery_target: prepared.deliveryTarget,
-            base_remote: prepared.baseRemote,
-            push_remote: prepared.pushRemote,
-            worktree: prepared.path,
-            baseBranch: prepared.baseBranch,
-            branch: prepared.branch,
-            commit: prepared.commit,
-            environment_receipt: receiptPath,
-          },
-          created,
-          logicalStage: taskSection.logical_stage || 'workspace_prepare',
-          envelope,
-          rootIssueId: taskSection.root_issue_id ? String(taskSection.root_issue_id) : undefined,
-          currentIssueId,
-          summary,
-        });
-        atomicWriteText(receiptPath, receiptContent);
-      } catch (receiptErr) {
-        receiptWriteFailed = true;
-        console.error(
-          `Failed to write workspace receipt to ${receiptPath}: ${receiptErr instanceof Error ? receiptErr.message : String(receiptErr)}`,
-        );
-      }
-    }
-
-    if (receiptWriteFailed) {
-      // Section 7.4: emit failed execution_status in compact report, keep real result, exit non-zero
-      const failedReport: CompactReceiptReport = {
-        execution_status: 'failed',
-        result: envResult,
-        receipt_path: receiptPath || '',
-        summary: `Workspace prepared successfully but receipt writing failed: ${summary}`,
-      };
-      if (outputFormat === 'compact') {
-        console.log(JSON.stringify(failedReport, null, 2));
-      } else {
-        console.log(JSON.stringify(envResult, null, 2));
-      }
-      return 1;
-    }
-
-    if (outputFormat === 'compact') {
-      console.log(JSON.stringify(compactReport, null, 2));
-    } else {
-      console.log(JSON.stringify(envResult, null, 2));
-    }
-    return 0;
+      receiptPath,
+      outputFormat,
+      artifacts: buildPrepareReceiptArtifacts({
+        status: 'succeeded',
+        prepared,
+        receiptPath,
+      }),
+      created: prepared.disposition === 'created',
+      logicalStage,
+      envelope,
+      rootIssueId,
+      currentIssueId,
+      receiptSubject: 'workspace',
+      failedSummaryPrefix: 'Workspace prepared successfully but receipt writing failed',
+    });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`Worktree preparation blocked. ${errMsg}`);
+    const summary = `Worktree preparation blocked: ${errMsg}`;
 
-    const errResult = {
-      error: errMsg,
-      stage: 'workspace_prepare',
-    };
-    const compactReport: CompactReceiptReport = {
-      execution_status: 'blocked',
-      result: errResult,
-      receipt_path: receiptPath || '',
-      summary: `Worktree preparation blocked: ${errMsg}`,
-    };
-
-    if (receiptPath) {
-      try {
-        const receiptContent = buildMarkdownReceipt({
-          status: 'blocked',
-          compactReport,
-          artifacts: {
-            working_directory: String(args.worktree || 'N/A'),
-            repository: String(args.deliveryTarget || 'N/A'),
-            delivery_target: String(args.deliveryTarget || 'N/A'),
-            base_remote: String(args.baseRemote || 'origin'),
-            push_remote: String(args.pushRemote || 'origin'),
-            worktree: String(args.worktree || 'N/A'),
-            baseBranch: String(args.base || 'N/A'),
-            branch: args.branch ?? null,
-            commit: args.commit ?? 'N/A',
-            environment_receipt: receiptPath,
-          },
-          created: false,
-          logicalStage: taskSection.logical_stage || 'workspace_prepare',
-          envelope,
-          rootIssueId: taskSection.root_issue_id ? String(taskSection.root_issue_id) : undefined,
-          currentIssueId,
-          summary: `Worktree preparation blocked: ${errMsg}`,
-          errorMessage: errMsg,
-        });
-        atomicWriteText(receiptPath, receiptContent);
-      } catch {
-        /* ignore secondary receipt write error */
-      }
-    }
-
-    if (outputFormat === 'compact') {
-      console.log(JSON.stringify(compactReport, null, 2));
-    }
-    return 1;
+    return deliverCommandReport({
+      status: 'blocked',
+      result: {
+        error: errMsg,
+        stage: 'workspace_prepare',
+      },
+      summary,
+      receiptPath,
+      outputFormat,
+      artifacts: buildPrepareReceiptArtifacts({
+        status: 'blocked',
+        request,
+        envelope,
+        receiptPath,
+      }),
+      created: false,
+      logicalStage,
+      envelope,
+      rootIssueId,
+      currentIssueId,
+      errorMessage: errMsg,
+      receiptSubject: 'workspace',
+      failedSummaryPrefix: 'Worktree preparation blocked and receipt writing failed',
+      suppressRawOnBlocked: true,
+    });
   }
 }
 
@@ -378,59 +376,22 @@ async function runCleanup(
     console.error(summary);
   }
 
-  const compactReport: CompactReceiptReport = {
-    execution_status: status,
+  return deliverCommandReport({
+    status,
     result: externalReport as Record<string, unknown>,
-    receipt_path: receiptPath || '',
     summary,
-  };
-
-  let receiptWriteFailed = false;
-  if (receiptPath) {
-    try {
-      const receiptContent = buildMarkdownReceipt({
-        status,
-        compactReport,
-        artifacts: {},
-        created: false,
-        logicalStage: 'workspace_cleanup',
-        isCleanup: true,
-        envelope,
-        rootIssueId: request.rootIssueId,
-        summary,
-        errorMessage: status === 'blocked' ? summary : undefined,
-      });
-      atomicWriteText(receiptPath, receiptContent);
-    } catch (err) {
-      receiptWriteFailed = true;
-      console.error(
-        `Failed to write cleanup receipt to ${receiptPath}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-
-  if (receiptWriteFailed) {
-    const failedReport: CompactReceiptReport = {
-      execution_status: 'failed',
-      result: externalReport as Record<string, unknown>,
-      receipt_path: receiptPath || '',
-      summary: `Workspace cleanup executed but receipt writing failed: ${summary}`,
-    };
-    if (outputFormat === 'compact') {
-      console.log(JSON.stringify(failedReport, null, 2));
-    } else {
-      console.log(JSON.stringify(externalReport, null, 2));
-    }
-    return 1;
-  }
-
-  if (outputFormat === 'compact') {
-    console.log(JSON.stringify(compactReport, null, 2));
-  } else {
-    console.log(JSON.stringify(externalReport, null, 2));
-  }
-
-  return status === 'succeeded' ? 0 : 1;
+    receiptPath,
+    outputFormat,
+    artifacts: {},
+    created: false,
+    logicalStage: 'workspace_cleanup',
+    isCleanup: true,
+    envelope,
+    rootIssueId: request.rootIssueId,
+    errorMessage: status === 'blocked' ? summary : undefined,
+    receiptSubject: 'cleanup',
+    failedSummaryPrefix: 'Workspace cleanup executed but receipt writing failed',
+  });
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {

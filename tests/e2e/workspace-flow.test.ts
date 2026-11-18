@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolvePath } from '../../packages/workspace/src/git.js';
 import {
   createTestDir,
   runLifecycleKernelCli,
@@ -365,5 +366,74 @@ describe('Issue #38: Workspace Config E2E', () => {
     expect(receiptContent).toContain('paper-craft-upstream/demo-repo');
     expect(receiptContent).toContain('upstream');
     expect(receiptContent).toContain('origin');
+  }, 20000);
+
+  it('Test 5: Orchestrator-dispatched Stage 3 detached verification workspace preparation', () => {
+    const { repoDir } = setupGitRepo('detached-verify-project');
+    const headSha = git(repoDir, 'rev-parse', 'HEAD');
+
+    const initCfgRes = runWorkspaceConfigCli([
+      'init',
+      '--repo-dir', repoDir,
+      '--delivery-target', 'paper-craft/demo-repo',
+      '--defaults',
+    ]);
+    expect(initCfgRes.status).toBe(0);
+
+    const receiptRoot = path.join(testEnv.dir, 'receipts', 'issue-150');
+    const initKernelRes = runLifecycleKernelCli([
+      'init',
+      '--receipt-root', receiptRoot,
+      '--root-issue', '150',
+      '--repo-dir', repoDir,
+    ]);
+    expect(initKernelRes.status).toBe(0);
+
+    const verifyDir = path.join(testEnv.dir, 'verify-worktrees', 'issue-150-verify');
+    const dispatchRes = runDispatchTaskCli(receiptRoot, {
+      stage: 'workspace_prepare',
+      objective: 'Prepare detached worktree for Stage 3 integrated verification',
+      provider: {
+        type: 'skill',
+        target: 'pc-workspace',
+      },
+      workdir: repoDir,
+      branch: null,
+      commit: headSha,
+      parameters: {
+        worktree: verifyDir,
+      },
+    });
+    expect(dispatchRes.status).toBe(0);
+
+    const envelopePath = path.join(receiptRoot, '01-input.json');
+    const envelope: TaskInputEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8'));
+    expect(envelope.task.root_issue_id).toBe('150');
+    expect(envelope.task.current_issue_id).toBe('150');
+    expect(envelope.environment.branch).toBeNull();
+    expect(envelope.environment.commit).toBe(headSha);
+
+    const prepRes = runPrepareWorktreeCli(['--input-envelope', envelopePath]);
+    expect(prepRes.status).toBe(0);
+
+    const report: CompactReceiptReport = JSON.parse(prepRes.stdout);
+    const resolvedVerifyDir = resolvePath(verifyDir);
+    expect(report.execution_status).toBe('succeeded');
+    expect(report.result.branch).toBeNull();
+    expect(report.result.commit).toBe(headSha);
+    expect(report.result.worktree).toBe(resolvedVerifyDir);
+    expect(report.summary).toBe(
+      `Prepared detached worktree at ${resolvedVerifyDir} pinned to commit ${headSha}`,
+    );
+    expect(fs.existsSync(resolvedVerifyDir)).toBe(true);
+    expect(git(resolvedVerifyDir, 'rev-parse', 'HEAD')).toBe(headSha);
+    expect(git(resolvedVerifyDir, 'branch', '--show-current')).toBe('');
+
+    const receiptContent = fs.readFileSync(report.receipt_path, 'utf-8');
+    expect(receiptContent).toContain('- root_issue_id: 150');
+    expect(receiptContent).toContain('- current_issue_id: 150');
+    expect(receiptContent).toContain('- branch: null');
+    expect(receiptContent).toContain(`- commit: ${headSha}`);
+    expect(receiptContent).toContain('- Worktree ownership: created fresh detached worktree.');
   }, 20000);
 });
