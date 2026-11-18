@@ -61,7 +61,7 @@ Verify repository integrity and automated checks on the integrated commit:
 
 ### Tier 2: Scientific Artifact Authenticity & Non-Triviality
 Verify that actual research artifacts exist and represent legitimate computational work:
-- Check expected output paths (e.g., `results/<stage>/...`, figures, summary CSV/TSV tables, metric JSON, model weights).
+- Resolve expected outputs from the supplied delivery receipts' `artifact_locations` and check them in the named environment. For manual verification without receipts, use the caller's explicit artifact locations.
 - Inspect file sizes and headers: ensure artifacts are **non-empty**, **valid**, and **not mock/placeholder data**.
 - Verify that pipeline outputs align structurally with modular standards (e.g., 1:1 mirroring between analytical scripts and result subdirectories).
 

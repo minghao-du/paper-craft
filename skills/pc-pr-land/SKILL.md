@@ -123,6 +123,8 @@ When review or delivery detects HEAD drift, preserve the delivered `commit` and 
 
 Every result includes the available environment fields (`repository`, absolute `working_directory` / `worktree`, `branch`, `baseBranch`, `commit`). Persist them with review findings in any assigned result file so the next worker can resume directly. Keep the implementation commit separate from `mergedCommit`.
 
+For a landed delivery with required non-Git deliverables, reference the supplying work receipt and carry its durable `artifact_locations` into the landing receipt.
+
 1. **Landed outcome (`landed`):**
    - `prNumber`: PR number
    - `prUrl`: PR URL

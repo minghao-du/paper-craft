@@ -35,7 +35,9 @@ Verify that all external prerequisite dependencies and requirements are satisfie
 #### External dependency verification
 Inspect the issue requirements for required external inputs — trained models, weights, data tables, or external files.
 - When `.paper-craft/compute.md` exists, read it to resolve where each input is consumed and its expected path. Otherwise, use the environment and paths specified in the issue.
+- Resolve prior outputs from the supplied receipts' `artifact_locations`. Pass explicit paths for read-only inputs when supported. When an input requires a fixed path inside the worktree, use configured `shared_paths` via `pc-workspace`. Route missing mappings through `pc-workspace-config` for review and approval.
 - Verify each prerequisite file exists and is readable in that environment.
+- Before running tests or smoke checks that write fixtures, outputs, or logs, resolve a run-owned scratch directory on the execution host. Resolve a project-approved durable destination for required deliverables before producing them.
 
 #### Halt protocol for missing prerequisites
 When any prerequisite input is missing, inaccessible, or has an unresolved mapping:
@@ -106,21 +108,22 @@ After implementation and verification finish, complete self-review before the fi
 4. Reassess which reviews the repairs affect, including shared dependencies and changed claims or evidence. Use one fresh read-only subagent for affected clean-code and code-reuse reviews against the updated changes, running only the affected skills. Use a separate fresh subagent for an affected skeptic review. Retain unaffected review results with a reason. Repeat repair and affected re-review until every required review is complete and all confirmed defects and unresolved skeptic concerns are resolved.
 5. If a required subagent cannot run, fails, or lacks necessary evidence, preserve completed work and report a blocked outcome with the missing review or evidence and recovery action. Resume the outstanding reviews before declaring completion.
 
-### Step 5: Pre-commit quality gates, selective staging, and commit
+### Step 5: Pre-commit quality gates, workspace check, and commit
 
 Before creating the final delivery commit, pass all applicable project quality gates and maintain zero transient artifacts in git history:
 1. **Pre-commit quality gates:** Inspect `PRE-MERGE-CHECKLIST.md` in the repo root, or the `Pre-PR Quality Checklist` / `Pre-Merge Checklist` section in `AGENTS.md` / `CLAUDE.md`, together with `.paper-craft/compute.md` when present. Run all checks permitted in the current execution environment using the project's declared toolchain (preferring local project environments such as `.venv/bin/` or `node_modules/.bin/` over ambient global tools) and confirm passing verification for any checks that must run remotely per `.paper-craft/compute.md`. Resolve every failure in scope before staging.
-2. **Selective staging:** Stage modified or new source and test files individually using per-file commands:
+2. **Workspace check:** Run `git status --short --ignored=matching` in the assigned worktree and inspect test output paths on the execution host. Remove disposable files created by this run once all consumers have finished. Preserve needed diagnostics and unexpected paths of unknown ownership, and record their locations and reasons in the receipt for workspace cleanup to evaluate.
+3. **Selective staging:** Stage modified or new source and test files individually using per-file commands:
    ```bash
    git add <file>
    ```
    Never use indiscriminate staging commands (`git add .`, `git add -A`, or `git commit -a`).
-3. **Pre-commit cached diff audit:** Before creating any commit, audit the staged cache:
+4. **Pre-commit cached diff audit:** Before creating any commit, audit the staged cache:
    ```bash
    git diff --cached --name-only
    ```
    Inspect all staged paths against forbidden transient patterns (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`). If any forbidden path is staged, unstage it immediately (`git reset HEAD <file>`).
-4. **Commit:** Commit only verified source code, tests, and documentation using conventional commit messages.
+5. **Commit:** Commit only verified source code, tests, and documentation using conventional commit messages.
 
 ## Quality Requirements & Completion Criteria
 
@@ -131,7 +134,7 @@ A task is complete only when all criteria are met:
 4. **External compute gate (conditional):**
    - **Pure-code / local tasks (no external or HPC jobs required):** Explicitly record `external_compute: "none"` in the receipt and compact `result` (and skip `pc-skeptic` with reason per Step 4).
    - **Tasks requiring HPC or remote computation:** Reporting `execution_status: "succeeded"` or creating the final delivery commit while any required job is `submitted`, `pending`, or `running` is strictly forbidden. Every required external job must reach verified terminal success (e.g. `COMPLETED` with exit code `0:0`), with verified output artifacts on disk and passing post-run validation checks before Step 4 and Step 5 complete.
-5. **Clean working tree:** No untracked transient cruft, unstaged modifications, or unwanted files remain in the working directory.
+5. **Workspace check:** Complete Step 5 and leave the worktree free of unstaged changes and disposable outputs eligible for immediate removal.
 6. **Self-review:** Step 4 is complete for the delivered changes, with evidence for required reviews and any skeptic skip.
 
 ## Task Outputs
@@ -140,3 +143,4 @@ A task is complete only when all criteria are met:
 2. **Verification evidence:** Test execution outputs, benchmark metrics, or static quality gate command results demonstrating passing quality gates. Include `quality_gates: "passed"` (or a compact gate summary object) and `external_compute` status (`"none"` or verified terminal `job_id`, exit status, and checked output artifact paths) in the compact JSON `result`, plus full command outputs, self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker in the Markdown receipt. In the compact JSON `result`, set `"external_compute": "none"` for local/pure-code tasks or include verified terminal job metadata (`"external_compute": { "status": "completed", "job_id": "...", ... }`).
 3. **Summary:** Concise report of implementation details and verification evidence.
 4. **Environment:** `repository` (`owner/repo`), absolute `working_directory` / `worktree`, `branch`, `baseBranch`, and final verified `commit` SHA. Refresh `commit` after implementation so the next worker can validate the delivered HEAD. Include this context in any assigned result file, including blocked or rework results when available.
+5. **Deliverable locations:** Before reporting success, verify that required non-Git deliverables are readable at a durable location outside disposable worktrees and scratch. Use a run-specific destination if later jobs could overwrite the usual output path. Record each deliverable or output set in `artifact_locations` with its absolute local or host-qualified remote path, and record the checks in the receipt's verification evidence. Report an unresolved required handoff as `blocked` with the current location and needed action.
