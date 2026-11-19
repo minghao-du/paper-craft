@@ -11,6 +11,7 @@ import { cleanup } from './cleanup.js';
 import { prepare } from './prepare.js';
 import {
   atomicWriteText,
+  buildCleanupReceiptArtifacts,
   buildMarkdownReceipt,
   buildPrepareReceiptArtifacts,
   CompactReceiptReport,
@@ -382,7 +383,11 @@ async function runCleanup(
     summary,
     receiptPath,
     outputFormat,
-    artifacts: {},
+    artifacts: buildCleanupReceiptArtifacts({
+      request,
+      envelope,
+      receiptPath,
+    }),
     created: false,
     logicalStage: 'workspace_cleanup',
     isCleanup: true,

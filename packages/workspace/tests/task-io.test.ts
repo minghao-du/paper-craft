@@ -10,6 +10,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   atomicWriteText,
+  buildCleanupReceiptArtifacts,
   buildMarkdownReceipt,
   buildPrepareReceiptArtifacts,
   formatPrepareSummary,
@@ -832,5 +833,146 @@ describe('Workspace Task-IO', () => {
       commit: sha,
       environment_receipt: receiptPath,
     });
+  });
+
+  it('renders structured cleanup resource dispositions, reasons, and artifacts in cleanup receipts', () => {
+    const repoDir = resolvePath(tmpDir);
+    const receiptPath = resolvePath(path.join(tmpDir, '16-workspace_cleanup-issue-150-try-1.md'));
+    const envelope: WorkspaceTaskInput = {
+      task: {
+        logical_stage: 'workspace_cleanup',
+        step_index: 16,
+        attempt: 1,
+        root_issue_id: '150',
+        current_issue_id: '150',
+      },
+      environment: {
+        working_directory: repoDir,
+        primary_checkout: repoDir,
+        repository: 'owner/repo',
+        base_branch: 'main',
+        branch: null,
+        commit: null,
+      },
+      inputs: {
+        predecessor_receipts: [path.join(tmpDir, '15-issue_finalize-issue-150-try-1.md')],
+        parameters: {
+          delivery_target: 'upstream/repo',
+          base_remote: 'upstream',
+          push_remote: 'origin',
+        },
+      },
+      contract: {
+        receipt_path: receiptPath,
+      },
+      budgets: {
+        delivery_attempts_used: 1,
+        replans_used: 0,
+      },
+    };
+
+    const artifacts = buildCleanupReceiptArtifacts({
+      request: {
+        sourceCheckout: repoDir,
+        rootIssueId: '150',
+        candidates: [],
+        protectedPaths: [receiptPath],
+      },
+      envelope,
+      receiptPath,
+    });
+    expect(artifacts).toMatchObject({
+      working_directory: repoDir,
+      repository: 'owner/repo',
+      delivery_target: 'upstream/repo',
+      base_remote: 'upstream',
+      push_remote: 'origin',
+      worktree: 'N/A',
+      baseBranch: 'main',
+      branch: null,
+      environment_receipt: receiptPath,
+    });
+
+    const incompleteReceipt = buildMarkdownReceipt({
+      status: 'succeeded',
+      compactReport: {
+        execution_status: 'succeeded',
+        result: {
+          outcome: 'incomplete',
+          removed_paths: ['/tmp/wt/issue-151'],
+          retained_paths: [{ path: '/tmp/wt/issue-152', reason: 'untracked protected artifact' }],
+          removed_branches: [{ branch: 'issue-151', scope: 'remote', remote: 'origin', already_absent: false }],
+          retained_branches: [{ branch: 'issue-152', reason: 'worktree still present' }],
+        },
+        receipt_path: receiptPath,
+        summary: 'Confirmed 1 worktrees absent. Retained 1 candidates.',
+      },
+      artifacts,
+      created: false,
+      logicalStage: 'workspace_cleanup',
+      isCleanup: true,
+      envelope,
+      rootIssueId: '150',
+      currentIssueId: '150',
+      summary: 'Confirmed 1 worktrees absent. Retained 1 candidates.',
+    });
+
+    expect(incompleteReceipt).toContain('- Cleanup outcome: incomplete');
+    expect(incompleteReceipt).toContain('### Removed Paths (1)');
+    expect(incompleteReceipt).toContain('- `/tmp/wt/issue-151`');
+    expect(incompleteReceipt).toContain('### Retained Paths (1)');
+    expect(incompleteReceipt).toContain('- `/tmp/wt/issue-152`: untracked protected artifact');
+    expect(incompleteReceipt).toContain('### Removed Branches (1)');
+    expect(incompleteReceipt).toContain('- `issue-151` (remote, remote: origin)');
+    expect(incompleteReceipt).toContain('### Retained Branches (1)');
+    expect(incompleteReceipt).toContain('- `issue-152`: worktree still present');
+    expect(incompleteReceipt).toContain('- Dispatch ID: 16-workspace_cleanup-issue-150-try-1');
+    expect(incompleteReceipt).toContain('- Delivery attempts used: 1');
+
+    const cleanedReceipt = buildMarkdownReceipt({
+      status: 'succeeded',
+      compactReport: {
+        execution_status: 'succeeded',
+        result: {
+          outcome: 'cleaned',
+          removed_paths: ['/tmp/wt/issue-151'],
+          retained_paths: [],
+          removed_branches: [],
+          retained_branches: [],
+        },
+        receipt_path: receiptPath,
+        summary: 'Confirmed 1 worktrees absent. Retained 0 candidates.',
+      },
+      artifacts,
+      created: false,
+      logicalStage: 'workspace_cleanup',
+      isCleanup: true,
+      envelope,
+      rootIssueId: '150',
+      currentIssueId: '150',
+      summary: 'Confirmed 1 worktrees absent. Retained 0 candidates.',
+    });
+    expect(cleanedReceipt).toContain('Cleanup complete with zero retained paths or branches.');
+
+    const blockedReceipt = buildMarkdownReceipt({
+      status: 'blocked',
+      compactReport: {
+        execution_status: 'blocked',
+        result: { outcome: 'incomplete', error: 'missing ownership evidence' },
+        receipt_path: receiptPath,
+        summary: 'Workspace cleanup blocked: missing ownership evidence',
+      },
+      artifacts,
+      created: false,
+      logicalStage: 'workspace_cleanup',
+      isCleanup: true,
+      envelope,
+      rootIssueId: '150',
+      currentIssueId: '150',
+      summary: 'Workspace cleanup blocked: missing ownership evidence',
+      errorMessage: 'Workspace cleanup blocked: missing ownership evidence',
+    });
+    expect(blockedReceipt).toContain('Workspace cleanup blocked: missing ownership evidence');
+    expect(blockedReceipt).toContain('Resolve reported blocker before retrying workspace cleanup.');
   });
 });

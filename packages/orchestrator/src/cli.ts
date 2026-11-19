@@ -57,55 +57,69 @@ export function readReportText(raw: string): string {
   }
 }
 
-type ArgOption = { type: "string" | "boolean"; multiple?: boolean };
+type ArgOption =
+  | { type: "boolean" }
+  | { type: "string"; valueLabel: string; required?: true; multiple?: true };
+
+const CLI_INVOCATION = "node --import tsx packages/orchestrator/src/cli.ts";
+const HELP_OPTION = { type: "boolean", short: "h" } as const;
+const VALID_DECISIONS = ["wait_user", "continue", "halt", "finish"];
 
 const INIT_OPTIONS: Record<string, ArgOption> = {
-  "receipt-root": { type: "string" },
-  "root-issue": { type: "string" },
-  "repo-dir": { type: "string" },
-  workflow: { type: "string" },
+  "receipt-root": { type: "string", valueLabel: "directory" },
+  "root-issue": { type: "string", valueLabel: "issue-id", required: true },
+  "repo-dir": { type: "string", valueLabel: "directory" },
+  workflow: { type: "string", valueLabel: "default|workflow-json-path" },
   force: { type: "boolean" },
   "require-config": { type: "boolean" },
-  "delivery-attempts-max": { type: "string" },
-  "replans-max": { type: "string" },
-  "delivery-target": { type: "string" },
-  "base-remote": { type: "string" },
-  "push-remote": { type: "string" },
-  "base-branch": { type: "string" },
-  "worktree-container": { type: "string" },
+  "delivery-attempts-max": { type: "string", valueLabel: "integer" },
+  "replans-max": { type: "string", valueLabel: "integer" },
+  "delivery-target": { type: "string", valueLabel: "owner/repo" },
+  "base-remote": { type: "string", valueLabel: "remote" },
+  "push-remote": { type: "string", valueLabel: "remote" },
+  "base-branch": { type: "string", valueLabel: "branch" },
+  "worktree-container": { type: "string", valueLabel: "directory" },
   json: { type: "boolean" },
 };
 
 const DISPATCH_OPTIONS: Record<string, ArgOption> = {
-  "receipt-root": { type: "string" },
-  request: { type: "string" },
+  "receipt-root": {
+    type: "string",
+    valueLabel: "absolute-directory",
+    required: true,
+  },
+  request: { type: "string", valueLabel: "absolute-json-path", required: true },
   json: { type: "boolean" },
 };
 
 const COMPLETE_OPTIONS: Record<string, ArgOption> = {
-  "receipt-root": { type: "string" },
-  "dispatch-id": { type: "string" },
-  report: { type: "string" },
+  "receipt-root": { type: "string", valueLabel: "directory", required: true },
+  "dispatch-id": { type: "string", valueLabel: "id", required: true },
+  report: { type: "string", valueLabel: "inline-json|file-path", required: true },
   json: { type: "boolean" },
 };
 
 const RESOLVE_OPTIONS: Record<string, ArgOption> = {
-  "receipt-root": { type: "string" },
-  decision: { type: "string" },
-  reason: { type: "string" },
-  "next-stage": { type: "string" },
-  "plan-dispatch-id": { type: "string" },
-  "current-issue": { type: "string" },
-  "mark-landed": { type: "string" },
-  "landing-dispatch-id": { type: "string" },
+  "receipt-root": { type: "string", valueLabel: "directory", required: true },
+  decision: {
+    type: "string",
+    valueLabel: VALID_DECISIONS.join("|"),
+    required: true,
+  },
+  reason: { type: "string", valueLabel: "text", required: true },
+  "next-stage": { type: "string", valueLabel: "stage" },
+  "plan-dispatch-id": { type: "string", valueLabel: "id" },
+  "current-issue": { type: "string", valueLabel: "issue-id" },
+  "mark-landed": { type: "string", valueLabel: "issue-id" },
+  "landing-dispatch-id": { type: "string", valueLabel: "id" },
   "complete-sequence": { type: "boolean" },
-  option: { type: "string", multiple: true },
+  option: { type: "string", valueLabel: "text", multiple: true },
   json: { type: "boolean" },
 };
 
 const INSPECT_OPTIONS: Record<string, ArgOption> = {
-  "receipt-root": { type: "string" },
-  field: { type: "string" },
+  "receipt-root": { type: "string", valueLabel: "directory", required: true },
+  field: { type: "string", valueLabel: "field-path" },
   json: { type: "boolean" },
 };
 
@@ -117,23 +131,67 @@ const COMMAND_OPTIONS: Record<string, Record<string, ArgOption>> = {
   inspect: INSPECT_OPTIONS,
 };
 
+const COMMAND_NAMES = Object.keys(COMMAND_OPTIONS).join(" | ");
+
+function formatUsage(command?: string): string {
+  if (command === undefined) {
+    return [
+      `Usage: ${CLI_INVOCATION} <command> [options]`,
+      `Commands: ${COMMAND_NAMES}`,
+      "Run from the repository root. Use <command> --help for command options.",
+    ].join("\n");
+  }
+
+  const required: string[] = [];
+  const optional = ["  -h, --help"];
+  for (const [name, option] of Object.entries(COMMAND_OPTIONS[command])) {
+    const flag = `--${name}`;
+    if (option.type === "boolean") {
+      optional.push(`  ${flag}`);
+    } else {
+      const labeledFlag = `${flag} <${option.valueLabel}>`;
+      if (option.required) {
+        required.push(labeledFlag);
+      } else {
+        optional.push(
+          `  ${labeledFlag}${option.multiple ? " (repeatable)" : ""}`,
+        );
+      }
+    }
+  }
+
+  return [
+    `Usage: ${CLI_INVOCATION} ${command} ${required.join(" ")} [options]`,
+    "",
+    "Options:",
+    ...optional,
+  ].join("\n");
+}
+
 export async function main(
   argv: string[] = process.argv.slice(2),
 ): Promise<number> {
   try {
     const [command, ...args] = argv;
-    if (!command || !COMMAND_OPTIONS[command]) {
-      throw new Error(
-        "Expected command: init | dispatch | complete | resolve | inspect",
-      );
+    if (args.length === 0 && (command === "-h" || command === "--help")) {
+      process.stdout.write(`${formatUsage()}\n`);
+      return 0;
+    }
+    if (!command || !Object.hasOwn(COMMAND_OPTIONS, command)) {
+      throw new Error(`Expected command: ${COMMAND_NAMES}`);
     }
 
     const { values } = parseArgs({
       args,
-      options: COMMAND_OPTIONS[command],
+      options: { ...COMMAND_OPTIONS[command], help: HELP_OPTION },
       strict: true,
       allowPositionals: false,
     });
+    if (values.help) {
+      process.stdout.write(`${formatUsage(command)}\n`);
+      return 0;
+    }
+
     const o: CliOptions = {};
     for (const [key, value] of Object.entries(values)) {
       o[key.replaceAll("-", "_")] = value;
@@ -221,8 +279,7 @@ export async function main(
       if (!o.decision || !o.reason) {
         throw new Error("--decision and --reason are required");
       }
-      const validDecisions = ["wait_user", "continue", "halt", "finish"];
-      if (!validDecisions.includes(o.decision)) {
+      if (!VALID_DECISIONS.includes(o.decision)) {
         throw new Error(
           `Invalid decision '${o.decision}'. Must strictly be one of 'wait_user' | 'continue' | 'halt' | 'finish'.`,
         );

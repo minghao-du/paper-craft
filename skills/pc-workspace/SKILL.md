@@ -37,7 +37,7 @@ When invoked with `--input-envelope`, the CLI automatically:
 5. Writes the standard Markdown receipt file to `contract.receipt_path` adhering to the unified receipt contract.
 6. Emits the compact JSON report to stdout.
 
-The subagent captures stdout and returns the compact JSON report to the Orchestrator without further manual Git commands.
+When the CLI emits a compact JSON report referencing `receipt_path` (on exit `0` `succeeded`, or exit `1` `blocked` due to a precondition check rather than missing runtime), capture and return that stdout JSON verbatim to the Orchestrator immediately. Keep the CLI-generated Markdown receipt at `contract.receipt_path` and its JSON `summary` verbatim—do not read `contract.receipt_path`, translate or rewrite it for project `AGENTS.md` language rules, or run extra manual Git/filesystem verification commands. Only invoke §3/§4 when the CLI itself cannot run or fails envelope/argument validation before producing a receipt.
 
 ---
 
@@ -146,6 +146,8 @@ If CLI execution is blocked by environment constraints (e.g., Node runtime unava
 ```bash
 node --import <paper-craft-root>/node_modules/tsx/dist/loader.mjs <paper-craft-root>/packages/workspace/src/cli.ts cleanup --input-envelope "<envelope_path>"
 ```
+
+Return the CLI's stdout compact JSON verbatim once it emits a report referencing `receipt_path`; preserve the CLI-written Markdown receipt and JSON `summary` verbatim without translating, enriching, or running extra Git/filesystem verification commands.
 
 Before execution, reconcile creation receipts with final delivery/verification receipts and durable artifact locations. Confirm all consumers have finished. Supply the reconciled issue-tree inventory in `inputs.parameters.candidates`, including historical resources with verified ownership. For historical candidates, supply `ownership_evidence: { root_issue_id, issue, source }`, where `source` points to the matching PR or durable delivery receipt; verify that issue belongs to the root tree. Use `worktree: null` for branches without worktrees. Supply ambiguous inventory items in `inputs.parameters.unresolved`; never silently omit them. Preserve default/base branches and active resources. Each candidate uses the following fields from its preparation result, updated with its final delivered HEAD and PR identity.
 

@@ -122,9 +122,9 @@ The envelope encapsulates 7 mandatory sections:
 
   Instructions:
   1. Read the Task Input Envelope at the path above to obtain your full task context, inputs, predecessor receipts, environment, and contract requirements.
-  2. Bind your execution to `environment.working_directory` and follow the specialized instructions in the installed `<skill_name>` skill’s `SKILL.md`.
+  2. Bind your execution to `environment.working_directory` (using `environment.primary_checkout` when referencing unlinked primary-repo assets), read `AGENTS.md` (or `CLAUDE.md` if absent) there plus any project/compute policies it references before running domain commands or editing repository files, and follow the specialized instructions in the installed `<skill_name>` skill’s `SKILL.md`. Project language rules do not override deterministic CLI-generated mechanical receipts.
   3. Complete the assigned objective adhering to `inputs.acceptance_criteria`.
-  4. Write your full durable Markdown receipt to `contract.receipt_path` matching `contract.receipt_template`.
+  4. Ensure a durable Markdown receipt exists at `contract.receipt_path` matching `contract.receipt_template` — if the skill's CLI kernel already wrote it (e.g. `pc-workspace`), preserve that file verbatim without translating, enriching, or rewriting it.
   5. Return ONLY the standard compact JSON execution report:
   ```json
   {
@@ -173,8 +173,8 @@ Return only this compact JSON object on standard output:
 - `failed`: An execution error or unrecoverable defect prevents a reliable result.
 
 ### Physical Markdown Receipt
-The provider must write a complete Markdown receipt to `contract.receipt_path` using `contract.receipt_template`.
-The receipt captures full execution logs, git status, environment verification, artifacts created, and verification evidence.
+The provider must ensure a complete Markdown receipt exists at `contract.receipt_path` conforming to `contract.receipt_template`.
+When a deterministic skill CLI (such as `pc-workspace`) writes `contract.receipt_path` directly, keep that CLI-generated receipt verbatim without manual rewriting or translation. Otherwise, the specialist subagent writes the receipt capturing full execution logs, git status, environment verification, artifacts created, and verification evidence.
 
 ### Protocol Verification Gate
 The Orchestrator checks all 4 report fields (`execution_status`, `result`, `receipt_path`, `summary`) and verifies the

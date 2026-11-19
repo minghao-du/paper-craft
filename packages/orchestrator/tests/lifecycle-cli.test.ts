@@ -19,6 +19,28 @@ import {
 } from './helpers.js';
 
 describe('Lifecycle Kernel CLI Verification', () => {
+  it.each(['--help', '-h'])('prints global and command usage to stdout with %s', (flag) => {
+    const globalHelp = runLifecycleKernelCli([flag]);
+    expect(globalHelp.status).toBe(0);
+    expect(globalHelp.stderr).toBe('');
+    expect(globalHelp.stdout).toContain('Commands: init | dispatch | complete | resolve | inspect');
+
+    const dispatchHelp = runLifecycleKernelCli(['dispatch', flag]);
+    expect(dispatchHelp.status).toBe(0);
+    expect(dispatchHelp.stderr).toBe('');
+    expect(dispatchHelp.stdout).toContain(
+      'Usage: node --import tsx packages/orchestrator/src/cli.ts dispatch ' +
+      '--receipt-root <absolute-directory> --request <absolute-json-path> [options]',
+    );
+  });
+
+  it('rejects unknown options even when help is requested', () => {
+    const res = runLifecycleKernelCli(['dispatch', '--unknown', '--help']);
+    expect(res.status).toBe(1);
+    expect(res.stdout).toBe('');
+    expect(res.stderr).toContain("Unknown option '--unknown'");
+  });
+
   it('T6-CLI: CLI rejects arbitrary stage name as --decision', () => {
     const env = createTestDir('pc-t6-cli-');
     try {

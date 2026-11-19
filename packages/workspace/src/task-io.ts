@@ -1040,6 +1040,179 @@ export function buildPrepareReceiptArtifacts(
   };
 }
 
+/**
+ * Build receipt artifacts map for cleanup executions from request and envelope metadata.
+ */
+export function buildCleanupReceiptArtifacts(params: {
+  request: CleanupRequest;
+  envelope?: WorkspaceTaskInput;
+  receiptPath?: string;
+}): Record<string, unknown> {
+  const { request, envelope, receiptPath } = params;
+  const envSection = envelope?.environment ?? {};
+  const paramSection = envelope?.inputs?.parameters ?? {};
+
+  const deliveryTarget =
+    readNonEmptyString(paramSection.delivery_target) ??
+    readNonEmptyString(envSection.delivery_target) ??
+    readNonEmptyString(envSection.repository) ??
+    'N/A';
+  const repository = readNonEmptyString(envSection.repository) ?? deliveryTarget;
+  const baseRemote =
+    readNonEmptyString(paramSection.base_remote) ??
+    readNonEmptyString(envSection.base_remote) ??
+    'origin';
+  const pushRemote =
+    readNonEmptyString(paramSection.push_remote) ??
+    readNonEmptyString(envSection.push_remote) ??
+    'origin';
+  const baseBranch = readNonEmptyString(envSection.base_branch) ?? 'N/A';
+  const commit = readNonEmptyString(envSection.commit) ?? 'N/A';
+
+  return {
+    working_directory: request.sourceCheckout,
+    ...(envSection.primary_checkout
+      ? { primary_checkout: resolvePath(String(envSection.primary_checkout)) }
+      : {}),
+    repository,
+    delivery_target: deliveryTarget,
+    base_remote: baseRemote,
+    push_remote: pushRemote,
+    worktree: 'N/A',
+    baseBranch,
+    branch: null,
+    commit,
+    ...(receiptPath ? { environment_receipt: receiptPath } : {}),
+  };
+}
+
+interface CleanupReceiptSections {
+  verificationText: string;
+  taskResultText: string;
+  feedbackText: string;
+  recoveryText: string;
+}
+
+function formatCleanupReceiptSections(opts: {
+  status: 'succeeded' | 'blocked' | 'failed';
+  result: Record<string, unknown>;
+  workdir: string;
+  summary: string;
+  errorMessage?: string;
+  dispatchId: string;
+  logicalStage: string;
+  attempt: number;
+  delUsed: number;
+  repUsed: number;
+}): CleanupReceiptSections {
+  const { status, result, workdir, summary, errorMessage, dispatchId, logicalStage, attempt, delUsed, repUsed } =
+    opts;
+  const recoveryBase = `- Dispatch ID: ${dispatchId}
+- Origin stage: ${logicalStage}
+- Attempt: ${attempt}
+- Delivery attempts used: ${delUsed}
+- Replans used: ${repUsed}`;
+
+  if (status !== 'succeeded') {
+    const err = errorMessage || summary;
+    return {
+      verificationText: `Workspace cleanup blocked: ${err}`,
+      taskResultText: `Workspace cleanup blocked: ${err}`,
+      feedbackText: `Cleanup halted: ${err}\nResolve reported blocker before retrying workspace cleanup.`,
+      recoveryText: `${recoveryBase}\n- Recovery note: Resolve reported blocker before retrying workspace cleanup.`,
+    };
+  }
+
+  const removedPaths = Array.isArray(result.removed_paths)
+    ? result.removed_paths.map((p) => String(p))
+    : [];
+  const retainedPaths = Array.isArray(result.retained_paths)
+    ? (result.retained_paths as Array<{ path?: unknown; reason?: unknown }>).map((p) => ({
+        path: String(p.path ?? 'N/A'),
+        reason: String(p.reason ?? 'retained'),
+      }))
+    : [];
+  const removedBranches = Array.isArray(result.removed_branches)
+    ? (
+        result.removed_branches as Array<{
+          branch?: unknown;
+          scope?: unknown;
+          remote?: unknown;
+          already_absent?: unknown;
+        }>
+      ).map((b) => ({
+        branch: b.branch !== undefined && b.branch !== null ? String(b.branch) : 'N/A',
+        scope: String(b.scope ?? 'unknown'),
+        remote: typeof b.remote === 'string' && b.remote ? b.remote : undefined,
+        alreadyAbsent: b.already_absent === true,
+      }))
+    : [];
+  const retainedBranches = Array.isArray(result.retained_branches)
+    ? (result.retained_branches as Array<{ branch?: unknown; reason?: unknown }>).map((b) => ({
+        branch: b.branch !== undefined && b.branch !== null ? String(b.branch) : '<unresolved>',
+        reason: String(b.reason ?? 'retained'),
+      }))
+    : [];
+
+  const outcome =
+    typeof result.outcome === 'string' && result.outcome
+      ? result.outcome
+      : retainedPaths.length === 0 && retainedBranches.length === 0
+        ? 'cleaned'
+        : 'incomplete';
+
+  const formatList = (items: string[]): string =>
+    items.length > 0 ? items.map((line) => `- ${line}`).join('\n') : '- None';
+
+  const removedBranchesLines = removedBranches.map((b) => {
+    const tags = [b.scope];
+    if (b.remote) tags.push(`remote: ${b.remote}`);
+    if (b.alreadyAbsent) tags.push('already_absent');
+    return `\`${b.branch}\` (${tags.join(', ')})`;
+  });
+
+  const verificationText = `- Persistent checkout: ${workdir}
+- Cleanup outcome: ${outcome}
+- Removed worktree paths: ${removedPaths.length}
+- Retained worktree paths: ${retainedPaths.length}
+- Removed branch refs: ${removedBranches.length}
+- Retained branch refs: ${retainedBranches.length}`;
+
+  const taskResultText = `${summary}
+
+### Removed Paths (${removedPaths.length})
+
+${formatList(removedPaths.map((p) => `\`${p}\``))}
+
+### Retained Paths (${retainedPaths.length})
+
+${formatList(retainedPaths.map((p) => `\`${p.path}\`: ${p.reason}`))}
+
+### Removed Branches (${removedBranches.length})
+
+${formatList(removedBranchesLines)}
+
+### Retained Branches (${retainedBranches.length})
+
+${formatList(retainedBranches.map((b) => `\`${b.branch}\`: ${b.reason}`))}`;
+
+  const isClean = outcome === 'cleaned' && retainedPaths.length === 0 && retainedBranches.length === 0;
+  const feedbackText = isClean
+    ? 'Cleanup complete with zero retained paths or branches. Persistent checkout and durable receipts remain intact.'
+    : `Cleanup incomplete: ${retainedPaths.length} path(s) and ${retainedBranches.length} branch(es) retained. Resolve the retention reasons above and retry with the outstanding candidates.`;
+
+  const recoveryNote = isClean
+    ? 'No further cleanup retries required.'
+    : 'Retry workspace_cleanup with unresolved or retained candidates after resolving conflicts.';
+
+  return {
+    verificationText,
+    taskResultText,
+    feedbackText,
+    recoveryText: `${recoveryBase}\n- Recovery note: ${recoveryNote}`,
+  };
+}
+
 export interface BuildReceiptOptions {
   status: 'succeeded' | 'blocked' | 'failed';
   compactReport: CompactReceiptReport;
@@ -1155,12 +1328,22 @@ Remediation required before retrying workspace preparation.`;
   }
 
   if (opts.isCleanup) {
-    verificationText =
-      'Candidate checks and per-resource cleanup results are recorded in the compact report.';
-    taskResultText = opts.summary;
-    feedbackText =
-      'Retained resources and reasons are recorded in the compact report. Retry with the same candidates after resolving conflicts.';
-    recoveryText = `- Origin stage: workspace_cleanup\n- Attempt: ${attempt}`;
+    const cleanupSections = formatCleanupReceiptSections({
+      status: opts.status,
+      result: opts.compactReport.result,
+      workdir,
+      summary: opts.summary,
+      errorMessage: opts.errorMessage,
+      dispatchId,
+      logicalStage,
+      attempt,
+      delUsed,
+      repUsed,
+    });
+    verificationText = cleanupSections.verificationText;
+    taskResultText = cleanupSections.taskResultText;
+    feedbackText = cleanupSections.feedbackText;
+    recoveryText = cleanupSections.recoveryText;
   }
 
   return `# Subagent Receipt
