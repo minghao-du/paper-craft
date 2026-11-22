@@ -208,8 +208,7 @@ describe('Lifecycle Kernel CLI Verification', () => {
     }
   }, 20000);
 
-  // F08: CLI passes raw report text so active malformed reports record protocol_error while missing files / inactive reports do not.
-  it('F08: CLI complete records protocol_error for active malformed file/inline reports without contaminating active state on missing/inactive reports', () => {
+  it('F08: CLI complete infers valid reports and records malformed reports with an explicit active ID', () => {
     const env = createTestDir('pc-f08-cli-complete-');
     try {
       initWorkflow({ receipt_root: env.dir, root_issue: '303' });
@@ -234,6 +233,15 @@ describe('Lifecycle Kernel CLI Verification', () => {
 
       const badReportFile = path.join(env.dir, 'bad-report.json');
       fs.writeFileSync(badReportFile, '{malformed json');
+
+      const statePath = path.join(env.dir, 'state.json');
+      const initialState = fs.readFileSync(statePath, 'utf8');
+      const unidentifiedRes = runLifecycleKernelCli([
+        'complete', '--receipt-root', env.dir, '--report', badReportFile,
+      ]);
+      expect(unidentifiedRes.status).not.toBe(0);
+      expect(unidentifiedRes.stderr).toContain('Invalid compact report JSON');
+      expect(fs.readFileSync(statePath, 'utf8')).toBe(initialState);
 
       const otherDispatchRes = runLifecycleKernelCli([
         'complete',
@@ -263,6 +271,30 @@ describe('Lifecycle Kernel CLI Verification', () => {
       ]);
       expect(activeBadInlineRes.status).not.toBe(0);
       expect(inspectState({ receipt_root: env.dir }).protocol_error?.dispatch_id).toBe(active.dispatch_id);
+
+      fs.writeFileSync(active.receipt_path, '# Planning receipt');
+      const validReport = JSON.stringify({
+        execution_status: 'succeeded',
+        result: { outcome: 'direct' },
+        receipt_path: active.receipt_path,
+        summary: 'Planned',
+      });
+      const beforeBlankId = fs.readFileSync(statePath, 'utf8');
+      const blankIdRes = runLifecycleKernelCli([
+        'complete', '--receipt-root', env.dir, '--dispatch-id', '  ', '--report', validReport,
+      ]);
+      expect(blankIdRes.status).not.toBe(0);
+      expect(blankIdRes.stderr).toContain('--dispatch-id must be a non-empty string');
+      expect(fs.readFileSync(statePath, 'utf8')).toBe(beforeBlankId);
+
+      const completedRes = runLifecycleKernelCli([
+        'complete', '--receipt-root', env.dir, '--report', validReport,
+      ]);
+      expect(completedRes.status).toBe(0);
+      expect(JSON.parse(completedRes.stdout).dispatch_id).toBe(active.dispatch_id);
+      const completedState = inspectState({ receipt_root: env.dir });
+      expect(completedState.active_dispatch).toBeNull();
+      expect(completedState.protocol_error).toBeNull();
     } finally {
       env.cleanup();
     }

@@ -187,7 +187,7 @@ export type DispatchResult = DispatchResultFields &
 
 export interface CompleteOptions {
   receipt_root: string;
-  dispatch_id: string;
+  dispatch_id?: string;
   report: unknown;
 }
 

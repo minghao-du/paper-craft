@@ -11,7 +11,6 @@ import {
   inspectState,
   type InitOptions,
   type DispatchOptions,
-  type CompleteOptions,
   type ResolveOptions,
   type InspectOptions,
 } from "./lifecycle/index.js";
@@ -94,7 +93,7 @@ const DISPATCH_OPTIONS: Record<string, ArgOption> = {
 
 const COMPLETE_OPTIONS: Record<string, ArgOption> = {
   "receipt-root": { type: "string", valueLabel: "directory", required: true },
-  "dispatch-id": { type: "string", valueLabel: "id", required: true },
+  "dispatch-id": { type: "string", valueLabel: "id" },
   report: { type: "string", valueLabel: "inline-json|file-path", required: true },
   json: { type: "boolean" },
 };
@@ -265,16 +264,13 @@ export async function main(
         receipt_root: o.receipt_root,
       } as DispatchOptions);
     } else if (command === "complete") {
-      if (!o.dispatch_id) {
-        throw new Error("--dispatch-id is required for complete");
-      }
       if (!o.report) throw new Error("--report is required");
       const reportText = readReportText(String(o.report));
       result = completeDispatch({
         receipt_root: o.receipt_root,
         dispatch_id: o.dispatch_id,
         report: reportText,
-      } as CompleteOptions);
+      });
     } else if (command === "resolve") {
       if (!o.decision || !o.reason) {
         throw new Error("--decision and --reason are required");

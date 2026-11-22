@@ -98,6 +98,8 @@ The contract enforces dual reporting:
 
 The Orchestrator validates all four report fields and verifies physical existence of the receipt file. Any protocol violation, unparseable output, or missing receipt triggers fail-fast halting to the Decision Board without speculative repair.
 
+Lifecycle correlates `complete` to the active dispatch or completed history in the loaded run snapshot. The caller and report may each supply a dispatch ID and must agree if both do. Without either ID, the resolved report receipt path must match exactly one assigned receipt path. An unparseable report requires an explicit ID for Lifecycle to record a protocol error against the active dispatch.
+
 ## Workspace ownership
 
 The orchestrator assigns environments and decides preparation, reuse, and cleanup timing.

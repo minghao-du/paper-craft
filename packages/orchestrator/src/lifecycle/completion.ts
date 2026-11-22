@@ -14,8 +14,9 @@ import type {
 } from "./types.js";
 
 export function completeDispatch(o: CompleteOptions): CompletedDispatch {
-  if (!o.dispatch_id || !o.dispatch_id.trim()) {
-    throw new Error("--dispatch-id is required for complete");
+  const explicitId = o.dispatch_id?.trim();
+  if (o.dispatch_id !== undefined && !explicitId) {
+    throw new Error("--dispatch-id must be a non-empty string when provided");
   }
 
   const root = path.resolve(o.receipt_root);
@@ -32,14 +33,14 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
   }
   const expectedPreviousState = JSON.parse(JSON.stringify(state));
 
-  const dispatchId = o.dispatch_id.trim();
+  let dispatchId = explicitId;
   const active = state.active_dispatch;
-  const currentIsTarget = active?.dispatch_id === dispatchId;
+  const history = state.completed_stages ?? [];
 
   // Correctable defects of the *current* dispatch are recorded against it; input that
   // cannot be correlated to the active dispatch is rejected without touching state.
   const reject = (errorType: string, message: string): never => {
-    if (currentIsTarget) {
+    if (dispatchId && active?.dispatch_id === dispatchId) {
       const now = new Date().toISOString();
       try {
         commitRun(root, {
@@ -70,16 +71,32 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
     return reject(error.code ?? "invalid_report", error.message);
   }
 
-  if (report.dispatch_id && report.dispatch_id !== dispatchId) {
+  if (explicitId && report.dispatch_id && report.dispatch_id !== explicitId) {
     throw new Error(
-      `dispatch_mismatch: Requested dispatch_id '${dispatchId}' does not match report dispatch_id '${report.dispatch_id}'.`,
+      `dispatch_mismatch: Requested dispatch_id '${explicitId}' does not match report dispatch_id '${report.dispatch_id}'.`,
     );
   }
 
+  const reportReceipt = path.resolve(report.receipt_path);
+  dispatchId ??= report.dispatch_id;
+  if (dispatchId === undefined) {
+    const matches = (active ? [active, ...history] : history).filter(
+      (entry) => entry.receipt_path && path.resolve(entry.receipt_path) === reportReceipt,
+    );
+    const [match] = matches;
+    if (!match) {
+      throw new Error(`No dispatch has assigned receipt_path '${report.receipt_path}'.`);
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `Multiple dispatches have assigned receipt_path '${report.receipt_path}'. Specify --dispatch-id or report.dispatch_id.`,
+      );
+    }
+    dispatchId = match.dispatch_id;
+  }
+
   // Historical completion replay must work even when a later dispatch is active.
-  const settled = [...(state.completed_stages ?? [])]
-    .reverse()
-    .find((entry) => entry.dispatch_id === dispatchId);
+  const settled = history.findLast((entry) => entry.dispatch_id === dispatchId);
   if (settled) {
     if (compareCompleteReports(settled, report)) return settled;
     throw new Error(
@@ -91,7 +108,7 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
     throw new Error("No active dispatch in flight to complete.");
   }
 
-  if (!currentIsTarget) {
+  if (active.dispatch_id !== dispatchId) {
     throw new Error(
       `dispatch_mismatch: Active dispatch ID '${active.dispatch_id}' does not match requested '${dispatchId}'.`,
     );
@@ -105,7 +122,7 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
   }
 
   const assignedReceipt = path.resolve(active.receipt_path);
-  if (assignedReceipt !== path.resolve(report.receipt_path)) {
+  if (assignedReceipt !== reportReceipt) {
     return reject(
       "receipt_mismatch",
       `Report receipt_path '${report.receipt_path}' does not match assigned receipt_path '${active.receipt_path}'.`,
@@ -155,7 +172,7 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
 
   const nextState: RuntimeState = {
     ...state,
-    completed_stages: [...(state.completed_stages ?? []), entry],
+    completed_stages: [...history, entry],
     active_dispatch: null,
     // Only the corrected dispatch's own protocol error is cleared.
     protocol_error:

@@ -17,6 +17,7 @@ import {
   type RuntimeState,
 } from '../src/lifecycle/index.js';
 import {
+  commitRun,
   loadRun,
   replaceRun,
 } from '../src/run-store/index.js';
@@ -843,8 +844,7 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
     }
   });
 
-  // F06 & F07: Historical completion replay works while another dispatch is active and rejects receipt_path changes.
-  it('F06 & F07: completion replay for settled dispatch succeeds while later dispatch is active and rejects changed receipt_path', () => {
+  it('F06 & F07: receipt-based completion replay selects settled history and preserves the active dispatch', () => {
     const env = createTestDir('pc-f06-f07-');
     try {
       initWorkflow({ receipt_root: env.dir, root_issue: 114 });
@@ -887,35 +887,64 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         workdir: env.dir,
       });
 
-      // Replay with lexically equivalent receipt_path while work dispatch is active
-      const dotNormalizedReceipt = path.join(
-        path.dirname(plan.receipt_path),
-        '.',
-        path.basename(plan.receipt_path),
-      );
-      const replayed = completeDispatch({
+      expect(() => completeDispatch({
+        receipt_root: env.dir,
+        dispatch_id: work.dispatch_id,
+        report: {},
+      })).toThrow(/missing required field/);
+      const statePath = getStateFilePath(env.dir);
+      const beforeReplay = fs.readFileSync(statePath, 'utf8');
+
+      const relativeReceipt = path.relative(process.cwd(), plan.receipt_path);
+      const replayed = runLifecycleKernelCli([
+        'complete', '--receipt-root', env.dir,
+        '--report', JSON.stringify({ ...planReport, receipt_path: relativeReceipt }),
+      ], { cwd: process.cwd() });
+      expect(replayed.status).toBe(0);
+      expect(JSON.parse(replayed.stdout)).toEqual(completedPlan);
+
+      expect(() => completeDispatch({
+        receipt_root: env.dir,
+        report: { ...planReport, summary: 'Different conclusion' },
+      })).toThrow(/Conflicting report/);
+      // The same basename in another directory must not associate with this run.
+      const altReceipt = path.join(env.dir, 'other', path.basename(plan.receipt_path));
+      expect(() => completeDispatch({
+        receipt_root: env.dir,
+        report: { ...planReport, receipt_path: altReceipt },
+      })).toThrow(/No dispatch has assigned receipt_path/);
+      expect(() => completeDispatch({
+        receipt_root: env.dir,
+        dispatch_id: work.dispatch_id,
+        report: { ...planReport, dispatch_id: plan.dispatch_id },
+      })).toThrow(/dispatch_mismatch/);
+      expect(() => completeDispatch({
         receipt_root: env.dir,
         dispatch_id: plan.dispatch_id,
-        report: { ...planReport, receipt_path: dotNormalizedReceipt },
-      });
-      expect(replayed).toEqual(completedPlan);
-      const afterReplay = loadRun<RuntimeState>(env.dir);
-      expect(afterReplay.active_dispatch?.dispatch_id).toBe(work.dispatch_id);
-      expect(afterReplay.completed_stages).toHaveLength(1);
+        report: { ...planReport, receipt_path: altReceipt },
+      })).toThrow(/Conflicting report/);
+      expect(fs.readFileSync(statePath, 'utf8')).toBe(beforeReplay);
 
-      // Changed receipt_path on settled replay must reject without mutating active dispatch B
-      const altReceipt = path.join(env.dir, 'other-receipt.md');
-      fs.writeFileSync(altReceipt, '# Other receipt');
-      expect(() =>
-        completeDispatch({
-          receipt_root: env.dir,
-          dispatch_id: plan.dispatch_id,
-          report: { ...planReport, receipt_path: altReceipt },
-        }),
-      ).toThrow(/Conflicting report/);
-      const afterConflict = loadRun<RuntimeState>(env.dir);
-      expect(afterConflict.active_dispatch?.dispatch_id).toBe(work.dispatch_id);
-      expect(afterConflict.completed_stages[0]?.receipt_path).toBe(plan.receipt_path);
+      // Model a snapshot where two dispatches have the same assigned receipt path.
+      const state = loadRun<RuntimeState>(env.dir);
+      if (!state.active_dispatch) throw new Error('Expected work dispatch to be active');
+      commitRun(env.dir, {
+        expected_previous_state: state,
+        target_state: {
+          ...state,
+          active_dispatch: { ...state.active_dispatch, receipt_path: plan.receipt_path },
+        },
+      });
+      const beforeAmbiguous = fs.readFileSync(statePath, 'utf8');
+      expect(() => completeDispatch({
+        receipt_root: env.dir,
+        report: planReport,
+      })).toThrow(/Multiple dispatches have assigned receipt_path/);
+      expect(completeDispatch({
+        receipt_root: env.dir,
+        report: { ...planReport, dispatch_id: plan.dispatch_id },
+      })).toEqual(completedPlan);
+      expect(fs.readFileSync(statePath, 'utf8')).toBe(beforeAmbiguous);
     } finally {
       env.cleanup();
     }
