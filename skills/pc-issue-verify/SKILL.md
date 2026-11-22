@@ -51,6 +51,10 @@ The caller directly provides structured verification inputs in the prompt:
 
 Execute verification against the integrated Git HEAD across three sequential tiers. A failure at any tier halts subsequent tiers and triggers `rework_needed`.
 
+Before running checks, follow the [artifact handoff](../pc-workspace/references/environment.md#artifact-handoff)
+for [independent verification](../pc-workspace/references/environment.md#independent-verification) and
+prepare for the [workspace check](../pc-workspace/references/environment.md#workspace-check).
+
 ### Tier 1: Engineering Sanity & Quality Gates
 Validate the assigned integrated checkout against the expected commit before checks. Record that
 fixed SHA as `evaluatedHead` throughout verification. Return environment conflicts to the caller.
@@ -60,8 +64,7 @@ Verify repository integrity and automated checks on the integrated commit:
 - Confirm that all child delivery branches have merged cleanly without regressions.
 
 ### Tier 2: Scientific Artifact Authenticity & Non-Triviality
-Verify that actual research artifacts exist and represent legitimate computational work:
-- Resolve expected outputs from the supplied delivery receipts' `artifact_locations` and check them in the named environment. For manual verification without receipts, use the caller's explicit artifact locations.
+Verify that the declared research artifacts exist in the named environment and represent legitimate computational work:
 - Inspect file sizes and headers: ensure artifacts are **non-empty**, **valid**, and **not mock/placeholder data**.
 - Verify that pipeline outputs align structurally with modular standards (e.g., 1:1 mirroring between analytical scripts and result subdirectories).
 
@@ -73,7 +76,9 @@ Actively execute verification commands on the integrated Git HEAD to validate th
 
 ## Task Outputs
 
-Return an evidence-backed JSON report directly to the caller:
+Complete the [workspace check](../pc-workspace/references/environment.md#workspace-check) on both
+outcomes and record cleanup findings in `evidence`. Return an evidence-backed JSON report directly
+to the caller.
 
 ### Verified Outcome
 When all engineering checks pass, artifacts are authentic, and scientific goals are satisfied:

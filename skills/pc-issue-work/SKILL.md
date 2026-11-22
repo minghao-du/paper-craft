@@ -35,9 +35,9 @@ Verify that all external prerequisite dependencies and requirements are satisfie
 #### External dependency verification
 Inspect the issue requirements for required external inputs — trained models, weights, data tables, or external files.
 - When `.paper-craft/compute.md` exists, read it to resolve where each input is consumed and its expected path. Otherwise, use the environment and paths specified in the issue.
-- Resolve prior outputs from the supplied receipts' `artifact_locations`. Pass explicit paths for read-only inputs when supported. When an input requires a fixed path inside the worktree, use configured `shared_paths` via `pc-workspace`. Route missing mappings through `pc-workspace-config` for review and approval.
+- Follow the [artifact handoff](../pc-workspace/references/environment.md#artifact-handoff) for prior outputs.
 - Verify each prerequisite file exists and is readable in that environment.
-- Before running tests or smoke checks that write fixtures, outputs, or logs, resolve a run-owned scratch directory on the execution host. Resolve a project-approved durable destination for required deliverables before producing them.
+- Resolve [worker delivery](../pc-workspace/references/environment.md#worker-delivery) destinations and prepare for the [workspace check](../pc-workspace/references/environment.md#workspace-check) before running commands that write files.
 
 #### Halt protocol for missing prerequisites
 When any prerequisite input is missing, inaccessible, or has an unresolved mapping:
@@ -112,7 +112,7 @@ After implementation and verification finish, complete self-review before the fi
 
 Before creating the final delivery commit, pass all applicable project quality gates and maintain zero transient artifacts in git history:
 1. **Pre-commit quality gates:** Inspect `PRE-MERGE-CHECKLIST.md` in the repo root, or the `Pre-PR Quality Checklist` / `Pre-Merge Checklist` section in `AGENTS.md` / `CLAUDE.md`, together with `.paper-craft/compute.md` when present. Run all checks permitted in the current execution environment using the project's declared toolchain (preferring local project environments such as `.venv/bin/` or `node_modules/.bin/` over ambient global tools) and confirm passing verification for any checks that must run remotely per `.paper-craft/compute.md`. Resolve every failure in scope before staging.
-2. **Workspace check:** Run `git status --short --ignored=matching` in the assigned worktree and inspect test output paths on the execution host. Remove disposable files created by this run once all consumers have finished. Preserve needed diagnostics and unexpected paths of unknown ownership, and record their locations and reasons in the receipt for workspace cleanup to evaluate.
+2. **Workspace check:** Complete the [workspace check](../pc-workspace/references/environment.md#workspace-check) before staging. Apply it before reporting a failed or blocked execution as well.
 3. **Selective staging:** Stage modified or new source and test files individually using per-file commands:
    ```bash
    git add <file>
@@ -143,4 +143,4 @@ A task is complete only when all criteria are met:
 2. **Verification evidence:** Test execution outputs, benchmark metrics, or static quality gate command results demonstrating passing quality gates. Include `quality_gates: "passed"` (or a compact gate summary object) and `external_compute` status (`"none"` or verified terminal `job_id`, exit status, and checked output artifact paths) in the compact JSON `result`, plus full command outputs, self-review results, repairs, finding dispositions, retained-review reasons, and any skeptic skip reason or outstanding review blocker in the Markdown receipt. In the compact JSON `result`, set `"external_compute": "none"` for local/pure-code tasks or include verified terminal job metadata (`"external_compute": { "status": "completed", "job_id": "...", ... }`).
 3. **Summary:** Concise report of implementation details and verification evidence.
 4. **Environment:** `repository` (`owner/repo`), absolute `working_directory` / `worktree`, `branch`, `baseBranch`, and final verified `commit` SHA. Refresh `commit` after implementation so the next worker can validate the delivered HEAD. Include this context in any assigned result file, including blocked or rework results when available.
-5. **Deliverable locations:** Before reporting success, verify that required non-Git deliverables are readable at a durable location outside disposable worktrees and scratch. Use a run-specific destination if later jobs could overwrite the usual output path. Record each deliverable or output set in `artifact_locations` with its absolute local or host-qualified remote path, and record the checks in the receipt's verification evidence. Report an unresolved required handoff as `blocked` with the current location and needed action.
+5. **Deliverable locations:** Complete [worker delivery](../pc-workspace/references/environment.md#worker-delivery) for required non-Git deliverables and report `artifact_locations` with verification evidence.
