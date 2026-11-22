@@ -45,7 +45,7 @@ State uncertainty, applicability boundaries, conflicting evidence, missing input
 
 ### 7. Implications and agreed next steps
 
-Explain what the results imply for research choices, including routes ruled out and why. Record agreed next steps with their rationale, dependencies, and progression conditions. Where no next step is agreed, leave the choice open; reporting does not authorize experiments.
+Explain what the results imply for research choices, including routes ruled out and why. Describe agreed follow-up ideas under the guidance for plans below. Leave undecided directions open.
 
 ### 8. Evidence citations
 
@@ -53,7 +53,7 @@ Place lightweight source links or citations beside findings or in figure/table n
 
 ## Plans and partial analyses
 
-For plans or discussions without results, cover the questions, existing evidence, hypotheses, proposed methods, expected scientific outcomes, dependencies, progression conditions, and unresolved decisions. For staged routes, give each stage its question, method, expected outcome, dependencies, and progression conditions. Explain the rationale for current agreed choices; retain rejected routes only under the convention's retention rules. Expected outcomes remain prospective; result sections may be omitted until findings exist.
+For work that is still an idea, follow the [proposed-work rule in the research plan skill](../../pc-research-plan/SKILL.md#step-2-shape-the-overview). Preserve that level of detail when recording an agreed plan or a follow-up to an existing result. Apply the methods and results sections above only to work actually carried out.
 
 For partially completed analyses, distinguish observed findings from pending work and identify which questions are unanswered. As results arrive, integrate them into the relevant sections and replace fulfilled prospective descriptions with the actual methods and findings. Apply the convention's replacement and retention rules to changed conclusions; preserve valid condition-specific findings and unresolved conflicts.
 
