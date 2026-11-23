@@ -40,3 +40,5 @@ export {
   type SaveWorkspaceConfigInitializationOptions,
   type SaveWorkspaceConfigResult,
 } from './initialization.js';
+
+export { prepareSnakemakeCleanup } from './snakemake-cleanup.js';

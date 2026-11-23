@@ -16,6 +16,7 @@ import {
   getConfigFilePath,
   loadWorkspaceConfig,
   parseRepoFromUrl,
+  prepareSnakemakeCleanup,
   prepareWorkspaceConfigInitialization,
   resolveWorkspaceConfig,
   saveWorkspaceConfigInitialization,
@@ -122,6 +123,17 @@ describe('workspace-config unit and CLI tests', () => {
       stdout: res.stdout ?? '',
       stderr: res.stderr ?? '',
     };
+  }
+
+  function writeSnakemakeLayout(repoDir: string, resultsDir: string): void {
+    fs.mkdirSync(path.join(repoDir, 'workflow'));
+    fs.mkdirSync(path.join(repoDir, 'config'));
+    fs.writeFileSync(path.join(repoDir, 'workflow', 'Snakefile'), 'configfile: "config/config.yaml"\n');
+    fs.writeFileSync(path.join(repoDir, 'config', 'config.yaml'), [
+      'processed_dir: processed',
+      `results_dir: ${resultsDir}`,
+      'logs_dir: logs/',
+    ].join('\n'));
   }
 
   describe('findPrimaryCheckout and Worktree Anchoring', () => {
@@ -459,6 +471,8 @@ describe('workspace-config unit and CLI tests', () => {
   describe('CLI Subcommands: init, show, validate', () => {
     it('init --defaults initializes standard repo and writes config to primary checkout', () => {
       const { repoDir } = setupStandardRepo('cli-init-standard');
+      writeSnakemakeLayout(repoDir, 'custom-results');
+      fs.writeFileSync(path.join(repoDir, '.gitignore'), '/processed/\n/results/\n/logs/\n');
 
       const res = runCli(['init', '--repo-dir', repoDir, '--defaults']);
       expect(res.status).toBe(0);
@@ -475,6 +489,44 @@ describe('workspace-config unit and CLI tests', () => {
       expect(parsedStdout.workflow).toBe(DEFAULT_WORKFLOW);
       expect(parsedStdout.delivery_attempts_max).toBe(DEFAULT_DELIVERY_ATTEMPTS_MAX);
       expect(parsedStdout.replans_max).toBe(DEFAULT_REPLANS_MAX);
+      expect(parsedStdout).not.toHaveProperty('cleanable_ignored');
+    });
+
+    it('proposes standard Snakemake cleanup once and retains explicit settings when reinitialized', () => {
+      const { repoDir } = setupStandardRepo('cli-init-snakemake');
+      writeSnakemakeLayout(repoDir, './results/');
+
+      const { configPath, draft } = prepareWorkspaceConfigInitialization(repoDir);
+      expect(draft.cleanable_ignored).toEqual(['processed/*', 'results/*', 'logs/*']);
+      expect(fs.existsSync(configPath)).toBe(false);
+
+      const saved: Record<string, unknown> = {
+        ...draft,
+        worktree_container: '../existing-worktrees',
+        default_workflow: 'existing-workflow',
+        delivery_attempts_max: 7,
+        replans_max: 4,
+        shared_paths: ['.venv'],
+        cleanable_ignored: ['local/smoke', './processed/*'],
+        protected_ignored: ['results/published/figure.svg'],
+        project_note: 'keep',
+      };
+      delete saved.workflow;
+      atomicWriteJson(configPath, saved);
+
+      const review = prepareSnakemakeCleanup(repoDir, saved);
+      expect(review.addedCleanupRules).toEqual(['results/*', 'logs/*']);
+      expect(prepareSnakemakeCleanup(repoDir, review.draft).addedCleanupRules).toEqual([]);
+      expect(loadWorkspaceConfig({ repoDir })?.data).toEqual(saved);
+
+      const result = runCli(['init', '--repo-dir', repoDir, '--defaults', '--replans-max', '6']);
+      expect(result.status).toBe(0);
+      expect(loadWorkspaceConfig({ repoDir })?.data).toEqual({
+        ...saved,
+        workflow: 'existing-workflow',
+        replans_max: 6,
+        cleanable_ignored: ['local/smoke', './processed/*', 'results/*', 'logs/*'],
+      });
     });
 
     it('init with explicit arguments records custom configuration', () => {

@@ -88,6 +88,12 @@ records needed by the research; Snakemake rules produce the evidence they refere
   Sequential prefixes introduce brittle order-coupling, requiring cascading filesystem renames whenever intermediate steps are inserted or bifurcated.
   Let the workflow DAG orchestrate execution order, not filesystem naming.
 
+### Workspace cleanup
+
+For projects using the standard layout, [the workspace cleanup rules](references/workspace-cleanup.json) cover ignored contents of the three generated output roots in eligible task worktrees. The configuration draft detects `workflow/Snakefile` and the matching output directory settings in `config/config.yaml`. Run [workspace configuration review](../pc-workspace-config/SKILL.md#review-on-invocation) to approve the proposed rules. Custom roots require explicit user designation. Existing `protected_ignored` rules take precedence.
+
+Before deleting worktree outputs, verify durable copies of required deliverables and valuable reusable intermediates outside the task worktree. Record their locations and verification through [artifact handoff](../pc-workspace/references/environment.md#artifact-handoff).
+
 ## Quality Standards
 
 ### 1. Tiered Data Hygiene & Directive Contracts
@@ -145,7 +151,7 @@ When generating a new Snakemake workflow or expanding an existing one:
 2. **Establish Git Hygiene**: Read [gitignore.template](templates/gitignore.template) to create the project `.gitignore`. Ensure `.venv/`, `processed/`, `results/`, and `logs/` are gitignored while `pyproject.toml`, `uv.lock`, and `tests/` are tracked. Resolve the fixed research entry from `AGENTS.md`; use `/pc-research-state` to establish it when needed, keeping its whole workspace ignored at the designated research home.
 3. **Configure & Schema**:
    - Read [schema.json](templates/schema.json) as a reference to write `config/schema.json`.
-   - Write `config/config.yaml` with required paths and execution parameters matching the schema.
+   - Write `config/config.yaml` with required paths and execution parameters matching the schema. For each output directory key in the [workspace cleanup rules](references/workspace-cleanup.json), set the top-level value to its repository-root directory without `/*`.
    - Configure smoke inputs and output roots following the **Smoke Execution Contract**.
 4. **Author Modular Rules & Scripts**:
    - Read [rule.smk](templates/rule.smk) as a syntax reference for both `conda:` binary rules and `uv run` Python rules.

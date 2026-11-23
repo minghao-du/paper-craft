@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from 'node:util';
+import { isDeepStrictEqual, parseArgs } from 'node:util';
 import {
   loadWorkspaceConfig,
   validateWorkspaceConfig,
@@ -78,9 +78,15 @@ async function cmdInit(values: Record<string, unknown>, repoDir: string): Promis
   }
 
   let { draft } = preparation;
-  const { primaryCheckout, isFork } = preparation;
+  const { primaryCheckout, isFork, addedCleanupRules } = preparation;
 
-  if (process.stdin.isTTY && !isDefaults) {
+  if (addedCleanupRules.length && !process.stdin.isTTY && !isDefaults) {
+    process.stderr.write('Review the proposed Snakemake cleanup rules with pc-workspace-config or pass --defaults to accept them.\n');
+    return 1;
+  }
+
+  const isInteractive = process.stdin.isTTY && !isDefaults;
+  if (isInteractive) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     try {
       console.log('=== Paper-craft Workspace Configuration Wizard ===');
@@ -124,6 +130,13 @@ async function cmdInit(values: Record<string, unknown>, repoDir: string): Promis
         base_branch: baseBranch,
         worktree_container: worktreeContainer,
       };
+
+      if (addedCleanupRules.length) {
+        console.log('Ignored outputs matching these rules can be deleted during eligible worktree cleanup:');
+        for (const rule of addedCleanupRules) console.log(`  + ${rule}`);
+        const answer = (await rl.question('  Save configuration with these rules? [y/N] ')).trim();
+        if (!/^y(es)?$/i.test(answer)) return 1;
+      }
     } catch {
       process.stderr.write('\nConfiguration wizard aborted.\n');
       rl.close();
@@ -136,6 +149,12 @@ async function cmdInit(values: Record<string, unknown>, repoDir: string): Promis
   const force = Boolean(values.force || isDefaults || !process.stdin.isTTY);
 
   try {
+    if (isInteractive) {
+      const savedConfig = loadWorkspaceConfig({ repoDir: primaryCheckout })?.data ?? null;
+      if (!isDeepStrictEqual(savedConfig, preparation.savedConfig)) {
+        throw new Error('Workspace configuration changed during initialization. Reopen the draft for review.');
+      }
+    }
     const result = saveWorkspaceConfigInitialization({
       primaryCheckout,
       config: draft,

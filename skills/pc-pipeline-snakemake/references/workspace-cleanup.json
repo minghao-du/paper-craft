@@ -1,0 +1,5 @@
+{
+  "processed_dir": "processed/*",
+  "results_dir": "results/*",
+  "logs_dir": "logs/*"
+}

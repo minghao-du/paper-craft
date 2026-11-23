@@ -9,6 +9,7 @@ import {
   atomicWriteJson,
   findPrimaryCheckout,
   getConfigFilePath,
+  loadWorkspaceConfig,
   parseRepoFromUrl,
   probeDefaultBranch,
   probeGitRemotes,
@@ -17,6 +18,7 @@ import {
   validateWorkspaceConfig,
   type ResolvedWorkspaceConfig,
 } from './config.js';
+import { prepareSnakemakeCleanup } from './snakemake-cleanup.js';
 
 export interface WorkspaceConfigDraft {
   schema_version: string;
@@ -64,6 +66,8 @@ export interface WorkspaceConfigInitPreparation {
   remotes: string[];
   isFork: boolean;
   draft: WorkspaceConfigDraft;
+  addedCleanupRules: string[];
+  savedConfig: Record<string, unknown> | null;
 }
 
 export interface SaveWorkspaceConfigInitializationOptions {
@@ -89,7 +93,7 @@ function getOverride<T = unknown>(overrides: Record<string, unknown>, ...keys: s
 }
 
 /**
- * Derives initial workspace configuration and context from git facts and overrides.
+ * Prepares a workspace configuration draft from saved values, project facts, and overrides.
  * Pure business logic: does not write files or interact with terminal I/O.
  */
 export function prepareWorkspaceConfigInitialization(
@@ -98,12 +102,16 @@ export function prepareWorkspaceConfigInitialization(
 ): WorkspaceConfigInitPreparation {
   const primaryCheckout = findPrimaryCheckout(repoDir);
   const configPath = getConfigFilePath(primaryCheckout);
-  const configExists = fs.existsSync(configPath);
+  const savedConfig = fs.existsSync(configPath)
+    ? loadWorkspaceConfig({ repoDir: primaryCheckout })?.data ?? null
+    : null;
+  const setting = <T>(field: string, ...aliases: string[]): T | undefined =>
+    getOverride<T>(overrides, field, ...aliases) ?? getOverride<T>(savedConfig ?? {}, field);
 
   const remotes = probeGitRemotes(primaryCheckout);
 
   let baseRemote: string;
-  const rawBaseRemote = getOverride<string>(overrides, 'base_remote', 'base-remote', 'baseRemote');
+  const rawBaseRemote = setting<string>('base_remote', 'base-remote', 'baseRemote');
   if (rawBaseRemote !== undefined && String(rawBaseRemote).trim()) {
     baseRemote = String(rawBaseRemote).trim();
     if (remotes.length && !remotes.includes(baseRemote)) {
@@ -130,7 +138,7 @@ export function prepareWorkspaceConfigInitialization(
   }
 
   let pushRemote: string;
-  const rawPushRemote = getOverride<string>(overrides, 'push_remote', 'push-remote', 'pushRemote');
+  const rawPushRemote = setting<string>('push_remote', 'push-remote', 'pushRemote');
   if (rawPushRemote !== undefined && String(rawPushRemote).trim()) {
     pushRemote = String(rawPushRemote).trim();
     if (remotes.length && !remotes.includes(pushRemote)) {
@@ -147,7 +155,7 @@ export function prepareWorkspaceConfigInitialization(
   }
 
   let deliveryTarget: string;
-  const rawDeliveryTarget = getOverride<string>(overrides, 'delivery_target', 'delivery-target', 'deliveryTarget');
+  const rawDeliveryTarget = setting<string>('delivery_target', 'delivery-target', 'deliveryTarget');
   if (rawDeliveryTarget !== undefined && String(rawDeliveryTarget).trim()) {
     deliveryTarget = String(rawDeliveryTarget).trim();
   } else {
@@ -171,7 +179,7 @@ export function prepareWorkspaceConfigInitialization(
   }
 
   let baseBranch: string;
-  const rawBaseBranch = getOverride<string>(overrides, 'base_branch', 'base-branch', 'baseBranch');
+  const rawBaseBranch = setting<string>('base_branch', 'base-branch', 'baseBranch');
   if (rawBaseBranch !== undefined && String(rawBaseBranch).trim()) {
     baseBranch = String(rawBaseBranch).trim();
   } else {
@@ -184,8 +192,7 @@ export function prepareWorkspaceConfigInitialization(
     baseBranch = probedBranch;
   }
 
-  const rawWorktreeContainer = getOverride<string>(
-    overrides,
+  const rawWorktreeContainer = setting<string>(
     'worktree_container',
     'worktree-container',
     'worktreeContainer',
@@ -195,15 +202,14 @@ export function prepareWorkspaceConfigInitialization(
       ? String(rawWorktreeContainer).trim()
       : DEFAULT_WORKTREE_CONTAINER;
 
-  const rawWorkflow = getOverride<string>(overrides, 'workflow');
+  const rawWorkflow = setting<string>('workflow') ?? getOverride<string>(savedConfig ?? {}, 'default_workflow');
   const workflow =
     rawWorkflow !== undefined && String(rawWorkflow).trim()
       ? String(rawWorkflow).trim()
       : DEFAULT_WORKFLOW;
 
   let deliveryAttemptsMax = DEFAULT_DELIVERY_ATTEMPTS_MAX;
-  const rawAttempts = getOverride<number | string>(
-    overrides,
+  const rawAttempts = setting<number | string>(
     'delivery_attempts_max',
     'delivery-attempts-max',
     'deliveryAttemptsMax',
@@ -216,8 +222,7 @@ export function prepareWorkspaceConfigInitialization(
   }
 
   let replansMax = DEFAULT_REPLANS_MAX;
-  const rawReplans = getOverride<number | string>(
-    overrides,
+  const rawReplans = setting<number | string>(
     'replans_max',
     'replans-max',
     'replansMax',
@@ -232,6 +237,7 @@ export function prepareWorkspaceConfigInitialization(
   const isFork = baseRemote !== pushRemote;
 
   const draft: WorkspaceConfigDraft = {
+    ...savedConfig,
     schema_version: SCHEMA_VERSION,
     delivery_target: deliveryTarget,
     base_remote: baseRemote,
@@ -246,10 +252,11 @@ export function prepareWorkspaceConfigInitialization(
   return {
     primaryCheckout,
     configPath,
-    configExists,
+    configExists: savedConfig !== null,
+    savedConfig,
     remotes,
     isFork,
-    draft,
+    ...prepareSnakemakeCleanup(primaryCheckout, draft),
   };
 }
 
