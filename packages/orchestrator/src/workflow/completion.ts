@@ -310,7 +310,7 @@ export function evaluateCompletion(params: {
 
         if (!latestCleanup) {
           blockingReasons.push(
-            "Cannot finish workflow: delivery complete / cleanup incomplete.",
+            "Cannot finish workflow: successful cleanup after the latest issue-tree finalization is missing.",
           );
         } else {
           const result = (latestCleanup.result ?? {}) as Record<
