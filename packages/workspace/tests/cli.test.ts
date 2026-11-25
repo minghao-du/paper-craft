@@ -115,6 +115,52 @@ describe('workspace CLI strict argument parsing', () => {
     return git('rev-parse', 'HEAD');
   }
 
+  it.each(['source', 'target'])('reports every dirty path in the %s checkout', async (checkout) => {
+    const repoDir = path.join(tmp, 'repo');
+    const sha = setupTempGitRepo(repoDir);
+    const wtDir = path.join(tmp, 'verify-wt');
+    const receiptPath = path.join(tmp, 'blocked.md');
+    if (checkout === 'target') {
+      const result = runGit(repoDir, 'worktree', 'add', '--detach', wtDir, sha);
+      expect(result.code, result.stderr).toBe(0);
+    }
+    const dirtyDir = checkout === 'source' ? repoDir : wtDir;
+    fs.appendFileSync(path.join(dirtyDir, 'README.md'), 'Unstaged edit\n');
+    fs.writeFileSync(path.join(dirtyDir, 'staged.md'), 'Staged addition\n');
+    const stage = runGit(dirtyDir, 'add', 'staged.md');
+    expect(stage.code, stage.stderr).toBe(0);
+    const untracked = ['draft 1.md', 'draft 2.md', 'draft 3.md', 'draft 4.md', 'draft 5.md'];
+    for (const name of untracked) {
+      fs.writeFileSync(path.join(dirtyDir, name), 'Untracked draft\n');
+    }
+
+    const code = await main([
+      'prepare', '--repo-dir', repoDir, '--worktree', wtDir,
+      '--commit', sha, '--receipt-path', receiptPath,
+    ]);
+
+    expect(code).toBe(1);
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const report = JSON.parse(String(logSpy.mock.calls[0][0]));
+    expect(report.execution_status).toBe('blocked');
+    expect(report.result).toMatchObject({
+      stage: 'workspace_prepare',
+      code: 'UNCLEAN_CHECKOUT',
+    });
+    expect(report.result.details).toEqual({
+      directory: resolvePath(dirtyDir),
+      status: [' M README.md', 'A  staged.md', ...untracked.map((name) => `?? "${name}"`)].join('\n'),
+    });
+
+    const receipt = fs.readFileSync(receiptPath, 'utf8');
+    const embeddedReport = receipt.match(/## Compact Report\n\n```json\n([\s\S]*?)\n```/);
+    expect(embeddedReport).not.toBeNull();
+    expect(JSON.parse(embeddedReport![1])).toEqual(report);
+    for (const name of ['README.md', 'staged.md', ...untracked]) {
+      expect(receipt.split(name)).toHaveLength(2);
+    }
+  });
+
   it('prepares a detached worktree and cleans it on the first pass while retaining candidates with ownership or consumer gaps', async () => {
     const repoDir = path.join(tmp, 'repo');
     const sha = setupTempGitRepo(repoDir);

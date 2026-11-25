@@ -40,10 +40,7 @@ export function isParentDir(parent: string, child: string): boolean {
   return !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-/**
- * Execute a git command and return status code, trimmed stdout and stderr.
- */
-export function runGit(
+function runGitWithRawStdout(
   directory: string,
   ...args: string[]
 ): { code: number; stdout: string; stderr: string } {
@@ -53,9 +50,20 @@ export function runGit(
   });
   return {
     code: result.status ?? 1,
-    stdout: result.stdout?.trim() ?? '',
+    stdout: result.stdout ?? '',
     stderr: result.stderr?.trim() ?? String(result.error ?? ''),
   };
+}
+
+/**
+ * Execute a git command and return status code, trimmed stdout and stderr.
+ */
+export function runGit(
+  directory: string,
+  ...args: string[]
+): { code: number; stdout: string; stderr: string } {
+  const result = runGitWithRawStdout(directory, ...args);
+  return { ...result, stdout: result.stdout.trim() };
 }
 
 /**
@@ -80,18 +88,22 @@ export function git(directory: string, ...args: string[]): string {
  * Verify repository is clean. Throws WorkspaceError('UNCLEAN_CHECKOUT') if untracked or modified files exist.
  */
 export function requireClean(directory: string): void {
-  const { code, stdout, stderr } = runGit(directory, 'status', '--porcelain', '--untracked-files=all');
+  const { code, stdout, stderr } = runGitWithRawStdout(
+    directory, 'status', '--porcelain', '--untracked-files=all',
+  );
   if (code !== 0) {
-    throw new WorkspaceError('COMMAND_FAILED', stderr || stdout || 'git status failed', {
+    throw new WorkspaceError('COMMAND_FAILED', stderr || stdout.trim() || 'git status failed', {
       directory,
       code,
     });
   }
-  if (stdout.length > 0) {
+  // Preserve both columns of every porcelain record, including a blank index status.
+  const status = stdout.replace(/\r?\n$/, '');
+  if (status.length > 0) {
     throw new WorkspaceError(
       'UNCLEAN_CHECKOUT',
       `Uncommitted changes in ${directory}. Preserve them and resolve before retrying.`,
-      { directory, status: stdout },
+      { directory, status },
     );
   }
 }

@@ -25,6 +25,7 @@ import {
   resolvePrepareIssueIds,
   WorkspaceTaskInput,
 } from './task-io.js';
+import { WorkspaceError } from './types.js';
 
 interface CliArgs {
   subcommand?: 'prepare' | 'cleanup';
@@ -301,13 +302,18 @@ async function runPrepare(
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`Worktree preparation blocked. ${errMsg}`);
     const summary = `Worktree preparation blocked: ${errMsg}`;
+    const result: Record<string, unknown> = { error: errMsg, stage: 'workspace_prepare' };
+    if (err instanceof WorkspaceError && err.code === 'UNCLEAN_CHECKOUT') {
+      const { directory, status } = err.details ?? {};
+      if (typeof directory === 'string' && typeof status === 'string') {
+        result.code = err.code;
+        result.details = { directory, status };
+      }
+    }
 
     return deliverCommandReport({
       status: 'blocked',
-      result: {
-        error: errMsg,
-        stage: 'workspace_prepare',
-      },
+      result,
       summary,
       receiptPath,
       outputFormat,
