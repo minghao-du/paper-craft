@@ -337,21 +337,37 @@ function verifyOwnershipAndCompletion(
   const ownership = (candidate.ownershipEvidence ?? candRecord.ownership_evidence) as
     | OwnershipEvidence
     | undefined;
+  const ownershipRoot = ownership?.rootIssueId ?? ownership?.root_issue_id;
+  const matchesRoot = ownershipRoot !== undefined && String(ownershipRoot) === rootIssueId;
 
-  const historical =
-    Boolean(
-      ownership &&
-        typeof ownership === 'object' &&
-        ownership.issue &&
-        ownership.source &&
-        String(ownership.rootIssueId ?? ownership.root_issue_id) === String(rootIssueId),
-    );
-
-  if (!created && !historical) {
+  if (candidate.kind === 'detached') {
+    const evidenceFields = {
+      root_issue_id: ownershipRoot,
+      issue: ownership?.issue,
+      source: ownership?.source,
+    };
+    const missingFields = Object.entries(evidenceFields)
+      .filter(([, value]) => !value || !String(value).trim())
+      .map(([field]) => field);
+    if (missingFields.length > 0) {
+      return {
+        valid: false,
+        reasonCode: 'OWNERSHIP_UNVERIFIED',
+        reason: `Detached worktree ownership_evidence is missing ${missingFields.join(', ')}. Supply evidence from a receipt establishing ownership of this worktree.`,
+      };
+    }
+    if (!matchesRoot) {
+      return {
+        valid: false,
+        reasonCode: 'OWNERSHIP_UNVERIFIED',
+        reason: `Detached worktree ownership_evidence identifies root_issue_id ${ownershipRoot}. Confirm ownership under cleanup root ${rootIssueId}.`,
+      };
+    }
+  } else if (!created && !(ownership?.issue && ownership?.source && matchesRoot)) {
     return {
       valid: false,
       reasonCode: 'OWNERSHIP_UNVERIFIED',
-      reason: 'Creation ownership or issue-tree evidence and completed consumers must be confirmed.',
+      reason: 'Creation ownership or issue-tree evidence must be confirmed.',
     };
   }
 
@@ -362,21 +378,19 @@ function verifyOwnershipAndCompletion(
     return {
       valid: false,
       reasonCode: 'CONSUMERS_NOT_FINISHED',
-      reason: 'Creation ownership or issue-tree evidence and completed consumers must be confirmed.',
+      reason: 'Confirm that all worktree consumers have finished before setting consumers_finished to true.',
     };
   }
 
-  const isDetached = candidate.kind === 'detached';
-
-  if (isDetached) {
+  if (candidate.kind === 'detached') {
     const verificationCompleted =
-      (candidate as DetachedCleanupCandidate).verificationCompleted === true ||
+      candidate.verificationCompleted === true ||
       candRecord.verification_completed === true;
     if (!verificationCompleted) {
       return {
         valid: false,
         reasonCode: 'VERIFICATION_NOT_COMPLETED',
-        reason: 'Detached worktree requires completed verification evidence.',
+        reason: 'Confirm successful verification for this detached worktree before setting verification_completed to true.',
       };
     }
   }

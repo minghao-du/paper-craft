@@ -15,6 +15,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  completeDispatch,
+  dispatchTask,
+  initWorkflow,
+  inspectState,
+  loadEnvelope,
+} from '../src/lifecycle/index.js';
+import {
   DEFAULT_RECEIPT_TEMPLATE,
   evaluateDispatch,
   loadAndValidateWorkflow,
@@ -39,10 +46,8 @@ import type { DeliveryState, WorkflowDefinition } from '../src/workflow/types.js
 import {
   createTestDir,
   REPO_ROOT,
-  runEnvelopeCli,
   runLifecycleKernelCli,
   runDispatchTaskCli,
-  type TaskInputEnvelope,
 } from './helpers.js';
 
 export interface ParsedWorkflowStage {
@@ -128,16 +133,18 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
     const stages = parseWorkflowStages(defaultWorkflowJsonPath);
     expect(stages.length).toBeGreaterThan(0);
 
-    for (let i = 0; i < stages.length; i++) {
-      const stage = stages[i];
-      const stageRoot = path.join(testEnv.dir, `stage-${i}`);
-      runLifecycleKernelCli([
-        'init',
-        '--receipt-root', stageRoot,
-        '--root-issue', '100',
-      ]);
+    for (const stage of stages) {
+      const receiptRoot = path.join(testEnv.dir, stage.id);
+      initWorkflow({
+        receipt_root: receiptRoot,
+        root_issue: '100',
+        repo_dir: REPO_ROOT,
+        workflow: defaultWorkflowJsonPath,
+      });
 
-      const res = runDispatchTaskCli(stageRoot, {
+      const dispatch = dispatchTask({
+        receipt_root: receiptRoot,
+        request_id: stage.id,
         stage: stage.id,
         objective: `Execute stage ${stage.id}`,
         parameters: stage.replan
@@ -151,89 +158,67 @@ describe('Workflow Stage-Provider Decoupling & Definition (W1.1-W1.6)', () => {
         workdir: testEnv.dir,
       });
 
-      expect(res.status).toBe(0);
-      const prepData = JSON.parse(res.stdout);
-      expect(fs.existsSync(prepData.envelope_path)).toBe(true);
-
-      const valRes = runEnvelopeCli(['validate', prepData.envelope_path]);
-      expect(valRes.status).toBe(0);
-      expect(valRes.stdout).toContain('Valid envelope');
+      const envelope = loadEnvelope(dispatch.envelope_path);
+      expect(envelope.task.logical_stage).toBe(stage.id);
+      expect(envelope.provider).toEqual({
+        type: stage.providerType,
+        target: stage.providerTarget,
+        args: stage.providerArgs,
+      });
     }
   }, 60000);
 
   it('W1.4: provider target substitution preserves state machine and contract invariance', () => {
-    // Stage: workspace_prepare
-    // Target A: pc-workspace
-    const rootSkillA = path.join(testEnv.dir, 'skill-run-a');
-    runLifecycleKernelCli(['init', '--receipt-root', rootSkillA, '--root-issue', '200']);
-    const prepSkillA = runDispatchTaskCli(rootSkillA, {
-      stage: 'workspace_prepare',
-      objective: 'Prepare workspace via pc-workspace',
-      provider: {
-        type: 'skill',
-        target: 'pc-workspace',
-      },
-      workdir: testEnv.dir,
-    });
-    const envSkillAPath = JSON.parse(prepSkillA.stdout).envelope_path;
+    function completeWorkspacePreparation(providerTarget: string) {
+      const receiptRoot = path.join(testEnv.dir, providerTarget);
+      initWorkflow({
+        receipt_root: receiptRoot,
+        root_issue: '200',
+        repo_dir: REPO_ROOT,
+        workflow: defaultWorkflowJsonPath,
+      });
+      const dispatch = dispatchTask({
+        receipt_root: receiptRoot,
+        request_id: 'prepare-workspace',
+        stage: 'workspace_prepare',
+        objective: 'Prepare workspace for issue 200',
+        provider: { type: 'skill', target: providerTarget },
+        workdir: testEnv.dir,
+      });
+      const envelope = loadEnvelope(dispatch.envelope_path);
+      expect(envelope.provider.target).toBe(providerTarget);
+      expect(envelope.contract.receipt_path).toBe(dispatch.receipt_path);
 
-    // Target B: pc-issue-plan
-    const rootSkillB = path.join(testEnv.dir, 'skill-run-b');
-    runLifecycleKernelCli(['init', '--receipt-root', rootSkillB, '--root-issue', '200']);
-    const prepSkillB = runDispatchTaskCli(rootSkillB, {
-      stage: 'workspace_prepare',
-      objective: 'Prepare workspace via pc-issue-plan target',
-      provider: {
-        type: 'skill',
-        target: 'pc-issue-plan',
-      },
-      workdir: testEnv.dir,
-    });
-    const envSkillBPath = JSON.parse(prepSkillB.stdout).envelope_path;
+      fs.writeFileSync(dispatch.receipt_path, '# Receipt\nOutcome: prepared');
+      completeDispatch({
+        receipt_root: receiptRoot,
+        dispatch_id: dispatch.dispatch_id,
+        report: {
+          execution_status: 'succeeded',
+          result: { outcome: 'prepared' },
+          receipt_path: dispatch.receipt_path,
+          summary: 'Workspace prepared',
+        },
+      });
 
-    const envA: TaskInputEnvelope = JSON.parse(fs.readFileSync(envSkillAPath, 'utf-8'));
-    const envB: TaskInputEnvelope = JSON.parse(fs.readFileSync(envSkillBPath, 'utf-8'));
+      const state = inspectState({ receipt_root: receiptRoot });
+      expect(state).toMatchObject({
+        current_stage: 'workspace_prepare',
+        stage_status: 'succeeded',
+        completed_stages_count: 1,
+        active_dispatch: null,
+      });
+      return { envelope, state };
+    }
 
-    // Structural invariance
-    expect(envA.schema_version).toBe(envB.schema_version);
-    expect(envA.task.logical_stage).toBe(envB.task.logical_stage);
-    expect(envA.task.step_index).toBe(envB.task.step_index);
-    expect(envA.environment.working_directory).toBe(envB.environment.working_directory);
-    expect(envA.contract.receipt_template).toBe(envB.contract.receipt_template);
+    const original = completeWorkspacePreparation('pc-workspace');
+    const substituted = completeWorkspacePreparation('pc-issue-plan');
 
-    // Lifecycle kernel execution verification
-    runLifecycleKernelCli([
-      'init',
-      '--receipt-root', testEnv.dir,
-      '--root-issue', '200',
-    ]);
-    const prepRes = runDispatchTaskCli(testEnv.dir, {
-      stage: 'workspace_prepare',
-      objective: 'Prepare workspace for issue 200',
-      provider: {
-        type: 'skill',
-        target: 'pc-workspace',
-      },
-      workdir: testEnv.dir,
-    });
-    const prepData = JSON.parse(prepRes.stdout);
-    fs.writeFileSync(prepData.receipt_path, '# Receipt\nOutcome: prepared');
-    const compRes = runLifecycleKernelCli([
-      'complete',
-      '--receipt-root', testEnv.dir,
-      '--dispatch-id', prepData.dispatch_id,
-      '--report', JSON.stringify({
-        execution_status: 'succeeded',
-        result: { outcome: 'prepared' },
-        receipt_path: prepData.receipt_path,
-        summary: 'Workspace prepared',
-      }),
-    ]);
-    expect(compRes.status).toBe(0);
-
-    const stateShow = runLifecycleKernelCli(['inspect', '--receipt-root', testEnv.dir, '--json']);
-    const stateObj = JSON.parse(stateShow.stdout);
-    expect(stateObj.completed_stages_count).toBe(1);
+    expect(substituted.envelope.schema_version).toBe(original.envelope.schema_version);
+    expect(substituted.envelope.task).toEqual(original.envelope.task);
+    expect(substituted.envelope.environment).toEqual(original.envelope.environment);
+    expect(substituted.envelope.contract.receipt_template).toBe(original.envelope.contract.receipt_template);
+    expect(substituted.state).toEqual({ ...original.state, last_updated: expect.any(String) });
   }, 20000);
 
   it('W1.5: rejects malformed provider definitions with schema validation error', () => {

@@ -149,10 +149,13 @@ node --import <paper-craft-root>/node_modules/tsx/dist/loader.mjs <paper-craft-r
 
 Return the CLI's stdout compact JSON verbatim once it emits a report referencing `receipt_path`; preserve the CLI-written Markdown receipt and JSON `summary` verbatim without translating, enriching, or running extra Git/filesystem verification commands.
 
-Before execution, reconcile creation receipts with final delivery/verification receipts and durable artifact locations. Confirm all consumers have finished. Supply the reconciled issue-tree inventory in `inputs.parameters.candidates`, including historical resources with verified ownership. For historical candidates, supply `ownership_evidence: { root_issue_id, issue, source }`, where `source` points to the matching PR or durable delivery receipt; verify that issue belongs to the root tree. Use `worktree: null` for branches without worktrees. Supply ambiguous inventory items in `inputs.parameters.unresolved`; never silently omit them. Preserve default/base branches and active resources. Each candidate uses the following fields from its preparation result, updated with its final delivered HEAD and PR identity.
+Reconcile creation, delivery, and verification receipts with live registrations and durable artifact locations. Supply the evidenced issue-tree inventory in `inputs.parameters.candidates`. Set `consumers_finished: true` only after all consumers of that resource have finished. Put resources specifically linked to the issue tree with missing or conflicting ownership in `inputs.parameters.unresolved`, with the source and reason. Preserve default/base branches and active resources. Keep receipts and preserved artifacts outside disposable candidates.
+
+For task branches, use the final delivered HEAD and PR identity. Omit `worktree` for a branch without a worktree. For a historical task branch, supply `ownership_evidence: { root_issue_id, issue, source }` with an in-scope issue and the matching PR or durable delivery receipt as its source.
 
 ```json
 {
+  "kind": "task_branch",
   "worktree": "/absolute/path/to/task-worktree",
   "created": true,
   "consumers_finished": true,
@@ -166,7 +169,22 @@ Before execution, reconcile creation receipts with final delivery/verification r
 }
 ```
 
-For detached verification candidates, use `branch: null` and `verification_completed: true` after checking the verification receipt. Receipts and preserved artifacts must reside outside disposable candidates.
+For every detached verification worktree, including one created in the current run, omit `branch`, `created`, and `pr`. Verify that `root_issue_id` matches the cleanup root and that `issue` belongs to that tree. Use a successful `workspace_prepare` receipt recording creation, or a corresponding acceptance receipt that establishes ownership, as `source`. For a reused worktree, trace its ownership to one of these sources. Check that the source ties the in-scope issue to this repository, absolute worktree path, and pinned full SHA. Set `verification_completed: true` only after checking successful verification for that worktree and SHA.
+
+```json
+{
+  "kind": "detached",
+  "worktree": "/absolute/path/to/verification-worktree",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "ownership_evidence": {
+    "root_issue_id": 12,
+    "issue": 12,
+    "source": "/absolute/path/to/workspace_prepare-receipt.md"
+  },
+  "consumers_finished": true,
+  "verification_completed": true
+}
+```
 
 The kernel checks registered path, repository, branch and final HEAD, completed consumers, worktree locks, and tracked/untracked/ignored material. Once all safety and merge/verification checks pass, it unlinks managed `shared_paths` symlinks (without touching primary-checkout targets) and removes built-in regenerable runtime caches or configured `cleanable_ignored` entries (respecting `protected_ignored`), while retaining worktrees that contain any unapproved or protected ignored files. Feature cleanup requires live PR state `MERGED`, matching head branch/SHA and base, plus the PR merge commit in the fetched delivery base. This supports squash merges. Both remote identities must match the PR base and head repositories, including fork delivery.
 

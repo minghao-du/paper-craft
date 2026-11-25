@@ -190,8 +190,7 @@ After required delivery, acceptance, and research recording succeed, execute the
 ### Cleanup Resolution
 - **Skill Provider**: `provider: { type: "skill", target: "pc-workspace", args: ["--cleanup"] }`
 
-The Task Input Envelope supplies `inputs.parameters.candidates` using the [workspace cleanup contract](../../pc-workspace/SKILL.md#5-cleanup-protocol), reconciled from the issue-tree inventory and current or historical delivery/verification receipts, durable artifact locations, and completed-consumer status.
-Cleanup includes merged local and remote task branches whose refs still match their delivered SHAs. Historical resources require explicit issue-tree ownership evidence. Supply unresolved inventory items as `inputs.parameters.unresolved`; they block successful cleanup.
+The Task Input Envelope forwards `inputs.parameters.candidates` and `inputs.parameters.unresolved` from tree finalization under the [workspace cleanup contract](../../pc-workspace/SKILL.md#5-cleanup-protocol). Unresolved inventory items keep cleanup incomplete.
 
 1. If a stage other than cleanup completed after the latest successful tree `issue_finalize`, repeat tree finalization before obtaining new cleanup evidence. For the first cleanup after each successful tree finalization, including a repeat, dispatch `pc-workspace` with the full candidate inventory from that finalization, including already-absent candidates, so the receipt records their absence. Apply the existing cleanup policy to every candidate.
 2. Run `complete` with the verbatim `pc-workspace` compact report to preserve all removed and retained path and branch evidence, including retention reasons. Check `execution_status` before interpreting `result`. Route `blocked` or `failed` to [Halt & Escalation](../SKILL.md#halt--escalation-protocol). Failed or interrupted workflows retain their environments for diagnosis.

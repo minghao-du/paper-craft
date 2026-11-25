@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main } from '../src/cli.js';
-import { resolvePath } from '../src/git.js';
+import { resolvePath, runGit } from '../src/git.js';
 
 // Failure mode: lenient parsing (parseInt('12abc'), ignored unknown flags, last-wins
 // duplicates) lets malformed invocations reach Git/receipt side effects.
@@ -115,7 +115,7 @@ describe('workspace CLI strict argument parsing', () => {
     return git('rev-parse', 'HEAD');
   }
 
-  it('prepares detached orchestrator envelope end-to-end and retains issue audit metadata', async () => {
+  it('prepares a detached worktree and cleans it on the first pass while retaining candidates with ownership or consumer gaps', async () => {
     const repoDir = path.join(tmp, 'repo');
     const sha = setupTempGitRepo(repoDir);
     const wtDir = path.join(tmp, 'verify-wt');
@@ -169,6 +169,83 @@ describe('workspace CLI strict argument parsing', () => {
     expect(receipt).toContain('- root_issue_id: 150');
     expect(receipt).toContain('- current_issue_id: 150');
     expect(receipt).toContain('- Worktree ownership: created fresh detached worktree.');
+
+    const candidate = {
+      kind: 'detached',
+      commit: sha,
+      consumers_finished: true,
+      verification_completed: true,
+    };
+    const ownership = { root_issue_id: 150, issue: 150, source: receiptPath };
+    const preparedWorktree = resolvePath(wtDir);
+    const missingEvidence = path.join(tmp, 'missing-ownership');
+    const mismatchedRoot = path.join(tmp, 'wrong-root');
+    const activeConsumers = path.join(tmp, 'active-consumers');
+    for (const worktree of [missingEvidence, mismatchedRoot, activeConsumers]) {
+      const result = runGit(repoDir, 'worktree', 'add', '--detach', worktree, sha);
+      expect(result.code, result.stderr).toBe(0);
+    }
+
+    const cleanupInputPath = path.join(tmp, '06-input.json');
+    const cleanupReceiptPath = path.join(tmp, '06-receipt.md');
+    fs.writeFileSync(cleanupInputPath, JSON.stringify({
+      ...envelope,
+      task: { ...envelope.task, logical_stage: 'workspace_cleanup', step_index: 6 },
+      environment: { working_directory: repoDir },
+      inputs: {
+        objective: 'Clean reconciled detached verification worktrees',
+        parameters: {
+          candidates: [
+            { ...candidate, worktree: missingEvidence },
+            {
+              ...candidate,
+              worktree: mismatchedRoot,
+              ownership_evidence: { ...ownership, root_issue_id: 149 },
+            },
+            { ...candidate, worktree: preparedWorktree, ownership_evidence: ownership },
+            {
+              ...candidate,
+              worktree: activeConsumers,
+              ownership_evidence: { ...ownership, source: 'active-consumers-receipt.md' },
+              consumers_finished: false,
+            },
+          ],
+        },
+      },
+      contract: { receipt_path: cleanupReceiptPath },
+    }));
+
+    logSpy.mockClear();
+    const cleanupCode = await main(['cleanup', '--input-envelope', cleanupInputPath]);
+    expect(cleanupCode, errSpy.mock.calls.flat().join('\n')).toBe(0);
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const cleanupReport = JSON.parse(String(logSpy.mock.calls[0][0]));
+    expect(cleanupReport.execution_status).toBe('succeeded');
+    expect(cleanupReport.result).toMatchObject({
+      outcome: 'incomplete',
+      removed_paths: [preparedWorktree],
+      retained_paths: [
+        {
+          path: missingEvidence,
+          reason: expect.stringMatching(/Detached worktree ownership_evidence is missing root_issue_id, issue, source/),
+        },
+        {
+          path: mismatchedRoot,
+          reason: expect.stringMatching(/root_issue_id 149.*cleanup root 150/),
+        },
+        {
+          path: activeConsumers,
+          reason: expect.stringMatching(/all worktree consumers.*consumers_finished/),
+        },
+      ],
+      removed_branches: [],
+      retained_branches: [],
+    });
+    expect(fs.existsSync(wtDir)).toBe(false);
+    for (const worktree of [missingEvidence, mismatchedRoot, activeConsumers]) {
+      expect(fs.existsSync(worktree)).toBe(true);
+    }
+    expect(fs.readFileSync(cleanupReceiptPath, 'utf8')).toContain('cleanup root 150');
   });
 
   it('preserves envelope and request artifacts in blocked receipt when execution fails', async () => {

@@ -283,9 +283,9 @@ Organize touched pipeline files under scientific invariance with a human steerin
   ```
 - **Objective**: Execute the acceptance-backed closure task in its [closure contract](../../pc-issue-verify/references/closure.md).
 - **Environment**: Retained persistent checkout, with durable acceptance and research receipts.
-- **Inputs**: Root issue, current closure target, accepted integrated SHA, acceptance receipts and historical delivery records. For root finalization, include completed research recording.
+- **Inputs**: Root issue, current closure target, accepted integrated SHA, workspace preparation, acceptance and delivery receipts, and historical records. For root finalization, include completed research recording.
 - **Gate**: Unified closure reconciliation happens after integrated acceptance and research recording. Child issues do not run independent finalize stages during Stage 2; their closed states and the parent tasklist are verified together during root finalization.
-- **Result**: `outcome: finalized`, `root_issue_id`, `scope: tree` for final root reconciliation, nonempty `issues` containing repository, number, observed `state: CLOSED` and acceptance receipt, plus reconciled cleanup candidates and unresolved ownership items. Missing evidence or unresolved issue state blocks finalization.
+- **Result**: `outcome: finalized`, `root_issue_id`, `scope: tree` for final root reconciliation, nonempty `issues` containing repository, number, observed `state: CLOSED` and acceptance receipt, plus reconciled cleanup candidates and unresolved ownership items. Missing acceptance evidence or unresolved issue state blocks finalization.
 - **Routing**: Root finalization proceeds to cleanup. Retry only unfinished closure/reconciliation operations, reading live states first.
 
 ---
@@ -307,7 +307,7 @@ Organize touched pipeline files under scientific invariance with a human steerin
   }
   ```
 - **Objective**: Remove eligible worktrees and merged local and remote task branches belonging to the root issue tree, including evidenced historical resources; retain changed or still-used resources with reasons.
-- **Inputs**: Supply `inputs.parameters.candidates` using the cleanup candidate contract in `pc-workspace` §5. Reconcile the finalization inventory and historical ownership evidence with final SHAs, PR identities, delivery/verification receipts, durable artifact locations, and completed-consumer status. Carry the recorded delivery target, base remote, and push remote for each branch, and forward unresolved inventory items in `inputs.parameters.unresolved`.
+- **Inputs**: Forward the reconciled finalization inventory as `inputs.parameters.candidates` and `inputs.parameters.unresolved` using the [workspace cleanup contract](../../pc-workspace/SKILL.md#5-cleanup-protocol). Confirm durable artifact locations and completed-consumer status before dispatch.
 - **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { outcome: "cleaned" | "incomplete", removed_paths: [...], retained_paths: [...], removed_branches: [...], retained_branches: [...] }, receipt_path, summary }`.
 - **Routing**:
   - Finish only when `result.outcome` is `cleaned` and both retained lists are empty, with a preceding successful root `issue_finalize` receipt. Otherwise report delivery complete / cleanup incomplete and retry outstanding resources after rechecking live state. Preserve closed issues and accepted delivery; do not repeat implementation or merges.
