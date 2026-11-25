@@ -2,13 +2,13 @@
 
 ## Execution boundary
 
-Run all tests and business code through the configured remote routes below, including scientific computations, verification scripts that import project modules, and minimal reproductions.
-This remote execution boundary applies in every phase, including check and review, and to every subagent, regardless of task size or duration.
-Edit and inspect files locally; lint, typecheck, and build may run locally only when they execute neither tests nor business code.
-Before running a command, inspect its entry point and hooks to determine what it actually executes; route commands that execute tests or business code remotely regardless of their name.
-If a route is unconfigured, its skill or required environment is missing, or its backend is inaccessible, stop the affected execution and report what is needed; never fall back to local execution.
-Local execution of tests or business code requires explicit user authorization for that scope or an explicit exception recorded in this policy; other skills' check instructions do not grant an exception.
-Use the configured route until the user changes it; GPU requirements must not silently fall back to CPU or a local accelerator.
+Use the configured remote backend as the project runtime. Treat the local checkout as a place to edit and inspect files, without assuming a local runtime or toolchain is provisioned. This boundary applies in every phase, including check and review, and to every subagent.
+
+Route tests, business code, scientific computations, minimal reproductions, checks that load the project runtime or workflow (including DAG dry-runs), and programmatic artifact validation through the configured remote routes below. Inspect command entry points and hooks and route by what they execute, regardless of command name.
+
+Static checks such as lint, format, typecheck, and build may run locally within the command and scope explicitly allowed by this policy. If a check loads the workflow (as a workflow linter may do) or otherwise crosses the remote execution boundary above, local execution requires explicit user authorization for that scope or a scoped exception in this policy covering that behavior. Other skills' check instructions do not grant an exception. If the allowed local tools are unavailable, run the check through the configured remote route.
+
+If the needed route is unconfigured, its skill or required environment is missing, or its backend is inaccessible, stop the affected execution and report what is needed. GPU requirements must not silently fall back to CPU or a local accelerator.
 
 ## Platform execution
 

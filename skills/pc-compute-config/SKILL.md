@@ -36,9 +36,8 @@ Add or update one sentence in the project-root `AGENTS.md`:
 
 > Before executing project commands in any phase (including check, review, and delegated work), read [.paper-craft/compute.md](.paper-craft/compute.md) and follow its execution boundary and selected platform skill's procedures.
 
-On creation or rerun, preserve unrelated configuration and update the existing policy and pointer in place.
-Reconcile existing routing instructions into the canonical policy while retaining platform-specific references.
-Report any incompatible project requirement instead of leaving contradictory instructions active.
+On creation or rerun, preserve unrelated configuration and update the policy and pointer in place.
+Inspect root and applicable nested `AGENTS.md` files, checklists, and check, review, and gate entry points. Trace commands through wrappers and hooks for implicit local runtime assumptions such as a workstation `.venv` or workflow runner. Update project-owned guidance to use the canonical policy for routing, preserving the checks and platform references. Record authorized local exceptions in the policy with their command and scope. Preserve the scope of existing authorization and report any incompatible requirement you cannot reconcile.
 If Git ignores either generated file, report that it will not travel with the project; preserve the user's ignore rules.
 
 **Done:** The policy preserves the template's execution boundary, routing rules, transfer requirements, and platform execution protocol, contains a definition for every selected backend, and identifies pending items by affected route. `AGENTS.md` has one compute-policy pointer covering every phase and subagent.
@@ -48,7 +47,7 @@ If Git ignores either generated file, report that it will not travel with the pr
 Check that the pointer resolves, each route resolves to a backend definition or is explicitly unconfigured, each selected backend's `Platform skill` is an absolute global filesystem path whose `SKILL.md` exists on disk (not a relative path), and referenced project files exist.
 Check that required backend fields are filled, pending items block the affected routes, and no credentials or template placeholders remain.
 Check that every HPC backend's Git choice matches the user's answer and every backend's `Remote workspace` contains a nonempty project path; a missing or pending path leaves configuration incomplete.
-Verify that the policy routes tests and business code remotely even during check and review, permits local lint/typecheck/build only within that boundary, and requires an explicit exception for local execution of tests or business code.
+Check the generated policy and each inspected gate and command entry point against the template's execution boundary, including dependency assumptions, the scope of authorized local exceptions, and the action when the required backend is unavailable. Report unresolved conflicts as incomplete configuration.
 Verify that the generated policy preserves all template routing cases, including the one-hour boundary, consecutive CPU steps, unavailable CPU-only mode, and local relay when direct backend transfers are unavailable.
 Verify that the generated policy requires all remote operations to follow the selected platform procedure and its required references, prerequisites, fallbacks, and completion criteria; workload execution requires actual target verification, and procedure gaps block the affected operation.
 
