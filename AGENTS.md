@@ -14,7 +14,7 @@ Skills are the sole execution interface. The orchestrator selects specialist ski
 ## Code layout
 
 - `docs/design/DESIGN.md` and `DESIGN.zh.md`: paired architecture decisions; `DESIGN.i18n.json` records reviewed section hashes.
-- `packages/orchestrator/src/`: lifecycle operations, task input envelopes, and thin helper entry points (`cli.ts`, `envelope-cli.ts`). Tests in `packages/orchestrator/tests/`.
+- `packages/orchestrator/src/` contains thin CLI entry points (`cli.ts`, `envelope-cli.ts`), lifecycle operations and task input envelopes in `run-operations/`, and delivery rules in `workflow-policy/`. Tests live in `packages/orchestrator/tests/`.
 - `packages/workspace/src/`: workspace creation, reuse, isolation, and task IO helpers (`cli.ts`). Tests in `packages/workspace/tests/`.
 - `packages/workspace-config/src/`: configuration resolution, initialization, and validation for orchestrator helpers (`cli.ts`). Tests in `packages/workspace-config/tests/`.
 - `skills/pc-orchestrator/`: LLM dispatch guidance, `workflows/default.json`, and receipt templates.

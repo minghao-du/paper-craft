@@ -16,7 +16,7 @@ import {
   initWorkflow,
   inspectState,
   resolveDecision,
-} from "../src/lifecycle/index.js";
+} from "../src/run-operations/index.js";
 import { createTestDir, runLifecycleKernelCli } from "./helpers.js";
 
 describe("Plan Acceptance Lifecycle (Phase 2B)", () => {

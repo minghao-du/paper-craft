@@ -12,8 +12,8 @@ import {
   createEnvelope,
   loadEnvelope,
   EnvelopeCorruptedError,
-} from "../src/lifecycle/envelope.js";
-import type { EnvelopeCreateOptions } from "../src/lifecycle/types.js";
+} from "../src/run-operations/envelope.js";
+import type { EnvelopeCreateOptions } from "../src/run-operations/types.js";
 
 const minimalEnvelope: TaskInputEnvelope = {
   schema_version: "1.0",

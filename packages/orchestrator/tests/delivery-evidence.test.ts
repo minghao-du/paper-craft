@@ -4,8 +4,8 @@ import {
   assertCanFinish,
   inspectDelivery,
   WorkflowIntegrityError,
-} from "../src/workflow/index.js";
-import { calculateDeliveryDispatch } from "../src/workflow/delivery.js";
+} from "../src/workflow-policy/index.js";
+import { calculateDeliveryDispatch } from "../src/workflow-policy/delivery.js";
 import type {
   ApplyDeliveryDecisionParams,
   CompletionRecordView,
@@ -13,7 +13,7 @@ import type {
   DeliverySequence,
   DeliveryState,
   WorkflowDefinition,
-} from "../src/workflow/types.js";
+} from "../src/workflow-policy/types.js";
 
 const workflow: WorkflowDefinition = {
   name: "t",

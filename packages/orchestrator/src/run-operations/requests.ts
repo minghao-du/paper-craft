@@ -1,5 +1,5 @@
 /**
- * Request parsing, validation, and comparison for Lifecycle operations.
+ * Request parsing, validation, and comparison for lifecycle operations.
  */
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";

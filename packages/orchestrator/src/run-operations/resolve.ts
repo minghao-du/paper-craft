@@ -12,7 +12,7 @@ import {
   applyDeliveryDecision,
   assertCanFinish,
   resolveCanonicalStage,
-} from "../workflow/index.js";
+} from "../workflow-policy/index.js";
 import { toDeliveryState, applyNextDeliveryState } from "./domain-state.js";
 import { isFinished } from "./control.js";
 import { parseResolveOptions } from "./requests.js";

@@ -11,7 +11,7 @@ import {
   initWorkflow,
   inspectState,
   type InitOptions,
-} from '../src/lifecycle/index.js';
+} from '../src/run-operations/index.js';
 import {
   createTestDir,
   runDispatchTaskCli,

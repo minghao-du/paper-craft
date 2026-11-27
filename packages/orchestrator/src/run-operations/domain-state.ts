@@ -1,8 +1,8 @@
 /**
- * Internal mapping helper between RuntimeState and Workflow DeliveryState.
+ * Internal mapping helper between RuntimeState and DeliveryState from workflow-policy.
  * Contains no business/budget rules, only structural projection.
  */
-import type { DeliveryState } from "../workflow/types.js";
+import type { DeliveryState } from "../workflow-policy/types.js";
 import type { RuntimeState } from "./types.js";
 
 export function toDeliveryState(state: RuntimeState): DeliveryState {

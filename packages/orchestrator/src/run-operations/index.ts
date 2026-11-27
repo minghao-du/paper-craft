@@ -1,5 +1,5 @@
 /**
- * Lifecycle module entry point.
+ * Run operations module entry point.
  * Re-exports lifecycle operations, envelope protocols, request validation, and types.
  */
 export * from "./types.js";

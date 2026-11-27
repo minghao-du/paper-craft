@@ -608,8 +608,8 @@ function rejectIfDispatchArtifactsExist(resolvedRoot: string): void {
 
 /**
  * Purely observational inspection of a run directory's storage artifacts.
- * Does not modify any files or run pending-commit recovery. Lifecycle
- * inspection can recover the run because it loads through loadRun.
+ * Does not modify any files or run pending-commit recovery.
+ * Inspection through run-operations can recover the run because it uses loadRun.
  */
 export function inspectRunStorage<TState = unknown>(
   root: string,

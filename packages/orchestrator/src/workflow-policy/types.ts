@@ -1,6 +1,6 @@
 /**
- * Workflow types and interfaces.
- * Workflow module owns workflow definition, validation, canonical stage resolution,
+ * Workflow policy types and interfaces.
+ * This module owns workflow definition, validation, canonical stage resolution,
  * delivery sequences, attempts/replan budgets, and completion policy verification.
  */
 

@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { commitRun, loadRun } from "../run-store/index.js";
 import {
   evaluateDispatch,
-} from "../workflow/index.js";
+} from "../workflow-policy/index.js";
 import { createEnvelope } from "./envelope.js";
 import { toDeliveryState, applyNextDeliveryState } from "./domain-state.js";
 import {

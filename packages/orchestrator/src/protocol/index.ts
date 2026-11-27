@@ -1,6 +1,6 @@
 /**
  * Protocol entry: shared TaskInputEnvelope and CompactReport contracts.
- * Must not import lifecycle, workflow, or run-store.
+ * Independent of run-operations, workflow-policy, and run-store.
  */
 export {
   isObject,

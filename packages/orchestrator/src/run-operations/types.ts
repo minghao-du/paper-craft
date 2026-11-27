@@ -1,6 +1,6 @@
 /**
- * Lifecycle types and interfaces.
- * Lifecycle module owns dispatch authorization, report correlation, envelope protocol,
+ * Run operations types and interfaces.
+ * This module owns dispatch authorization, report correlation, envelope protocol,
  * and operation orchestration.
  */
 
@@ -10,7 +10,7 @@ import type {
   DeliverySequence,
   SkillProvider,
   LandingEvidence,
-} from "../workflow/types.js";
+} from "../workflow-policy/types.js";
 
 export type { SkillProvider, LandingEvidence };
 

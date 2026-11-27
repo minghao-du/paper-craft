@@ -16,7 +16,7 @@ import {
 import {
   DEFAULT_WORKFLOW_PATH,
   loadAndValidateWorkflow,
-} from "../workflow/index.js";
+} from "../workflow-policy/index.js";
 import type { InitOptions, RuntimeState } from "./types.js";
 
 const DEPRECATED_INIT_OPTIONS = [

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { loadEnvelope } from "./lifecycle/index.js";
+import { loadEnvelope } from "./run-operations/index.js";
 import { isObject, validateTaskInputEnvelope } from "./protocol/index.js";
 
 export async function main(

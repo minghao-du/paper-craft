@@ -20,13 +20,13 @@ import {
   initWorkflow,
   inspectState,
   loadEnvelope,
-} from '../src/lifecycle/index.js';
+} from '../src/run-operations/index.js';
 import {
   DEFAULT_RECEIPT_TEMPLATE,
   evaluateDispatch,
   loadAndValidateWorkflow,
   resolveCanonicalStage,
-} from '../src/workflow/index.js';
+} from '../src/workflow-policy/index.js';
 import {
   allocatesDeliveryAttempt,
   invalidatesLanding,
@@ -41,8 +41,8 @@ import {
   isReplanStage,
   isResearchRecordStage,
   isVerificationStage,
-} from '../src/workflow/stage.js';
-import type { DeliveryState, WorkflowDefinition } from '../src/workflow/types.js';
+} from '../src/workflow-policy/stage.js';
+import type { DeliveryState, WorkflowDefinition } from '../src/workflow-policy/types.js';
 import {
   createTestDir,
   REPO_ROOT,

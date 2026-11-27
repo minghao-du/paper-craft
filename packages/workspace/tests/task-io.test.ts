@@ -23,7 +23,7 @@ import {
   resolvePrepareIssueIds,
   WorkspaceTaskInput,
 } from '../src/task-io.js';
-import { loadEnvelope as loadOrchestratorEnvelope } from '../../orchestrator/src/lifecycle/envelope.js';
+import { loadEnvelope as loadOrchestratorEnvelope } from '../../orchestrator/src/run-operations/envelope.js';
 import { resolvePath } from '../src/git.js';
 import { CleanupResult, PreparedWorkspace, WorkspaceError } from '../src/types.js';
 

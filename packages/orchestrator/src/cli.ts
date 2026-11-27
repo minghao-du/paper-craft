@@ -13,7 +13,7 @@ import {
   type DispatchOptions,
   type ResolveOptions,
   type InspectOptions,
-} from "./lifecycle/index.js";
+} from "./run-operations/index.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CliOptions = Record<string, any>;

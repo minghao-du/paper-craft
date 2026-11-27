@@ -24,19 +24,19 @@
     "zh": "b62f0dc4a8f5b112"
   },
   "/paper-craft-design-decisions/deterministic-steps-within-skills": {
-    "en": "353c605ba405449d",
-    "zh": "2bf7ab34f3ee7035"
+    "en": "5e2310717f3824fb",
+    "zh": "bd0e52da7182ffaf"
   },
   "/paper-craft-design-decisions/unified-receipt-contract": {
-    "en": "e6ae5bfb951f9fd2",
-    "zh": "f1ce5f577f291c62"
+    "en": "3ee0f01a3865655a",
+    "zh": "94dae34b6473fd7e"
   },
   "/paper-craft-design-decisions/workspace-ownership": {
     "en": "bf59753a736cae84",
     "zh": "ae8203c8b2435c56"
   },
   "/paper-craft-design-decisions/workflow-decoupling": {
-    "en": "1112d87c48d09963",
-    "zh": "f3f9284d7e58f6f9"
+    "en": "cef5337440490d4f",
+    "zh": "7904edda65c362d1"
   }
 }

@@ -15,7 +15,7 @@ import {
   resolveDecision,
   type ResolveOptions,
   type RuntimeState,
-} from '../src/lifecycle/index.js';
+} from '../src/run-operations/index.js';
 import {
   commitRun,
   loadRun,

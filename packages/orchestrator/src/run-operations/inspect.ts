@@ -3,8 +3,8 @@
  */
 import path from "node:path";
 import { loadRun } from "../run-store/index.js";
-import { inspectDelivery, WorkflowIntegrityError } from "../workflow/index.js";
-import type { DeliveryInspection } from "../workflow/types.js";
+import { inspectDelivery, WorkflowIntegrityError } from "../workflow-policy/index.js";
+import type { DeliveryInspection } from "../workflow-policy/types.js";
 import { toDeliveryState } from "./domain-state.js";
 import { isFinished } from "./control.js";
 import type {
