@@ -121,7 +121,8 @@ describe('Dispatch Flow & Combinations (C3.1-C3.4)', () => {
       '--dispatch-id', p2NoPreData.dispatch_id,
       '--report', JSON.stringify({
         execution_status: 'succeeded',
-        result: { outcome: 'implemented' },
+        result: { outcome: 'implemented', commit: 'a'.repeat(40), self_review: 'completed',
+            quality_gates: 'passed', external_compute: 'none' },
         receipt_path: p2NoPreData.receipt_path,
         summary: 'Stage 2 work completed',
       }),

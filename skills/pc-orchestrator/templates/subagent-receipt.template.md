@@ -23,7 +23,7 @@
 ```
 
 Replace the example result with the assigned task's native conclusion and routing facts.
-For `pc-issue-work`, include `"quality_gates": "passed"` (or a compact gate summary), and `"external_compute": "none"` (for local/pure-code tasks) or verified terminal job metadata (`job_id`, terminal state, exit code, and verified artifact paths) in `result`, with the full gate command outputs in `## Verification`.
+For `pc-issue-work`, follow the [implementation delivery evidence contract](../../pc-issue-work/SKILL.md#task-outputs) and record supporting command outputs under `## Verification`.
 The compact report and receipt must agree. Include a result object for blocked or failed
 execution too, preserving partial findings and an explicit reason when no conclusion is available.
 

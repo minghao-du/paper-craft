@@ -186,12 +186,27 @@ if __name__ == "__main__":
       execution_status: 'succeeded',
       result: {
         outcome: 'implemented',
+        self_review: 'completed', quality_gates: 'passed', external_compute: 'none',
         commit: 'b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3',
       },
       receipt_path: step2ReceiptPath,
       summary: 'Implemented feature and verified test suite.',
     };
 
+    const incomplete = runLifecycleKernelCli(['complete', '--receipt-root', rootDir, '--report',
+      JSON.stringify({ ...report2, result: { external_compute: 'none' } })]);
+    expect(JSON.parse(incomplete.stdout)).toMatchObject({ action: 'continue_same_dispatch',
+      missing_evidence: ['commit', 'quality_gates', 'self_review'] });
+
+    // A partly completed multi-job run must keep the original dispatch and its attempt.
+    const checked = { status: 'completed', job_id: '42', exit_code: '0:0', checked_artifacts: ['output.tsv'] };
+    const stillRunning = { ...report2, result: { ...report2.result,
+      external_compute: [checked, { job_id: '43', status: 'running' }] } };
+    const progress = runLifecycleKernelCli(['complete', '--receipt-root', rootDir, '--report', JSON.stringify(stillRunning)]);
+    expect(JSON.parse(progress.stdout)).toEqual({
+      action: 'continue_same_dispatch', dispatch_id: p2.dispatch_id, missing_evidence: ['external_compute'],
+    });
+    report2.result.external_compute = [checked, { ...checked, job_id: '43' }];
     const comp2 = runLifecycleKernelCli([
       'complete',
       '--receipt-root', rootDir,
@@ -199,6 +214,7 @@ if __name__ == "__main__":
       '--report', JSON.stringify(report2),
     ]);
     expect(comp2.status).toBe(0);
+    expect(JSON.parse(comp2.stdout)).toMatchObject({ dispatch_id: p2.dispatch_id, execution_status: 'succeeded' });
 
     // ==========================================
     // Phase 3: Verification Stage (Skill Provider)

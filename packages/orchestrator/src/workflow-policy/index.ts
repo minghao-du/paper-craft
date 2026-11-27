@@ -12,3 +12,4 @@ export {
   inspectDelivery,
 } from "./completion.js";
 export { WorkflowIntegrityError } from "./types.js";
+export { missingWorkEvidence } from "./work-result.js";

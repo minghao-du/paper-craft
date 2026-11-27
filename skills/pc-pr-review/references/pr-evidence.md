@@ -4,7 +4,7 @@ Run all commands in the assigned checkout. Invoke the helper from the installed 
 
 ```bash
 node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" \
-  "<paper-craft-root>/packages/pr-evidence/src/cli.ts" <capture|verify|readback> \
+  "<paper-craft-root>/packages/pr-evidence/src/cli.ts" <capture|verify|readback|land> \
   --worktree "<absolute checkout root>" --repository "<[HOST/]OWNER/REPO>" --pr "<number>"
 ```
 
@@ -27,6 +27,13 @@ the fork. GitHub.com accepts the short `OWNER/REPO` form. Pass an explicit host 
   all of `--base`, `--branch`, `--head-repository` and `--commit`. Only `merged: true` with a
   verified `mergedCommit` establishes the remote merge result.
 
-An unsuccessful command emits a diagnostic and exits nonzero. Preserve the diagnostic in the
+- **`land --review "<absolute capture JSON path>" [--issue <number>]`** is the writing operation for
+  the landing skill. It requires a passing review from the caller. It verifies the reviewed version and live checks
+  before attempting a guarded squash merge. Readback resolves the outcome, including an already
+  merged PR or an interrupted merge command. The JSON outcome is `landed`, `rework_needed`, or `blocked`.
+  Only a confirmed merge exits zero. If remote readback fails after an attempt, the result
+  carries `mergeState: "unknown"` and the diagnostic.
+
+An unsuccessful evidence command emits a diagnostic and exits nonzero. Preserve the diagnostic in the
 review or landing result. Repeat with refreshed evidence when a revision moved. Resolve access
 and GitHub evidence failures before proceeding to a merge.

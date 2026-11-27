@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { landReviewed } from '../src/landing.js';
 import { capture, readback, verify } from '../src/evidence.js';
 
 const baseSha = 'a'.repeat(40);
@@ -13,7 +14,7 @@ describe('GitHub pull request evidence', () => {
   let options: Parameters<typeof capture>[0];
 
   function mockGitHub({ headRepo = 'contributor/project', base = 'main', baseCommit = baseSha,
-    merged = false, required = false, allReported = false, inaccessible = false } = {}) {
+    merged = false, required = false, allReported = false, inaccessible = false, loseReadback = false } = {}) {
     const responses = {
       pr: {
         number: 12, html_url: 'https://github.com/project-owner/project/pull/12',
@@ -32,7 +33,7 @@ describe('GitHub pull request evidence', () => {
         { name: 'build', bucket: 'pass' },
         ...(allReported ? [{ name: 'security', bucket: 'pass' }] : []),
       ],
-      inaccessible,
+      inaccessible, loseReadback,
     };
     writeFileSync(path.join(directory, 'github.json'), JSON.stringify(responses));
   }
@@ -70,6 +71,18 @@ if (args[0] === 'api' && args[2] === 'github.com') {
 } else if (args[0] === 'pr' && args[2] === '12' && args[4] === 'project-owner/project') {
   if (args[1] === 'checks' && args.includes('--required')) response = fixture.checks;
   if (args[1] === 'view') response = fixture.status;
+  if (args[1] === 'merge') {
+    const fs = require('node:fs');
+    fs.appendFileSync(require('node:path').join(__dirname, '../merges'), 'attempt\\n');
+    const expected = ['pr', 'merge', '12', '--repo', 'project-owner/project', '--squash',
+      '--match-head-commit', fixture.pr.head.sha, '--body', 'Refs #42'];
+    if (JSON.stringify(args) !== JSON.stringify(expected) || fixture.pr.merged) process.exit(2);
+    fixture.pr = { ...fixture.pr, merged: true, state: 'closed',
+      merged_at: '2026-11-27T10:00:00Z', merge_commit_sha: 'b'.repeat(40) };
+    fs.writeFileSync(require.resolve('../github.json'), fixture.loseReadback ? '' : JSON.stringify(fixture));
+    console.error('merge response lost');
+    process.exit(1);
+  }
 }
 if (response === undefined) throw Error('Unexpected gh invocation: ' + JSON.stringify(args));
 console.log(JSON.stringify(response));
@@ -108,6 +121,16 @@ console.log(JSON.stringify(response));
     expect(() => verify(options, reviewed)).toThrow('Required checks have not reported: security');
     mockGitHub({ inaccessible: true });
     expect(() => verify(options, reviewed)).toThrow('Resource not accessible');
+  });
+
+  it('settles a guarded merge from remote readback after losing the command response', () => {
+    mockGitHub();
+    const reviewed = capture(options);
+    expect(landReviewed(options, reviewed, '42')).toMatchObject({ outcome: 'landed', mergedCommit: mergedSha });
+    expect(landReviewed(options, reviewed, '42')).toMatchObject({ outcome: 'landed', mergedCommit: mergedSha });
+    expect(readFileSync(path.join(directory, 'merges'), 'utf8')).toBe('attempt\n');
+    mockGitHub({ loseReadback: true });
+    expect(landReviewed(options, reviewed, '42')).toMatchObject({ outcome: 'blocked', mergeState: 'unknown' });
   });
 
   it('reconciles an interrupted merge using the remote state and retained reviewed identity', () => {

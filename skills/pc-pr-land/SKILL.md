@@ -48,7 +48,7 @@ gh pr list --repo "<repository>" --head "<branch>" --state all \
 Select the unique PR for the base branch, head branch, and head repository, including the fork
 owner. An ambiguous or conflicting match requires reconciliation. For an existing merged PR,
 run the [evidence helper’s `readback`](../pc-pr-review/references/pr-evidence.md) against the
-delivered commit and the selected identity. Confirmed merges resume directly at Step 5.
+delivered commit and the selected identity. Report a confirmed merge as landed with the observed merge commit.
 A closed, unmerged PR is blocked.
 
 Publish the verified branch to its assigned push remote:
@@ -90,32 +90,15 @@ delivered commit as the expected evaluated SHA.
 - If review verdict is **`blocked`**:
   - Return outcome `blocked` with blocker explanation and `merged: false`.
 
-### Step 3: Verify review and required checks
+### Step 3: Land the reviewed version
 
-Run [the evidence helper’s `verify`](../pc-pr-review/references/pr-evidence.md) against the
-original capture JSON and the delivered environment. A changed head or base branch requires a
-fresh review. Report expected and observed values with `rework_needed` for revision drift. Return
-`blocked` when evidence or required check status is unavailable. Proceed on successful verification.
-
-### Step 4: Execute guarded squash merge
-
-Use the explicit PR number, repository, and verified head SHA returned by Step 3:
-
-```bash
-gh pr merge "<prNumber>" --repo "<repository>" --squash \
-  --match-head-commit "<commit>" --body "Refs #<issue>"
-```
-
-Run the merge directly after verification. GitHub atomically rejects a changed head.
-Proceed to readback even if the command errors or is interrupted.
-
-### Step 5: Verify merge completion
-
-Use [the evidence helper’s `readback`](../pc-pr-review/references/pr-evidence.md) to query the
-same PR identity. A verified `merged: true` with `mergedCommit` establishes completion even
-after an interrupted command. An open or queued PR has no landed result. If the command’s outcome
-is uncertain, resolve it through readback before any retry, and repeat Step 3 before another merge
-attempt. Report a blocker when GitHub cannot establish the result.
+With a passing review, run the [landing command](../pc-pr-review/references/pr-evidence.md)
+in the assigned checkout with the original capture, destination repository, numbered PR,
+assigned identity flags, and `--issue <number>` for an assigned issue. Use its JSON result even
+on a nonzero exit. Report `landed` only with the observed merge commit, request fresh review on
+`rework_needed`, and report the reason on `blocked`. An open or queued PR remains pending.
+If readback is unavailable after a merge attempt, resume with read-only `readback` first.
+Each subsequent authorized landing attempt revalidates the review and required checks.
 
 ## Quality Requirements & Completion Criteria
 
@@ -146,10 +129,10 @@ For a landed delivery with required non-Git deliverables, reference the supplyin
 2. **Rework needed outcome (`rework_needed`):**
    - `prNumber`: PR number
    - `prUrl`: PR URL
-   - `merged`: `false`
+   - Include the observed merge state when available.
    - `findings`: Review findings and defect details
    - `evaluatedCommit`: Evaluated commit SHA
    - `summary`: Reason rework is required
 3. **Blocked outcome (`blocked`):**
-   - `merged`: `false`
+   - Report the observed merge state. Preserve `mergeState: "unknown"` when the merge attempt could not be reconciled.
    - `summary`: Blocker explanation

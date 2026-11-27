@@ -1,95 +1,43 @@
 ---
 name: pc-issue-file
-description: Create or update GitHub issue from markdown file using --body-file
+description: Create or update a GitHub issue from an exact Markdown draft, or recover a partially completed create.
 allowed-tools: Bash, Read
 ---
 
 # /pc-issue-file
 
-Create or update a GitHub issue using a markdown file as the body.
-This skill can be invoked directly by a human or agent with a file path and optional issue context.
+Resolve the draft, the assigned checkout, and the explicit target repository. Use CREATE for a
+new issue and UPDATE for an explicitly identified issue to revise. A parent or related issue
+reference supplies context. If the requested operation or target is ambiguous, resolve that
+ambiguity before running a write.
 
-## Task Inputs
-
-Before executing, verify the following inputs:
-1. **Draft markdown file:** Path to the local issue file (e.g., `ISSUE-<slug>.md`).
-2. **Target issue context (optional):** If updating an existing issue, the issue number (inferred from conversation context or command argument).
-3. **Assignee (optional):** GitHub username to assign, only if explicitly requested.
-
-## Filing Procedure
-
-### Step 1: Determine the file path
-
-- If `$ARGUMENTS` is provided, use that as the file path.
-- Otherwise, check if the file path is clearly determinable from the current conversation context.
-- If unclear, ask the user which file to use.
-
-### Step 2: Check for existing issue context
-
-Search the recent conversation history for:
-- Issue numbers referenced in discussion (e.g., "#123", "issue 123").
-- Any clear indication that the task intends to update a specific issue.
-
-If found, this is an UPDATE operation.
-Otherwise, CREATE.
-
-### Step 3: Check for assignee context
-
-Look for explicit mentions like:
-- "this is an issue for [username]"
-- "assign this to [username]"
-
-**Do NOT auto-assign without explicit context.**
-
-### Step 4: Extract title from file
-
-For CREATE operations, extract the title from the file:
-1. Read the first line of the file.
-2. If it starts with `# ` (markdown h1 heading), strip the `# ` prefix and use as title.
-3. If no markdown heading, use the filename (without extension) as the title.
-
-### Step 5: Execute
-
-**Update** (issue number found in context):
-```bash
-gh issue edit <number> --body-file <file>
-```
-
-**Create** (no issue number):
-```bash
-gh issue create --title "<extracted title>" --body-file <file>
-```
-
-**Create with assignee** (if explicitly mentioned):
-```bash
-gh issue create --title "<extracted title>" --body-file <file> --assignee <username>
-```
-
-**IMPORTANT:**
-- NEVER use `--label` flags.
-- NEVER ask the user for the title — extract it from the file or filename.
-- Use `--body-file` (or `-F`) flag exclusively for the body.
-- Only add `--assignee` if explicitly mentioned in conversation context.
-
-### Step 6: Move the draft out of the way (CREATE only)
-
-On a successful **create**, the source file has done its job — move it so it stops being mistaken for unfiled work by any draft sweep or confusing a future agent poking around the repository:
+Invoke the helper from the installed paper-craft root:
 
 ```bash
-mkdir -p _ignore && mv <file> _ignore/
+node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" \
+  "<paper-craft-root>/packages/issues/src/cli.ts" <create|update|resume> \
+  --worktree "<absolute checkout root>" --repository "<[HOST/]OWNER/REPO>" --draft "<path>"
 ```
 
-Skip this for **update** operations — the file is still the live source for future edits to that issue, so it stays in place.
+- **Create:** Supply `--assignee <login>` only when explicitly assigned. The helper derives the title
+  from a first-line H1 or the filename stem, submits the exact draft through `--body-file`, verifies
+  the returned issue, and archives the draft in the checkout's `_ignore/` without overwriting files.
+- **Update:** Supply `--issue <number>`. The helper submits the exact draft through `--body-file`,
+  verifies the body, and leaves the file in place. Keep existing child checklist rows and explicit
+  parent declarations in the draft. Use the [Issue tree helper](../pc-issue-plan/references/issue-tree.md)
+  for authorized hierarchy and checklist edits.
+- **Resume:** Use the original draft path and repository. A create receipt with an Issue URL allows
+  retrying verification and archiving. If no URL was returned, reconcile with the live repository
+  and provide `--url <verified issue URL>` only after identifying the exact issue created by that
+  attempt. The helper compares the issue title and body with the recorded draft before accepting
+  the URL. A failed or interrupted create is an uncertain remote outcome. Keep its receipt and
+  report ambiguous candidates. Once evidence establishes that the earlier request had no remote
+  effect, preserve the pending receipt under a separate filename and make a fresh authorized
+  CREATE attempt.
 
-## Quality Requirements & Completion Criteria
-
-1. **Verbatim fidelity:** The issue body must be passed via `--body-file` without truncation or alteration.
-2. **Title extraction:** Title accurately reflects the H1 heading or filename.
-3. **Draft isolation:** Newly created draft files are relocated to `_ignore/`.
-4. **No spurious tags:** No unapproved labels or assignees are attached.
-
-## Task Outputs
-
-1. **GitHub issue:** Created or updated issue number and URL.
-2. **Draft location:** Location where the draft file was archived (`_ignore/<file>`) or preserved.
-3. **Summary:** Report the issue number, URL, operation type, and archived file location to the caller.
+On success, return the operation, issue URL and number, and archive or live draft path. On nonzero
+exit, retain the diagnostic and any recovery receipt under `_ignore/.issue-file/`. Report the known
+Issue, draft, and outstanding recovery action. An archive collision requires resolving the existing
+file before a retry. A completed receipt permits a later independent create at the same draft
+path after the earlier archive destination is cleared. Coordinate concurrent operations on one
+draft or issue body. GitHub body updates are checked before writing and read back afterward.

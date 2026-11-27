@@ -2,9 +2,16 @@
 
 When assigned issue finalization, use the supplied accepted verification receipts; rerun acceptance only if the integrated revision or requirements changed. Missing or failed acceptance blocks closure. If an issue was closed before failed acceptance, reopen it and read back its state.
 
-For a root finalization, enumerate the root and all descendants from GitHub native sub-issue relationships with pagination. Reconcile parent tasklists and planning/delivery records; resolve discrepancies rather than silently dropping issues. Include closed descendants. A child-only assignment closes only its accepted subtree. Close bottom-up after each issue's own criteria pass; parent acceptance additionally requires all descendants accepted and integrated verification. Root closure also requires research recording complete.
+Use `inspect` from the [Issue tree helper](../../pc-issue-plan/references/issue-tree.md) to enumerate
+the assigned issue and its descendants, including closed descendants. Reconcile live hierarchy
+with planning and delivery records. A child-only assignment covers only its accepted subtree.
+Validate each issue's acceptance receipt. Parent acceptance also requires all descendants accepted
+and integrated verification. Root closure also requires research recording complete.
 
-Use explicit repository-qualified issue operations. Read current state, close accepted open issues as completed, then read back state and reason. Update only the corresponding parent tasklist entry and verify it. Already closed accepted issues are idempotent; a not-planned closure does not substitute for acceptance. Record observed repository, number, state and acceptance receipt for every issue.
+Use the helper's `close` with the exact accepted subtree and its receipt references. It verifies
+completed state and each corresponding parent checkbox. Use `reopen` for a prematurely closed
+issue after verifying failed acceptance. On partial failure preserve observed progress and
+reconcile live state before trying the outstanding operations again.
 
 Reconcile PRs and workspace preparation, delivery, and acceptance receipts, including previous runs, against local and remote refs and worktree registrations. Use the assigned issue or enumerated subtree as the inventory scope. Build task branch and detached verification candidates using the evidence and fields in the [workspace cleanup contract](../../pc-workspace/SKILL.md#5-cleanup-protocol).
 

@@ -234,7 +234,8 @@ describe('Dispatch Lifecycle Verification (T1-T6, B2.9)', () => {
         dispatch_id: next.dispatch_id,
         report: {
           execution_status: 'succeeded',
-          result: { outcome: 'implemented' },
+          result: { outcome: 'implemented', commit: 'a'.repeat(40), self_review: 'completed',
+            quality_gates: 'passed', external_compute: 'none' },
           receipt_path: next.receipt_path,
           summary: 'Issue implemented',
         },

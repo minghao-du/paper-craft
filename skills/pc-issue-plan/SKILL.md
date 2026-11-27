@@ -59,7 +59,9 @@ Read the assigned issue, original scientific objective, constraints, existing ch
 Verify repository and issue identity from the provided brief or environment.
 
 #### Depth-1 strict boundary check
-Read the native parent (`GET /repos/{owner}/{repo}/issues/{number}/parent`) and all pages of native sub-issues (`GET /repos/{owner}/{repo}/issues/{number}/sub_issues`). Reconcile these with explicit parent declarations and child tasklists in issue bodies, including legacy children. Ordinary related-issue links establish context only. Resolve conflicting or unreadable hierarchy evidence before classifying depth.
+Run `inspect` from the [Issue tree helper](references/issue-tree.md) before deciding whether the
+issue is a root. Reconcile the report with planning context and any legacy parent candidate before
+classifying depth. Ordinary related-issue links establish context only.
 - **If already a sub-issue:** strictly bypass decomposition. Return:
   ```json
   {
@@ -118,9 +120,11 @@ Incorporate strategic review discipline before finalizing children:
    - Test plan with concrete execution commands.
 2. Write local drafts as `ISSUE-<slug>.md`.
 3. A request to execute or deliver the root issue authorizes creating the necessary children: complete filing and relationship verification before returning the execution plan. Explicit assessment-only or draft-only requests stop at the report and local drafts. Reconcile the plan with existing native children and tasklist entries before creating anything. Reuse matching issues. Submit new drafts via `/pc-issue-file` with explicit CREATE intent and target repository, distinguishing the parent reference from an issue to update.
-4. Establish each child's native parent using the [GitHub sub-issue API](https://docs.github.com/en/rest/issues/sub-issues). Fetch the child's numeric issue `id` and call `POST /repos/{owner}/{repo}/issues/{parent_number}/sub_issues` with `sub_issue_id` (for example, `gh api --method POST <endpoint> -F sub_issue_id=<id>`). Read back each child's parent and the parent's paginated child list. Reuse matching links and resolve conflicting parents before continuing.
-5. Update the parent issue body with the child tasklist (`- [ ] #<number> <title>`), preserving all existing progress. Completion requires the plan, native relationships, and tasklist to agree. On partial failure, report created issue numbers, verified links, and pending synchronization so a retry can resume from existing state.
-6. Return the assignment plan structure:
+4. Run `plan` from the [Issue tree helper](references/issue-tree.md) with the full set of authorized
+   child identities. Supply only children from the accepted plan. On partial failure, report filed
+   issue numbers, verified links, and pending synchronization. Retry from live state after resolving
+   reported conflicts.
+5. Return the assignment plan structure:
    ```json
    {
      "outcome": "decomposed",

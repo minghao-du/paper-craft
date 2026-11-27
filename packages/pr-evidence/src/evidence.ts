@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { runGitHub } from './github-command.js';
 import { getRemoteUrl, isValidCommitSha } from '../../workspace/src/git.js';
 import { verifyAssignedEnvironment } from '../../workspace/src/index.js';
 
@@ -22,7 +22,7 @@ interface PullRequest {
   mergedCommit: unknown;
 }
 
-interface CaptureOptions {
+export interface CaptureOptions {
   workingDirectory: string;
   repository: string;
   prNumber: number;
@@ -71,16 +71,9 @@ function onHost(host: string, name: unknown): string {
 }
 
 function gh(cwd: string, ...args: string[]): unknown {
-  const result = spawnSync('gh', args, {
-    cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, GH_PROMPT_DISABLED: '1' },
-  });
-  if (result.status !== 0) {
-    const detail = result.error?.message || result.stderr.trim() || `exit code ${result.status}`;
-    throw new Error(`GitHub evidence unavailable (${args.slice(0, 2).join(' ')}): ${detail}`);
-  }
+  const output = runGitHub(cwd, ...args);
   try {
-    return JSON.parse(result.stdout);
+    return JSON.parse(output);
   } catch {
     throw new Error(`GitHub evidence unavailable: invalid JSON from gh ${args.slice(0, 2).join(' ')}`);
   }
@@ -127,11 +120,13 @@ function pullRequest(cwd: string, repository: string, number: number): PullReque
   };
 }
 
+export class RevisionMismatch extends Error {}
+
 function matchIdentity(actual: PullRequestIdentity, expected: Partial<PullRequestIdentity>): void {
   const keys = ['repository', 'prNumber', 'baseBranch', 'branch', 'headRepository', 'commit'] as const;
   for (const key of keys) {
     if (expected[key] !== undefined && actual[key] !== expected[key]) {
-      throw new Error(`PR ${key} mismatch: expected ${expected[key]}, observed ${actual[key]}`);
+      throw new RevisionMismatch(`PR ${key} mismatch: expected ${expected[key]}, observed ${actual[key]}`);
     }
   }
 }
@@ -256,7 +251,11 @@ export function verify(options: CaptureOptions, reviewed: ReturnType<typeof revi
   const checks = requiredChecks(cwd, reviewed, base);
   const merge = fields(gh(cwd, 'pr', 'view', String(reviewed.prNumber), '--repo', reviewed.repository,
     '--json', 'headRefOid,mergeStateStatus'), 'PR merge state');
-  if (merge.headRefOid !== reviewed.commit || !['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(String(merge.mergeStateStatus))) {
+  const observedHead = sha(merge.headRefOid, 'merge state head SHA');
+  if (observedHead !== reviewed.commit) {
+    throw new RevisionMismatch(`PR commit mismatch: expected ${reviewed.commit}, observed ${observedHead}`);
+  }
+  if (!['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(String(merge.mergeStateStatus))) {
     throw new Error(`GitHub merge state: ${String(merge.mergeStateStatus)} at ${String(merge.headRefOid)}`);
   }
   const { current: latest, draft: latestDraft } = captureCurrent(options);

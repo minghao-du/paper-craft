@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { commitRun, loadRun } from "../run-store/index.js";
+import { missingWorkEvidence, resolveCanonicalStage } from "../workflow-policy/index.js";
 import { compareCompleteReports } from "./requests.js";
 import { parseReportInput, ProtocolError } from "../protocol/index.js";
 import type {
@@ -13,7 +14,14 @@ import type {
   RuntimeState,
 } from "./types.js";
 
-export function completeDispatch(o: CompleteOptions): CompletedDispatch {
+interface IncompleteWork {
+  action: "continue_same_dispatch";
+  dispatch_id: string;
+  missing_evidence: string[];
+  execution_status?: never;
+}
+
+export function completeDispatch(o: CompleteOptions): CompletedDispatch | IncompleteWork {
   const explicitId = o.dispatch_id?.trim();
   if (o.dispatch_id !== undefined && !explicitId) {
     throw new Error("--dispatch-id must be a non-empty string when provided");
@@ -127,6 +135,12 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch {
       "receipt_mismatch",
       `Report receipt_path '${report.receipt_path}' does not match assigned receipt_path '${active.receipt_path}'.`,
     );
+  }
+
+  const stage = resolveCanonicalStage(state.workflow_snapshot, active.task_name);
+  const missing = missingWorkEvidence(stage, report);
+  if (missing.length) {
+    return { action: "continue_same_dispatch", dispatch_id: dispatchId, missing_evidence: missing };
   }
 
   if (!fs.existsSync(assignedReceipt)) {
