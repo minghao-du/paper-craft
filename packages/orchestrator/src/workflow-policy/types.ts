@@ -198,6 +198,23 @@ export interface InspectDeliveryParams {
   completedStages?: readonly CompletionRecordView[];
 }
 
+export type CleanupTarget =
+  | { kind: "worktree"; path: string }
+  | { kind: "local_branch"; branch: string }
+  | { kind: "remote_branch"; branch: string; remote: string };
+
+export type CleanupInspection =
+  | { status: "refinalization_required" | "inventory_unavailable" }
+  | { status: "complete"; missing_evidence: [] }
+  | {
+      status: "first_attempt" | "retry";
+      parameters: {
+        candidates: Record<string, unknown>[];
+        unresolved: unknown[];
+      };
+      missing_evidence: Array<CleanupTarget & { reason?: string }>;
+    };
+
 export interface DeliveryInspection {
   currentIssueId: string;
   activeReworkIssueId?: string | null;
@@ -206,6 +223,7 @@ export interface DeliveryInspection {
   reworkNeeded: boolean;
   sequenceCompleted: boolean;
   canFinish: boolean;
+  cleanup?: CleanupInspection;
 }
 
 export class WorkflowIntegrityError extends Error {

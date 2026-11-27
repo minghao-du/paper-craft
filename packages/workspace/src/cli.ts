@@ -26,9 +26,10 @@ import {
   WorkspaceTaskInput,
 } from './task-io.js';
 import { WorkspaceError } from './types.js';
+import { verifyAssignedEnvironment } from './verify.js';
 
 interface CliArgs {
-  subcommand?: 'prepare' | 'cleanup';
+  subcommand?: 'prepare' | 'cleanup' | 'verify';
   repoDir?: string;
   issue?: number;
   branch?: string;
@@ -45,11 +46,14 @@ interface CliArgs {
   outputFormat?: 'raw' | 'compact';
   inputEnvelope?: string;
   cleanupFlag?: boolean;
+  repository?: string;
+  detached?: boolean;
+  cleanliness?: string;
 }
 
 class CliUsageError extends Error {}
 
-type StringOptionKey = Exclude<keyof CliArgs, 'subcommand' | 'issue' | 'outputFormat' | 'cleanupFlag'>;
+type StringOptionKey = Exclude<keyof CliArgs, 'subcommand' | 'issue' | 'outputFormat' | 'cleanupFlag' | 'detached'>;
 
 const STRING_OPTIONS: Record<string, StringOptionKey> = {
   '--repo-dir': 'repoDir',
@@ -66,6 +70,8 @@ const STRING_OPTIONS: Record<string, StringOptionKey> = {
   '--receipt-path': 'receiptPath',
   '--input-envelope': 'inputEnvelope',
   '--input': 'inputEnvelope', // documented alias of --input-envelope
+  '--repository': 'repository',
+  '--cleanliness': 'cleanliness',
 };
 
 function parseIssueNumber(value: string): number {
@@ -93,8 +99,8 @@ function parseCliArgs(argv: string[]): { args: CliArgs; help: boolean } {
   let i = 0;
 
   if (argv.length > 0 && !argv[0].startsWith('-')) {
-    if (argv[0] !== 'prepare' && argv[0] !== 'cleanup') {
-      throw new CliUsageError(`Unknown subcommand '${argv[0]}'. Expected 'prepare' or 'cleanup'.`);
+    if (argv[0] !== 'prepare' && argv[0] !== 'cleanup' && argv[0] !== 'verify') {
+      throw new CliUsageError(`Unknown subcommand '${argv[0]}'. Expected 'prepare', 'cleanup', or 'verify'.`);
     }
     args.subcommand = argv[0];
     i = 1;
@@ -109,10 +115,11 @@ function parseCliArgs(argv: string[]): { args: CliArgs; help: boolean } {
     // Canonical identity for duplicate detection (aliases collapse together).
     const canonical = arg === '--input' ? '--input-envelope' : arg;
 
-    if (arg === '--cleanup') {
+    if (arg === '--cleanup' || arg === '--detached') {
       if (seen.has(canonical)) throw new CliUsageError(`Duplicate option '${arg}'.`);
       seen.add(canonical);
-      args.cleanupFlag = true;
+      if (arg === '--cleanup') args.cleanupFlag = true;
+      else args.detached = true;
       i++;
       continue;
     }
@@ -147,16 +154,33 @@ function parseCliArgs(argv: string[]): { args: CliArgs; help: boolean } {
   if (args.subcommand === 'prepare' && args.cleanupFlag) {
     throw new CliUsageError("Conflicting arguments: 'prepare' subcommand with --cleanup.");
   }
+  if (args.subcommand === 'verify') {
+    const allowed = new Set(['--repo-dir', '--repository', '--base-remote', '--branch', '--detached', '--commit', '--cleanliness', '--input-envelope']);
+    const invalid = [...seen].find((option) => !allowed.has(option));
+    if (invalid) throw new CliUsageError(`Option '${invalid}' is unavailable for 'verify'.`);
+    if (args.branch !== undefined && args.detached) {
+      throw new CliUsageError("Choose either '--branch' or '--detached' for 'verify'.");
+    }
+    if (args.cleanliness !== 'clean' && args.cleanliness !== 'allow-dirty') {
+      throw new CliUsageError("Verify requires '--cleanliness clean' or '--cleanliness allow-dirty'.");
+    }
+    if (args.inputEnvelope && [...seen].some((option) => option !== '--input-envelope' && option !== '--cleanliness')) {
+      throw new CliUsageError("With '--input-envelope', supply only '--cleanliness' for 'verify'.");
+    }
+  } else if (args.repository !== undefined || args.detached || args.cleanliness !== undefined) {
+    throw new CliUsageError("'--repository', '--detached', and '--cleanliness' are options for 'verify'.");
+  }
 
   return { args, help: false };
 }
 
 function printHelp(): void {
-  console.log(`Usage: pc-workspace <prepare|cleanup> [options]
+  console.log(`Usage: pc-workspace <prepare|cleanup|verify> [options]
 
 Subcommands:
   prepare                   Prepare or validate a feature or detached worktree
   cleanup                   Clean explicitly assigned worktrees and merged branches
+  verify                    Verify the assigned checkout using local, read-only Git checks
 
 Options:
   --repo-dir <path>         Existing checkout directory (defaults to '.')
@@ -174,7 +198,48 @@ Options:
   --input-envelope <path>   Task Input Envelope JSON (<step>-input.json)
   --receipt-path <path>     Path to write Markdown receipt
   --output-format <format>  Output format: raw or compact
+
+Verify:
+  --input-envelope <path>   Read the assignment from an envelope, or select the checkout with --repo-dir
+  --repository <owner/repo> Expected repository for direct verification
+  --branch <name>           Expected branch for direct verification
+  --detached                Expect detached HEAD for direct verification
+  --commit <sha>            Expected full HEAD SHA for direct verification
+  --cleanliness <policy>    Required, either clean or allow-dirty
 `);
+}
+
+function runVerify(args: CliArgs, envelope?: WorkspaceTaskInput): number {
+  const assignment = envelope?.environment;
+  const params = envelope?.inputs?.parameters;
+  const repository = assignment?.repository ?? assignment?.delivery_target ?? args.repository;
+  // Existing dispatch records unassigned revisions with two JSON nulls.
+  const branch = assignment?.branch === null && assignment.commit == null ? undefined : assignment?.branch;
+  try {
+    const verified = verifyAssignedEnvironment({
+      workingDirectory: assignment?.working_directory ?? args.repoDir ?? process.cwd(),
+      repository: assignment && repository === 'local/repo' ? undefined : repository,
+      baseRemote: assignment?.base_remote ??
+        (typeof params?.base_remote === 'string' ? params.base_remote : args.baseRemote),
+      branch: assignment ? branch : args.detached ? null : args.branch,
+      commit: assignment?.commit ?? args.commit,
+      requireClean: args.cleanliness === 'clean',
+    });
+    console.log(JSON.stringify({
+      working_directory: verified.workingDirectory,
+      repository: verified.repository,
+      base_remote: verified.baseRemote,
+      branch: verified.branch,
+      commit: verified.commit,
+    }, null, 2));
+    return 0;
+  } catch (err) {
+    console.error(JSON.stringify({
+      error: err instanceof Error ? err.message : String(err),
+      ...(err instanceof WorkspaceError ? { code: err.code, details: err.details } : {}),
+    }));
+    return 1;
+  }
 }
 
 interface DeliverCommandReportOptions {
@@ -445,6 +510,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (subcommand === 'cleanup') {
     return runCleanup(args, envelope);
+  }
+  if (subcommand === 'verify') {
+    return runVerify(args, envelope);
   }
   return runPrepare(args, envelope);
 }

@@ -7,11 +7,20 @@ Before running any project command or modifying files, read `AGENTS.md` (or `CLA
 in the assigned checkout together with any project or compute policy documents it references,
 and strictly follow their execution boundaries and environment rules.
 
-Verify the checkout root and repository identity against the assignment, the branch (or detached HEAD),
-and any expected commit before work. Resolve and record omitted direct-invocation revision fields from
-that checkout. Check the task's required cleanliness. An implementation self-review may intentionally
-include uncommitted and new files. Report conflicting or missing environments to the caller with expected
-and observed values so preparation or reconciliation can happen before work.
+Run the workspace helper's read-only verification before work. Use `clean` when the task requires a
+clean checkout and `allow-dirty` when its scope includes uncommitted or new files.
+
+```bash
+node --import <paper-craft-root>/node_modules/tsx/dist/loader.mjs <paper-craft-root>/packages/workspace/src/cli.ts verify --input-envelope "<envelope-path>" --cleanliness clean
+```
+
+For direct invocation, replace `--input-envelope` with `--repo-dir "<absolute-checkout-root>"`.
+Add `--repository <owner/repo>`, `--base-remote <remote>`, `--branch <name>` or `--detached`,
+and `--commit <full-sha>` when assigned. The helper checks the checkout root, base remote identity,
+branch or detached HEAD, and any expected full SHA. It uses the assigned or configured base remote
+when available, then prefers `upstream` in fork checkouts, `origin`, or the sole configured remote.
+Record the returned checkout, repository, branch, and commit. On failure, return the expected and
+observed values to the caller for preparation or reconciliation.
 
 Bind the agent's launch directory when the platform supports it. Use an explicit working directory for
 each command or an explicit `cd "<absolute-path>" && ...` in that command, and resolve file operations

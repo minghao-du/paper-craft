@@ -307,10 +307,10 @@ Organize touched pipeline files under scientific invariance with a human steerin
   }
   ```
 - **Objective**: Remove eligible worktrees and merged local and remote task branches belonging to the root issue tree, including evidenced historical resources; retain changed or still-used resources with reasons.
-- **Inputs**: Forward the reconciled finalization inventory as `inputs.parameters.candidates` and `inputs.parameters.unresolved` using the [workspace cleanup contract](../../pc-workspace/SKILL.md#5-cleanup-protocol). Confirm durable artifact locations and completed-consumer status before dispatch.
+- **Inputs**: Use the `cleanup.parameters` returned by `inspect` according to the [cleanup resolution protocol](../references/workspaces.md#cleanup-resolution). Confirm durable artifact locations and completed-consumer status before dispatch.
 - **Contract**: Writes cleanup receipt to `contract.receipt_path` and emits `{ execution_status: "succeeded", result: { outcome: "cleaned" | "incomplete", removed_paths: [...], retained_paths: [...], removed_branches: [...], retained_branches: [...] }, receipt_path, summary }`.
 - **Routing**:
-  - Finish only when `result.outcome` is `cleaned` and both retained lists are empty, with a preceding successful root `issue_finalize` receipt. Otherwise report delivery complete / cleanup incomplete and retry outstanding resources after rechecking live state. Preserve closed issues and accepted delivery; do not repeat implementation or merges.
+  - Follow the [cleanup resolution protocol](../references/workspaces.md#cleanup-resolution) through `finish_check.status: ready`. Preserve closed issues and accepted delivery.
 
 ---
 

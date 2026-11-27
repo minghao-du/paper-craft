@@ -1,5 +1,6 @@
 import type {
   AssertCanFinishParams,
+  CleanupInspection,
   CompletionRecordView,
   DeliveryInspection,
   DeliveryState,
@@ -23,6 +24,8 @@ import {
   validateLandingRecord,
 } from "./evidence.js";
 
+import { assessCleanup } from "./cleanup.js";
+
 function tryResolveStage(
   workflow: WorkflowDefinition,
   stageRef?: string,
@@ -38,6 +41,7 @@ function tryResolveStage(
 interface CompletionEvaluation {
   blockingReasons: string[];
   reworkNeeded: boolean;
+  cleanup?: CleanupInspection;
 }
 
 export function evaluateCompletion(params: {
@@ -223,6 +227,7 @@ export function evaluateCompletion(params: {
         "Cannot finish workflow: verified issue-tree closure evidence is missing.",
       );
     } else {
+      const closureBlockers = blockingReasons.length;
       const evidence = (closure.result ?? {}) as Record<string, unknown>;
       // F09: Safely parse finalization issues before querying
       const parsedIssues = parseFinalizationIssues(evidence);
@@ -274,109 +279,21 @@ export function evaluateCompletion(params: {
           }
         }
 
-        const empty = (v: unknown): boolean =>
-          Array.isArray(v) && v.length === 0;
-        if (!empty(evidence.unresolved)) {
-          blockingReasons.push(
-            "Cannot finish workflow: finalization contains unresolved issues.",
+        if (blockingReasons.length === closureBlockers) {
+          const after = completedStages.slice(
+            completedStages.indexOf(closure) + 1,
           );
-        }
-
-        if (!Array.isArray(evidence.candidates)) {
-          blockingReasons.push(
-            "Cannot finish workflow: reconciled cleanup inventory is missing.",
+          const cleanups = after.filter((record) => {
+            const stage = tryResolveStage(workflow, record.stage);
+            return stage && isCleanupStage(stage);
+          });
+          const cleanup = assessCleanup(
+            closure,
+            cleanups,
+            cleanups.length !== after.length,
           );
-        }
-
-        // Intervening work after closure
-        const closureIndex = completedStages.indexOf(closure);
-        const after = completedStages.slice(closureIndex + 1);
-        const isCleanupRecord = (e: CompletionRecordView): boolean => {
-          const def = tryResolveStage(workflow, e.stage);
-          return def ? isCleanupStage(def) : false;
-        };
-
-        if (after.some((e) => !isCleanupRecord(e))) {
-          blockingReasons.push(
-            "Cannot finish workflow: repeat issue finalization after intervening work.",
-          );
-        }
-
-        // Workspace cleanup check
-        const cleanups = after.filter(
-          (e) => isCleanupRecord(e) && e.execution_status === "succeeded",
-        );
-        const latestCleanup = cleanups.at(-1);
-
-        if (!latestCleanup) {
-          blockingReasons.push(
-            "Cannot finish workflow: successful cleanup after the latest issue-tree finalization is missing.",
-          );
-        } else {
-          const result = (latestCleanup.result ?? {}) as Record<
-            string,
-            unknown
-          >;
-          if (
-            result.outcome !== "cleaned" ||
-            !empty(result.retained_paths) ||
-            !empty(result.retained_branches) ||
-            ((latestCleanup.step_index as number | undefined) ?? -1) <=
-              ((closure.step_index as number | undefined) ?? -1)
-          ) {
-            blockingReasons.push(
-              "Cannot finish workflow: delivery complete / cleanup incomplete.",
-            );
-          }
-
-          // Inventory check
-          const paths = new Set(
-            cleanups.flatMap(
-              (r) =>
-                ((r.result as Record<string, unknown>)
-                  ?.removed_paths as string[]) ?? [],
-            ),
-          );
-          const branches = cleanups.flatMap(
-            (r) =>
-              ((r.result as Record<string, unknown>)?.removed_branches as Array<
-                Record<string, unknown>
-              >) ?? [],
-          );
-
-          if (Array.isArray(evidence.candidates)) {
-            for (const candidate of evidence.candidates as Array<
-              Record<string, unknown>
-            >) {
-              const branch = candidate.branch as string | undefined;
-              const worktree = candidate.worktree as string | undefined;
-              const pushRemote = (candidate.push_remote ?? candidate.pushRemote) as
-                | string
-                | undefined;
-
-              if (
-                (worktree && !paths.has(worktree)) ||
-                (branch &&
-                  (!branches.some(
-                    (b) =>
-                      b.branch === branch &&
-                      b.scope === "local" &&
-                      b.remote == null,
-                  ) ||
-                    !branches.some(
-                      (b) =>
-                        b.branch === branch &&
-                        b.scope === "remote" &&
-                        b.remote === pushRemote,
-                    )))
-              ) {
-                blockingReasons.push(
-                  "Cannot finish workflow: reconciled resource lacks cleanup evidence.",
-                );
-                break;
-              }
-            }
-          }
+          blockingReasons.push(...cleanup.blockingReasons);
+          return { blockingReasons, reworkNeeded, cleanup: cleanup.inspection };
         }
       }
     }
@@ -514,5 +431,6 @@ export function inspectDelivery(
     reworkNeeded: evalResult.reworkNeeded,
     sequenceCompleted,
     canFinish: evalResult.blockingReasons.length === 0,
+    ...(evalResult.cleanup ? { cleanup: evalResult.cleanup } : {}),
   };
 }

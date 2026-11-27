@@ -20,7 +20,7 @@ one with [pc-workspace](../pc-workspace/SKILL.md) before starting.
 
 Before starting the review, ensure the following inputs are available:
 1. **PR context / target branch:** PR number, URL, or local feature branch (`gh pr view` or `git branch --show-current`).
-2. **Base branch:** Base branch to compare against (defaults to `origin/<base>` resolved via `gh pr view --json baseRefName` or `origin/main`).
+2. **Base branch and repository:** Supply the assigned GitHub repository and any expected base branch. Use the PR’s live base when the caller leaves the branch open. Supply the base remote and head repository when reviewing from a fork.
 3. **Evaluated commit SHA (optional):** Target commit SHA to review (when dispatched with a specific evaluated revision, the live PR head must match it).
 4. **Repository & working directory:** The git checkout / worktree of the PR.
 5. **Review focus & acceptance criteria:** Specific issue requirements, acceptance criteria, or prior review feedback to verify against.
@@ -29,52 +29,28 @@ Before starting the review, ensure the following inputs are available:
 
 ### Step 1: Base branch, PR HEAD & worktree hygiene verification
 
-Always fetch remote state first so comparisons reflect the true upstream state:
+Resolve a branch or PR URL to a single numbered PR in the assigned GitHub repository. Run
+[`capture` from the pull request evidence helper](references/pr-evidence.md), passing the expected
+revision when assigned. Keep its JSON as `prEvidence` in the review result. A mismatch in the
+assigned checkout or PR identity requires reconciliation before review. Unavailable GitHub
+evidence blocks review.
+
+Fetch the recorded base branch from the selected base remote and verify `FETCH_HEAD` equals the
+captured `baseCommit`. Review the diff between those exact revisions:
 
 ```bash
-git fetch origin
+git diff "<baseCommit>...<commit>" --name-only
 ```
 
-1. **Resolve base branch:**
-   ```bash
-   BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "main")
-   ```
-   Always compare against `origin/$BASE` rather than a local branch to avoid stale references.
-
-2. **Verify target evaluated commit:**
-   Record the current checkout HEAD and remote PR head:
-   ```bash
-   LOCAL_HEAD=$(git rev-parse HEAD)
-   REMOTE_HEAD=$(gh pr view --json headRefOid -q .headRefOid 2>/dev/null || echo "$LOCAL_HEAD")
-   ```
-   - When an evaluated commit SHA was explicitly specified in the task prompt:
-     Verify that `LOCAL_HEAD` and `REMOTE_HEAD` match the specified SHA.
-     If the PR HEAD has moved or local checkout differs:
-     **Halt review immediately.** Explain that the PR head has changed, requiring a re-targeted review.
-   - For standalone or manual review:
-     Use `LOCAL_HEAD` as the evaluated commit (`reviewed_commit`).
-
-3. **Check for uncommitted changes and transient cruft:**
-   Inspect working tree state:
-   ```bash
-   git status --short -uall
-   ```
-   Categorize all uncommitted entries into legitimate files and transient cruft:
-   - **Legitimate source/config/doc files**: Tracked modifications or new source files intended for the repository.
-   - **Transient cruft and output artifacts**: Generated evaluation outputs, model checkpoints, plots, or data tables (`output/*`, `results/*`, `*.joblib`, `*.pt`, `*.tsv`, `*.csv`, `*.png`, etc.).
-   - If any uncommitted changes or transient cruft are present, flag as a blocking defect. The worktree must be clean.
-
-4. **Identify changed files:**
-   ```bash
-   git diff "origin/$BASE...$LOCAL_HEAD" --name-only
-   ```
-   Focus review on changed files rather than the entire codebase.
+Use that same range for all changed-file checks. Run `capture` again at handoff and compare its
+PR identity and local head with the initial capture. If they changed, return the drift with the
+original and observed values. Record the base SHA used for the review diff.
 
 ### Step 2: PR metadata audit (Title & Squashed Body)
 
 Fetch PR title and body:
 ```bash
-gh pr view --json title,body
+gh pr view "<prNumber>" --repo "<repository>" --json title,body
 ```
 
 1. **Evaluate PR title:**
@@ -124,10 +100,8 @@ When both apply, run them in parallel:
 
 Scan changed files for artifacts that should never be committed:
 - **Forbidden cruft:** HTML renders from notebooks (`.html`), binary archives (`.zip`, `.tar`, `.gz`, `.pkl`, `.npy`), cache artifacts (`__pycache__/`, `dist/`, `node_modules/`), large datasets (>100KB).
-- **Check file sizes:**
-  ```bash
-  git diff "origin/$BASE...$LOCAL_HEAD" --name-only | xargs -I{} sh -c 'test -f "{}" && stat -f "%z %N" "{}" 2>/dev/null || stat --format="%s %n" "{}" 2>/dev/null' | awk '$1 > 102400 {print}'
-  ```
+- **Check file sizes:** For each changed blob present at the reviewed commit, pass
+  `<commit>:<path>` as a single argument to `git cat-file -s` and flag sizes above 102400 bytes.
   Flag any detected cruft or oversized files as blocking issues.
 
 ### Step 5: Run automated quality checks
@@ -147,7 +121,7 @@ Resolve check tools strictly from the project's declared configuration (`pyproje
 | `go.mod` | `go test ./... && go vet ./...` |
 | `Snakefile` | Run main entry via project env (e.g. `.venv/bin/snakemake --lint -s workflow/Snakefile`), applying any project baseline exclusions from Step 3 |
 
-- **CI / GitHub Actions Checks**: Before checking remote CI status via `gh pr checks`, verify whether the repository actually configures CI (`test -d .github/workflows`). If no workflow files exist, mark remote CI checks as `not configured (skipped)` and do not treat absent checks as a failure.
+- **Remote CI**: For landing, use the shared helper to verify live GitHub requirements. Local workflow files do not establish which checks are required.
 
 Verify all applicable automated checks exit 0 without errors.
 
@@ -181,7 +155,7 @@ Compile findings into a structured report:
 
 ### Review Summary
 - Evaluated Commit: `<commit-sha>`
-- Base Branch: `origin/<base>`
+- Base Branch and SHA: `<baseBranch>` at `<baseCommit>`
 - Verdict: `<pass | rework | blocked>`
 
 ### Quality Checklist
@@ -218,7 +192,7 @@ Compile findings into a structured report:
 
 ## Task Outputs
 
-1. **Evaluated Commit SHA:** The verified commit SHA evaluated during the review (`reviewed_commit`).
+1. **Evaluated Commit and PR Evidence:** The verified head SHA (`reviewed_commit`) and the capture JSON (`prEvidence`) identify the evaluated revisions and PR.
 2. **Review Report:** Structured report detailing findings, severity, and verification evidence (`findings`).
 3. **Review Verdict:** The verdict (`pass`, `rework`, or `blocked`) with concise summary reported directly to the caller (or posted as a PR review comment via `gh pr review`).
 

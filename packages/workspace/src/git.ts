@@ -89,7 +89,7 @@ export function git(directory: string, ...args: string[]): string {
  */
 export function requireClean(directory: string): void {
   const { code, stdout, stderr } = runGitWithRawStdout(
-    directory, 'status', '--porcelain', '--untracked-files=all',
+    directory, '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all',
   );
   if (code !== 0) {
     throw new WorkspaceError('COMMAND_FAILED', stderr || stdout.trim() || 'git status failed', {

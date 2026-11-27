@@ -8,6 +8,7 @@ import type {
   WorkflowBudgets,
   WorkflowDefinition,
   DeliverySequence,
+  CleanupInspection,
   SkillProvider,
   LandingEvidence,
 } from "../workflow-policy/types.js";
@@ -231,6 +232,7 @@ export interface RunInspection {
   completed_stages_count: number;
   blocking_reasons: string[];
   finish_check: FinishCheck;
+  cleanup?: CleanupInspection;
   last_updated: string;
   delivery_sequence?: DeliverySequence;
   legacy?: boolean;

@@ -23,39 +23,60 @@ This skill can be invoked directly by a human or agent with an ordinary task pro
 1. **Branch & Base branch:** Feature branch name (`branch`) and base branch to merge into (`baseBranch`, defaults to the repository default branch).
 2. **Issue context:** Issue number and association references (e.g. `Refs #<issue>`). Issue closure follows acceptance verification.
 3. **Repository & working directory:** Target repository (`repository`, `owner/repo`), absolute `worktree`, feature/base branches, and delivered `commit` SHA. Read these from a supplied predecessor file. Direct invocation may supply them in the task prompt.
-4. **Approved evaluated commit SHA (optional):** Prior evaluated commit SHA if previously reviewed.
+4. **Prior review (optional):** Passing verdict and the original `prEvidence` JSON from `pc-pr-review`. A prior SHA alone requires a new review.
+5. **Fork context (when applicable):** Base Git remote, head repository, and the Git remote that publishes to it.
 
 ## Verification & Landing Method
 
 ### Step 0: Validate the delivered environment
 
-Follow [the environment contract](../pc-workspace/references/environment.md). Read the predecessor file when supplied, bind execution to its absolute `worktree`, and use that directory for all Git, GH, and review operations. Validate the local `origin` repository identity against `repository`, the current branch against `branch`, a clean working tree, and `git rev-parse HEAD` against the delivered `commit`. Resolve a missing direct-invocation commit from HEAD and record it before proceeding. Missing paths or conflicting environment fields require a blocked result with the expected and observed values.
-
-Use the supplied `baseBranch`, or query the repository default branch for direct invocation. Preserve the worktree for review and any repair. Write assigned result files at their explicit absolute paths.
+Follow [the environment contract](../pc-workspace/references/environment.md) in the assigned
+absolute checkout. Validate the repository, branch, clean working tree, and delivered commit
+before publishing. For direct invocation, resolve a missing commit from local HEAD and a missing
+base branch from the destination repository’s default. Select the base and publish remotes for
+the assigned repositories. Use explicit repository and PR identifiers in GitHub commands.
 
 ### Step 1: Create or update pull request
 
-1. Find existing PRs for the designated repository and branch, including completed PRs.
-   ```bash
-   gh pr list --repo "<repository>" --head "<branch>" --state all --json number,url,state,headRefOid,baseRefName
-   ```
-   Confirm the selected PR targets `baseBranch`. If it is already merged and its head matches the delivered commit, verify the merge result and report success idempotently. A closed PR or conflicting identity requires a blocked result.
-2. Publish the verified local branch before creating or updating an open PR. Feature branches are prepared locally before this task.
-   ```bash
-   git push --set-upstream origin "<branch>"
-   ```
-   If publishing fails, preserve the environment and report the conflict. Any history rewrite requires explicit task authorization and `--force-with-lease`.
-3. If no PR exists, prepare a body file outside the source worktree with real newlines, summary, test plan, and `Closes #<issue>`, then create it.
-   ```bash
-   gh pr create --repo "<repository>" --base "<baseBranch>" --head "<branch>" --title "<concise title>" --body-file "<prepared-pr-body-file>"
-   ```
-4. For an open PR, continue with the published branch. Report merge conflicts as blocked.
+Find PRs for the branch in the destination repository, including completed PRs:
+
+```bash
+gh pr list --repo "<repository>" --head "<branch>" --state all \
+  --json number,url,state,headRefName,headRepository,headRepositoryOwner,headRefOid,baseRefName
+```
+
+Select the unique PR for the base branch, head branch, and head repository, including the fork
+owner. An ambiguous or conflicting match requires reconciliation. For an existing merged PR,
+run the [evidence helper’s `readback`](../pc-pr-review/references/pr-evidence.md) against the
+delivered commit and the selected identity. Confirmed merges resume directly at Step 5.
+A closed, unmerged PR is blocked.
+
+Publish the verified branch to its assigned push remote:
+
+```bash
+git push --set-upstream "<push remote>" "<branch>"
+```
+
+If publishing fails, preserve the checkout and report the conflict. Any history rewrite requires
+explicit task authorization and `--force-with-lease`. If no PR exists, prepare a body file outside
+the checkout with real newlines, a summary, a test plan, and `Refs #<issue>`. Create the PR with
+the destination repository, explicit base, and head branch. For a fork, qualify the head with the
+fork owner.
+
+```bash
+gh pr create --repo "<repository>" --base "<baseBranch>" --head "<branch or owner:branch>" \
+  --title "<concise title>" --body-file "<absolute PR body file>"
+```
+
+Use `Refs #<issue>` in the PR and merge body for assigned issues. Replace any auto-closing
+keywords for those issues before review because acceptance verification owns issue closure.
 
 ### Step 2: Invoke pre-merge review
 
-Invoke `pc-pr-review` with execution bound to the same absolute `working_directory` / `worktree`, supplying `repository`, `branch`, `baseBranch`, the PR reference, and the delivered `commit` as the expected evaluated SHA:
+Invoke `pc-pr-review` with execution bound to the same absolute `working_directory` / `worktree`, supplying the repository, base remote, base branch, numbered PR, head repository, branch, and
+delivered commit as the expected evaluated SHA.
 - Inspect PR title, squashed body format, clean working tree, test quality, and static analysis results.
-- Reviewer outputs verdict: `pass`, `rework`, or `blocked`.
+- Require a `pass` verdict and its `prEvidence` JSON to proceed. Save the original evidence to an absolute file outside the checkout for verification and readback. Reuse a supplied passing review only when it includes that evidence.
 
 #### Handling review findings
 - If review verdict is **`rework`**:
@@ -69,41 +90,32 @@ Invoke `pc-pr-review` with execution bound to the same absolute `working_directo
 - If review verdict is **`blocked`**:
   - Return outcome `blocked` with blocker explanation and `merged: false`.
 
-### Step 3: Verified HEAD commit match & base branch check
+### Step 3: Verify review and required checks
 
-When review verdict is **`pass`**:
-1. Inspect local HEAD and remote PR head:
-   ```bash
-   LOCAL_HEAD=$(git rev-parse HEAD)
-   REMOTE_HEAD=$(gh pr view <PR> --repo "<repository>" --json headRefOid -q .headRefOid)
-   ```
-2. Ensure `LOCAL_HEAD` equals `REMOTE_HEAD` and matches the reviewed commit SHA.
-   **Halt protocol for PR HEAD drift:**
-   If the remote PR head moved or checkout HEAD changed after review, **halt immediately**. Prior review approval is invalidated; report `rework_needed` with note on head drift.
-3. Verify required CI checks pass when configured. If the repository has no `.github/workflows/` directory or the PR base branch has no required CI checks configured, skip this gate and continue to Step 4.
-   ```bash
-   test -d .github/workflows && gh pr checks <PR> --repo "<repository>" --required || true
-   ```
-   If `.github/workflows/` is absent, treat CI as not configured and proceed to Step 4. If configured required checks exist on GitHub and fail, are pending, or have not been reported, or configuration/status cannot be verified (e.g. permission or network errors), report `blocked`.
+Run [the evidence helper’s `verify`](../pc-pr-review/references/pr-evidence.md) against the
+original capture JSON and the delivered environment. A changed head or base branch requires a
+fresh review. Report expected and observed values with `rework_needed` for revision drift. Return
+`blocked` when evidence or required check status is unavailable. Proceed on successful verification.
 
 ### Step 4: Execute guarded squash merge
 
-Merge using explicit `--match-head-commit` to prevent race conditions:
+Use the explicit PR number, repository, and verified head SHA returned by Step 3:
 
 ```bash
-gh pr merge <PR> --repo "<repository>" --squash --match-head-commit "$LOCAL_HEAD" --body "Refs #<issue>"
+gh pr merge "<prNumber>" --repo "<repository>" --squash \
+  --match-head-commit "<commit>" --body "Refs #<issue>"
 ```
 
-- Always use `--match-head-commit`. GitHub atomically rejects the merge if HEAD changed.
-- Use association references (`Refs #<issue>`) in the PR and merge body. Replace automatic closing keywords for the assigned issues before merging; acceptance verification owns closure.
+Run the merge directly after verification. GitHub atomically rejects a changed head.
+Proceed to readback even if the command errors or is interrupted.
 
 ### Step 5: Verify merge completion
 
-Verify the merge result on GitHub:
-```bash
-gh pr view <PR> --repo "<repository>" --json state,mergedAt,mergeCommit
-```
-Extract the landed squash commit SHA (`mergeCommit.oid`).
+Use [the evidence helper’s `readback`](../pc-pr-review/references/pr-evidence.md) to query the
+same PR identity. A verified `merged: true` with `mergedCommit` establishes completion even
+after an interrupted command. An open or queued PR has no landed result. If the command’s outcome
+is uncertain, resolve it through readback before any retry, and repeat Step 3 before another merge
+attempt. Report a blocker when GitHub cannot establish the result.
 
 ## Quality Requirements & Completion Criteria
 

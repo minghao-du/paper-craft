@@ -7,3 +7,4 @@
 export * from './types.js';
 export { prepare } from './prepare.js';
 export { cleanup } from './cleanup.js';
+export { verifyAssignedEnvironment, type AssignedEnvironment, type VerifiedEnvironment } from './verify.js';

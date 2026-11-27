@@ -182,6 +182,9 @@ export function inspectState(o: InspectOptions): unknown {
     completed_stages_count: completed.length,
     blocking_reasons: reasons,
     finish_check: finishCheck,
+    ...(deliveryInspection?.cleanup
+      ? { cleanup: deliveryInspection.cleanup }
+      : {}),
     last_updated: state.last_updated,
     ...(state.delivery_sequence
       ? { delivery_sequence: state.delivery_sequence }

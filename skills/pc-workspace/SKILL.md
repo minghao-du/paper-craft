@@ -10,6 +10,7 @@ Manage Git working directories for implementation, review, integrated verificati
 `pc-workspace` follows the **Kernel-Wrapper Pattern**: deterministic workspace operations are implemented in `packages/workspace` (`packages/workspace/src/cli.ts`, requiring Node.js >= 22), while this document serves as the cognitive wrapper guiding subagents through envelope execution, fallback recovery, and cleanup.
 
 Prepared means that Git repository identity, absolute path, branch, revision, and required cleanliness are verified. Project dependency installation, compute connections, and data checks belong to the consuming task.
+To check an existing assignment, use [read-only verification](references/environment.md).
 
 ---
 

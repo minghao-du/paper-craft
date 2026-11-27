@@ -827,6 +827,17 @@ describe("calculateDeliveryDispatch and Domain Rules (W04, W05, W06, W10)", () =
       step_index: 10,
     };
 
+    const deliveredCandidate = {
+      branch: "b1",
+      worktree: "/wt/1",
+      created: true,
+    };
+    const verificationCandidate = {
+      kind: "detached",
+      worktree: "/wt/verify",
+      commit: "commit-abc",
+      verification_completed: true,
+    };
     const finalizeRecord: CompletionRecordView = {
       dispatch_id: "f1",
       stage: "issue_finalize",
@@ -857,9 +868,7 @@ describe("calculateDeliveryDispatch and Domain Rules (W04, W05, W06, W10)", () =
           },
         ],
         unresolved: [],
-        candidates: [
-          { branch: "b1", worktree: "/wt/1", push_remote: "origin" },
-        ],
+        candidates: [deliveredCandidate, verificationCandidate],
       },
       step_index: 11,
     };
@@ -873,7 +882,7 @@ describe("calculateDeliveryDispatch and Domain Rules (W04, W05, W06, W10)", () =
         outcome: "cleaned",
         retained_paths: [],
         retained_branches: [],
-        removed_paths: ["/wt/1"],
+        removed_paths: ["/wt/1", "/wt/verify"],
         removed_branches: [
           { branch: "b1", scope: "local", remote: null },
           { branch: "b1", scope: "remote", remote: "origin" },
@@ -907,6 +916,132 @@ describe("calculateDeliveryDispatch and Domain Rules (W04, W05, W06, W10)", () =
     expect(inspection.blockingReasons).toEqual([]);
     expect(inspection.sequenceCompleted).toBe(true);
     expect(inspection.reworkNeeded).toBe(false);
+    expect(inspection.cleanup).toEqual({
+      status: "complete",
+      missing_evidence: [],
+    });
+
+    const beforeCleanup = completedStages.slice(0, -1);
+    const inspect = (...attempts: CompletionRecordView[]) =>
+      inspectDelivery({
+        workflow,
+        deliveryState,
+        completedStages: [...beforeCleanup, ...attempts],
+      });
+
+    expect(inspect().cleanup).toMatchObject({
+      status: "first_attempt",
+      parameters: {
+        candidates: [deliveredCandidate, verificationCandidate],
+        unresolved: [],
+      },
+    });
+
+    const partial: CompletionRecordView = {
+      ...cleanupRecord,
+      result: {
+        outcome: "incomplete",
+        removed_paths: ["/wt/1", "/wt/verify"],
+        removed_branches: [
+          { branch: "b1", scope: "local" },
+          { branch: "b1", scope: "remote", remote: "fork" },
+        ],
+        retained_paths: [],
+        retained_branches: [{ branch: "b1", reason: "Remote unavailable" }],
+      },
+    };
+    const retry = inspect(partial);
+    expect(retry.canFinish).toBe(false);
+    expect(retry.cleanup).toEqual({
+      status: "retry",
+      parameters: { candidates: [deliveredCandidate], unresolved: [] },
+      missing_evidence: [
+        {
+          kind: "remote_branch",
+          branch: "b1",
+          remote: "origin",
+          reason: "Remote unavailable",
+        },
+      ],
+    });
+
+    const malformed = {
+      ...partial,
+      result: { ...partial.result, retained_paths: {} },
+    };
+    expect(inspect(malformed).cleanup).toMatchObject({
+      status: "retry",
+      parameters: { candidates: [deliveredCandidate, verificationCandidate] },
+    });
+
+    const remoteOnly: CompletionRecordView = {
+      ...cleanupRecord,
+      dispatch_id: "c2",
+      step_index: 13,
+      result: {
+        outcome: "cleaned",
+        removed_paths: [],
+        removed_branches: [
+          {
+            branch: "b1",
+            scope: "remote",
+            remote: "origin",
+            already_absent: true,
+          },
+        ],
+        retained_paths: [],
+        retained_branches: [],
+      },
+    };
+    expect(inspect(remoteOnly).canFinish).toBe(false);
+    expect(inspect(partial, remoteOnly).canFinish).toBe(true);
+    expect(inspect(malformed, remoteOnly).canFinish).toBe(false);
+    expect(
+      inspect(cleanupRecord, {
+        ...remoteOnly,
+        execution_status: "failed",
+      }).canFinish,
+    ).toBe(false);
+
+    const retainedLocal: CompletionRecordView = {
+      ...partial,
+      dispatch_id: "c2",
+      step_index: 13,
+      result: {
+        outcome: "incomplete",
+        removed_paths: [],
+        removed_branches: [],
+        retained_paths: [],
+        retained_branches: [
+          { branch: "b1", scope: "local", reason: "Branch changed" },
+        ],
+      },
+    };
+    expect(inspect(cleanupRecord, retainedLocal).cleanup).toMatchObject({
+      status: "retry",
+      missing_evidence: [
+        { kind: "local_branch", branch: "b1", reason: "Branch changed" },
+      ],
+    });
+    expect(
+      inspect(cleanupRecord, retainedLocal, { ...remoteOnly, step_index: 14 })
+        .canFinish,
+    ).toBe(false);
+
+    const refinalized = {
+      ...finalizeRecord,
+      dispatch_id: "f2",
+      step_index: 13,
+    };
+    expect(inspect(cleanupRecord, refinalized).cleanup).toMatchObject({
+      status: "first_attempt",
+      parameters: { candidates: [deliveredCandidate, verificationCandidate] },
+    });
+    expect(
+      inspect(cleanupRecord, { ...verifyRecord, step_index: 13 }).cleanup,
+    ).toEqual({
+      status: "refinalization_required",
+    });
   });
 });
 
