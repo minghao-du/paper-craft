@@ -5,7 +5,9 @@ description: Create or update slides for a weekly research group meeting (组会
 
 # Weekly group meeting slides
 
-Work from the project root. Use `_ignore/slides/` as the working deck directory. Look there even if Git ignores it. Update the existing deck in its native format and language, preserving useful slides, annotations, and figures. If the user supplies a previous deck elsewhere, use it as the starting point for the working copy. For a first report, create a locally runnable Chinese Slidev deck with preview/build scripts. Use theme-minghao when available to the project, including its layouts and live drawing tools as useful. Otherwise use a portable Slidev theme.
+Work from the project root. Use `_ignore/slides/` as the working deck directory. Look there even if Git ignores it. Update the existing deck in its native format and language, preserving useful slides, annotations, and figures. If the user supplies a previous deck elsewhere, use it as the starting point for the working copy. For a first report, create a locally runnable Chinese Slidev deck with preview/build scripts. Use the default content layout from `/Users/Minghao/Code/slides-template/theme-minghao/` for Slidev slides.
+
+Write slide content as plain Markdown headings, paragraphs, and lists. Reuse an existing project figure when it helps answer the question and matches the data being discussed. Before adding a card, columns, or other extra layout, explain what the default text layout cannot convey. Before drawing any new figure, including a scientific plot from project data, explain what it will show and why text and existing figures are insufficient. Wait for the user's explicit approval of the specific addition before implementing it. This also applies to targeted edits.
 
 ## Select the evidence
 
@@ -15,24 +17,24 @@ Review the old deck against this evidence. Keep enough context for colleagues to
 
 Include a result when it answers a live question, changes confidence in a conclusion, explains a failure, or affects the next experiment. Omit repetitive runs and incidental diagnostics. A null result or failed experiment can deserve several slides when it changes the decision.
 
-When the same method is applied to several datasets, cohorts, or conditions, choose one representative case and show its figures and tables in enough detail for colleagues to understand how to read the analysis. Summarize the other cases in text, naming each case and giving its actual outcome. Group cases with similar findings and include key values when they clarify the comparison. State any exception explicitly. Add a targeted figure for an exception only when the group needs to discuss the difference.
+When the same method is applied to several datasets, cohorts, or conditions, choose one representative case and explain its results in enough detail for colleagues to understand how to read the analysis. Summarize the other cases in text, naming each case and giving its actual outcome. Group cases with similar findings and include key values when they clarify the comparison. State any exception explicitly.
 
 ## Plan and write the weekly deck
 
 For a new deck or a weekly update, follow the outline and authoring steps below even if the resulting changes fit on one or two slides. For an explicitly targeted edit (such as correcting a unit or enabling table scrolling), edit the working deck directly and verify the change.
 
-1. The main agent independently drafts one outline around the group's scientific questions, changes in conclusions, quantitative comparisons, and material exceptions. Identify the representative case, evidence, and discussion point for each topic. Present the outline to the user and wait for explicit approval. If the user requests changes, revise the outline and resubmit it for approval.
+1. The main agent independently drafts one outline around the group's scientific questions, changes in conclusions, quantitative comparisons, and material exceptions. Identify the representative case, evidence, and discussion point for each topic. Include any proposed extra layouts or new figures and the reason for each so the user can approve them with the outline. Present the outline to the user and wait for explicit approval. If the user requests changes, revise the outline and resubmit it for approval.
 2. Once the user explicitly approves the current outline, the main agent alone writes or updates the deck in `_ignore/slides/`, prepares its figures, tables, and scripts, and verifies the finished presentation.
 
 ## Build for discussion
 
-Organize each topic around the group's question, the evidence, and what remains open. Use a precise finding or unresolved question as the slide title. Prefer plots for distributions and trends, compact tables for exact comparisons, and representative images for qualitative differences. Put units, sample sizes, and comparison conditions beside the visual wherever they affect interpretation.
+Organize each topic around the group's question, the evidence, and what remains open. Use a precise finding or unresolved question as the slide title. Use existing plots, tables, or representative images when colleagues need to inspect the evidence directly. Put units, sample sizes, and comparison conditions beside the visual wherever they affect interpretation.
 
 Use as few words as the evidence allows, with no character or slide limit. Give an important result enough room for an overview, a subgroup comparison, or a diagnostic example as warranted. Omit speaker notes and narration. Put any qualification needed to interpret a finding beside the evidence. Use familiar research terminology and explain ambiguous metrics in place. End at the concrete question or decision the evidence supports.
 
-Make the comparison and its main finding or question apparent at a glance on the first screen. Let the discussion question determine the layout and page break. In an interactive deck, keep related evidence together at a legible size even when it extends below the first screen. For example, place the overall trend above its subgroup table on the same page. Reuse the template's vertical scrolling or enable it on the content area. Give wide tables a horizontal scroll area and oversized images a pannable viewport when fine detail matters. For fixed-page formats, continue the figure or table on another page at readable scale.
+Make the comparison and its main finding or question apparent at a glance on the first screen. Break the page where the discussion moves to a new question. In an interactive deck, keep related evidence together at a legible size even when it extends below the first screen. For example, place the overall trend above its subgroup table on the same page. Use the template's built-in scrolling where available. If detailed evidence requires a custom scroll area or pannable viewport, include it in the layout proposal. For fixed-page formats, continue the figure or table on another page at readable scale.
 
-Reuse trustworthy project figures and extraction code. When generating figures or extracting tables, save reusable scripts in `_ignore/slides/scripts/`; keep the resulting figures and tables with the deck. Resolve inputs relative to the project and outputs relative to the deck. Keep source paths, run selections, and the reproduction command with each extraction or plotting script. Credit reused project outputs in a short caption when needed for identification. Generate measured values and scientific plots from the data.
+Reuse trustworthy project figures and extraction code. When generating approved figures or extracting tables, save reusable scripts in `_ignore/slides/scripts/`; keep the resulting figures and tables with the deck. Resolve inputs relative to the project and outputs relative to the deck. Keep source paths, run selections, and the reproduction command with each extraction or plotting script. Credit reused project outputs in a short caption when needed for identification. Generate measured values and scientific plots from the data.
 
 ## Verify and deliver
 
