@@ -1,3 +1,4 @@
+import { isNonEmptyString } from "../protocol/index.js";
 import type {
   AssertCanFinishParams,
   CleanupInspection,
@@ -19,9 +20,10 @@ import {
   resolveCanonicalStage,
 } from "./stage.js";
 import {
-  isNonEmptyString,
   parseFinalizationIssues,
   validateLandingRecord,
+  validateItemDelivery,
+  validateNoChangeEvidence,
 } from "./evidence.js";
 
 import { assessCleanup } from "./cleanup.js";
@@ -88,6 +90,24 @@ export function evaluateCompletion(params: {
     }
   }
 
+  if (workflow.completion_policy === "issue_delivery") {
+    for (const info of unresolvedRework.values()) {
+      if (tryResolveStage(workflow, info.stage)?.logical_task !== "issue_land") continue;
+      const evidence = deliveryState.sequence?.items.find(
+        (item) => String(item.issue_id) === info.issueId,
+      )?.no_change_evidence ?? (info.issueId === root ? deliveryState.rootNoChangeEvidence : undefined);
+      if (!evidence) continue;
+      try {
+        const work = validateNoChangeEvidence(workflow, completedStages, info.issueId, evidence);
+        if ((work.step_index ?? -1) > info.stepIndex) {
+          unresolvedRework.delete(`${info.issueId}::${info.stage}`);
+        }
+      } catch {
+        // Delivery checks below report invalid accepted evidence.
+      }
+    }
+  }
+
   const reworkNeeded = unresolvedRework.size > 0;
   if (reworkNeeded) {
     for (const info of unresolvedRework.values()) {
@@ -120,34 +140,19 @@ export function evaluateCompletion(params: {
         );
       }
       for (const item of sequence.items) {
-        if (!item.landed || !item.land_receipt_path || !item.land_dispatch_id) {
-          blockingReasons.push(
-            `Cannot finish workflow: issue '${item.issue_id}' lacks valid landing evidence.`,
-          );
-        } else {
-          // Validate accepted landing reference against completedStages (Section 10.4)
-          const landingRec = completedStages.find(
-            (e) => e.dispatch_id === item.land_dispatch_id,
-          );
-          if (!landingRec) {
-            blockingReasons.push(
-              `Cannot finish workflow: issue '${item.issue_id}' accepted landing dispatch '${item.land_dispatch_id}' is missing from history.`,
-            );
-          } else {
-            try {
-              validateLandingRecord(
-                workflow,
-                landingRec,
-                String(item.issue_id).trim(),
-                item.landed_attempt,
-              );
-            } catch (err: unknown) {
-              blockingReasons.push(
-                `Cannot finish workflow: issue '${item.issue_id}' landing evidence is invalid: ${(err as Error).message}`,
-              );
-            }
-          }
+        try {
+          validateItemDelivery(workflow, completedStages, item);
+        } catch (error) {
+          blockingReasons.push(`Cannot finish workflow: ${(error as Error).message}`);
         }
+      }
+    }
+
+    if (deliveryState.rootNoChangeEvidence) {
+      try {
+        validateNoChangeEvidence(workflow, completedStages, root, deliveryState.rootNoChangeEvidence);
+      } catch (error) {
+        blockingReasons.push(`Cannot finish workflow: ${(error as Error).message}`);
       }
     }
 

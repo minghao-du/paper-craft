@@ -86,6 +86,7 @@ export interface OwnershipEvidence {
   issue?: string | number;
   issueId?: string | number;
   source?: string;
+  pushedRepository?: string;
 }
 
 export interface TaskBranchCleanupCandidate {
@@ -98,6 +99,7 @@ export interface TaskBranchCleanupCandidate {
   baseRemote?: string;
   pushRemote?: string;
   pr?: number | string | PrDeliveryEvidence;
+  noChangeBase?: string;
   created?: boolean;
   ownershipEvidence?: OwnershipEvidence;
   consumersFinished?: boolean;

@@ -142,7 +142,7 @@ If CLI execution is blocked by environment constraints (e.g., Node runtime unava
 
 ## 5. Cleanup Protocol
 
-`cleanup` authorizes removal of assigned worktrees and merged local and remote task branches with verified issue-tree ownership. Run the cleanup subcommand with the cleanup envelope from the retained persistent checkout.
+`cleanup` authorizes removal of assigned worktrees and delivered task branches with verified issue-tree ownership. Run the cleanup subcommand with the cleanup envelope from the retained persistent checkout.
 
 ```bash
 node --import <paper-craft-root>/node_modules/tsx/dist/loader.mjs <paper-craft-root>/packages/workspace/src/cli.ts cleanup --input-envelope "<envelope_path>"
@@ -152,7 +152,7 @@ Return the CLI's stdout compact JSON verbatim once it emits a report referencing
 
 Reconcile creation, delivery, and verification receipts with live registrations and durable artifact locations. Supply the evidenced issue-tree inventory in `inputs.parameters.candidates`. Set `consumers_finished: true` only after all consumers of that resource have finished. Put resources specifically linked to the issue tree with missing or conflicting ownership in `inputs.parameters.unresolved`, with the source and reason. Preserve default/base branches and active resources. Keep receipts and preserved artifacts outside disposable candidates.
 
-For task branches, use the final delivered HEAD and PR identity. Omit `worktree` for a branch without a worktree. For a historical task branch, supply `ownership_evidence: { root_issue_id, issue, source }` with an in-scope issue and the matching PR or durable delivery receipt as its source.
+For task branches, use the final delivered HEAD and PR identity for merged work. For accepted zero-diff work, supply the recorded full `no_change_base` SHA and `ownership_evidence` linking the issue to its accepted work receipt. Omit `pr` for this path. Omit `worktree` for a branch without a worktree. For a historical task branch, supply `ownership_evidence: { root_issue_id, issue, source }` with an in-scope issue and the matching PR or durable delivery receipt as its source.
 
 ```json
 {
@@ -187,7 +187,11 @@ For every detached verification worktree, including one created in the current r
 }
 ```
 
-The kernel checks registered path, repository, branch and final HEAD, completed consumers, worktree locks, and tracked/untracked/ignored material. Once all safety and merge/verification checks pass, it unlinks managed `shared_paths` symlinks (without touching primary-checkout targets) and removes built-in regenerable runtime caches or configured `cleanable_ignored` entries (respecting `protected_ignored`), while retaining worktrees that contain any unapproved or protected ignored files. Feature cleanup requires live PR state `MERGED`, matching head branch/SHA and base, plus the PR merge commit in the fetched delivery base. This supports squash merges. Both remote identities must match the PR base and head repositories, including fork delivery.
+The kernel checks registered path, repository, branch and final HEAD, completed consumers, worktree locks, and tracked/untracked/ignored material. Once all safety and merge/verification checks pass, it unlinks managed `shared_paths` symlinks (without touching primary-checkout targets) and removes built-in regenerable runtime caches or configured `cleanable_ignored` entries (respecting `protected_ignored`), while retaining worktrees that contain any unapproved or protected ignored files.
+
+For an accepted zero-diff task, cleanup verifies an empty PR diff against the recorded base and confirms that base is reachable from the fetched delivery branch. If the cited receipt also establishes that this task pushed the branch, include its `owner/repo` in `ownership_evidence.pushed_repository`. Cleanup retains an existing remote branch until its repository and exact SHA match the evidenced push.
+
+For PR deliveries, feature cleanup requires live PR state `MERGED`, matching head branch/SHA and base, plus the PR merge commit in the fetched delivery base. This supports squash merges. Both remote identities must match the PR base and head repositories, including fork delivery.
 
 Delete the remote branch with an exact-SHA lease, remove the worktree without force, then compare-and-delete the local ref at its delivered SHA. Retain changed, active, unmerged, or conflicting resources and report why. Already absent resources permit retry after partial cleanup.
 

@@ -63,6 +63,15 @@ export interface LandingEvidence {
   [key: string]: unknown;
 }
 
+export interface NoChangeEvidence {
+  dispatch_id: string;
+  receipt_path: string;
+  delivery_attempt: number;
+  base_commit: string;
+  work_commit: string;
+  reason: string;
+}
+
 export interface DeliveryItem {
   issue_id: string;
   stage: string;
@@ -72,6 +81,7 @@ export interface DeliveryItem {
   land_receipt_path?: string;
   land_dispatch_id?: string;
   landed_attempt?: number;
+  no_change_evidence?: NoChangeEvidence;
   [key: string]: unknown;
 }
 
@@ -89,6 +99,7 @@ export interface DeliveryState {
   rootBudgets: IssueBudgets;
   sequence?: DeliverySequence;
   rootLandingEvidence?: LandingEvidence;
+  rootNoChangeEvidence?: NoChangeEvidence;
 }
 
 export interface TaskBudgetView {
@@ -163,6 +174,11 @@ export type DeliveryDecision =
       kind: "accept_plan";
       planDispatchId: string;
       nextStage: string;
+    }
+  | {
+      kind: "accept_no_change";
+      workDispatchId: string;
+      reason: string;
     }
   | {
       kind: "update_delivery";

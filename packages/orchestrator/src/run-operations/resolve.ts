@@ -14,7 +14,7 @@ import {
   resolveCanonicalStage,
 } from "../workflow-policy/index.js";
 import { toDeliveryState, applyNextDeliveryState } from "./domain-state.js";
-import { isFinished } from "./control.js";
+import { assertNotPaused, isFinished } from "./control.js";
 import { parseResolveOptions } from "./requests.js";
 import type {
   Completion,
@@ -113,6 +113,18 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     );
   }
   const expectedPreviousState = JSON.parse(JSON.stringify(state));
+
+  if (options.no_change_dispatch_id) {
+    const accepted = (state.decisions ?? []).find(
+      (entry) => entry.no_change_dispatch_id === options.no_change_dispatch_id,
+    );
+    if (accepted) {
+      if (accepted.reason !== options.reason) {
+        throw new Error(`Conflicting no-change acceptance retry for dispatch '${options.no_change_dispatch_id}'.`);
+      }
+      return accepted;
+    }
+  }
 
   if (isFinished(state)) {
     const existing = [...(state.decisions ?? [])]
@@ -288,7 +300,7 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
       ? String(options.landing_dispatch_id).trim()
       : null;
 
-  const canonicalNextStage = options.next_stage
+  let canonicalNextStage = options.next_stage
     ? resolveCanonicalStage(state.workflow_snapshot, options.next_stage).id
     : undefined;
 
@@ -299,7 +311,29 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     options.mark_landed != null ||
     options.complete_sequence;
 
-  if (hasDomainUpdates) {
+  let noChangeBase: string | undefined;
+  if (options.no_change_dispatch_id) {
+    if (state.active_dispatch || state.protocol_error) {
+      throw new Error("Cannot accept no-change delivery while a dispatch or protocol error is active.");
+    }
+    assertNotPaused(state, "accept no-change delivery");
+    const workDispatchId = options.no_change_dispatch_id;
+    const completedStages = state.completed_stages ?? [];
+    const deliveryResult = applyDeliveryDecision({
+      workflow: state.workflow_snapshot,
+      deliveryState: nextDeliveryState,
+      decision: { kind: "accept_no_change", workDispatchId, reason: options.reason },
+      completedStages,
+    });
+    const work = completedStages.find((entry) => entry.dispatch_id === workDispatchId)!;
+    const receipt = fs.statSync(work.receipt_path, { throwIfNoEntry: false });
+    if (!receipt?.isFile() || receipt.size === 0) {
+      throw new Error(`No-change work receipt '${work.receipt_path}' is missing or empty.`);
+    }
+    noChangeBase = String(work.result.no_change_base).toLowerCase();
+    canonicalNextStage = deliveryResult.nextStage;
+    nextDeliveryState = deliveryResult.nextDeliveryState;
+  } else if (hasDomainUpdates) {
     const landing =
       options.mark_landed != null
         ? {
@@ -339,6 +373,12 @@ export function resolveDecision(o: ResolveOptions): DecisionRecord {
     options: options.options ?? [],
     timestamp: now,
   };
+  if (options.no_change_dispatch_id) {
+    record.no_change_dispatch_id = options.no_change_dispatch_id;
+    record.no_change_base = noChangeBase;
+    record.current_issue = nextDeliveryState.currentIssueId;
+    if (nextDeliveryState.sequence?.completed) record.complete_sequence = true;
+  }
   if (canonicalNextStage) record.next_stage = canonicalNextStage;
   if (options.current_issue != null) {
     record.current_issue = String(options.current_issue);

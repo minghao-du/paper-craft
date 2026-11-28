@@ -1,4 +1,4 @@
-import { isNonEmptyString } from "./evidence.js";
+import { isNonEmptyString } from "../protocol/index.js";
 import type {
   CleanupInspection,
   CleanupTarget,

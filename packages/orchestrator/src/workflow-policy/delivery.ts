@@ -2,7 +2,6 @@ import type {
   ApplyDeliveryDecisionParams,
   CompletionRecordView,
   DeliveryDecisionResult,
-  DeliveryItem,
   DeliverySequence,
   DeliveryState,
   IssueBudgets,
@@ -22,6 +21,8 @@ import {
 import {
   isLandingInvalidatedBySubsequentWork,
   validateLandingRecord,
+  validateItemDelivery,
+  validateNoChangeWork,
 } from "./evidence.js";
 
 export interface DeliveryDispatchResult {
@@ -243,13 +244,13 @@ export function calculateDeliveryDispatch(
     targetIssueId = rootIssueId;
   }
 
-  // Find target item (if child) and authoritative budget (F07)
+  // Direct mode has a sequence item and shares the root budget.
   const isRootTarget = targetIssueId === rootIssueId;
-  const targetItem: DeliveryItem | null = isRootTarget
-    ? null
-    : (nextDeliveryState.sequence?.items?.find(
-        (i) => String(i.issue_id) === targetIssueId,
-      ) ?? null);
+  const sequenceItem = nextDeliveryState.sequence?.items.find(
+    (item) => String(item.issue_id) === targetIssueId,
+  );
+
+  const targetItem = isRootTarget ? undefined : sequenceItem;
 
   if (!isRootTarget && !targetItem) {
     throw new WorkflowIntegrityError(
@@ -257,9 +258,26 @@ export function calculateDeliveryDispatch(
     );
   }
 
-  const targetBudgets: IssueBudgets = targetItem
-    ? targetItem.budgets
-    : nextDeliveryState.rootBudgets;
+  const targetBudgets: IssueBudgets = isRootTarget
+    ? nextDeliveryState.rootBudgets
+    : targetItem!.budgets;
+
+  function resetTargetDelivery(): void {
+    const item = stageDef.logical_task === "issue_work" ? sequenceItem : targetItem;
+    if (item) {
+      item.landed = false;
+      delete item.landed_attempt;
+      delete item.land_receipt_path;
+      delete item.land_dispatch_id;
+      delete item.no_change_evidence;
+      item.status = "pending";
+      item.stage = stageDef.id;
+    }
+    if (isRootTarget) {
+      delete nextDeliveryState.rootLandingEvidence;
+      if (stageDef.logical_task === "issue_work") delete nextDeliveryState.rootNoChangeEvidence;
+    }
+  }
 
   let attempt: number;
   let deliveryAttempt: number;
@@ -371,16 +389,7 @@ export function calculateDeliveryDispatch(
       if (nextDeliveryState.sequence) {
         nextDeliveryState.sequence.active_rework_issue_id = targetIssueId;
       }
-      if (targetItem) {
-        targetItem.landed = false;
-        delete targetItem.landed_attempt;
-        delete targetItem.land_receipt_path;
-        delete targetItem.land_dispatch_id;
-        targetItem.status = "pending";
-        targetItem.stage = stageDef.id;
-      } else if (targetIssueId === rootIssueId) {
-        delete nextDeliveryState.rootLandingEvidence;
-      }
+      resetTargetDelivery();
       deliveryAttempt = targetBudgets.delivery_attempts_used;
       attempt = deliveryAttempt;
     } else if (isActiveRework) {
@@ -392,16 +401,7 @@ export function calculateDeliveryDispatch(
           );
         }
         targetBudgets.delivery_attempts_used = used + 1;
-        if (targetItem) {
-          targetItem.landed = false;
-          delete targetItem.landed_attempt;
-          delete targetItem.land_receipt_path;
-          delete targetItem.land_dispatch_id;
-          targetItem.status = "pending";
-          targetItem.stage = stageDef.id;
-        } else if (targetIssueId === rootIssueId) {
-          delete nextDeliveryState.rootLandingEvidence;
-        }
+        resetTargetDelivery();
         deliveryAttempt = targetBudgets.delivery_attempts_used;
         attempt = deliveryAttempt;
       } else {
@@ -412,9 +412,12 @@ export function calculateDeliveryDispatch(
         }
       }
     } else {
-      if (targetItem?.landed && request.attempt_intent !== "new") {
+      const revisitsNoChangeDelivery = (
+        stageDef.logical_task === "issue_work" || stageDef.logical_task === "issue_land"
+      ) && (sequenceItem?.no_change_evidence || (isRootTarget && nextDeliveryState.rootNoChangeEvidence));
+      if ((targetItem?.landed || revisitsNoChangeDelivery) && request.attempt_intent !== "new") {
         throw new Error(
-          `Issue '${targetIssueId}' is already landed. Modifying an already landed issue requires attempt_intent: 'new'.`,
+          `Issue '${targetIssueId}' already has accepted delivery evidence. Modifying a delivered issue requires attempt_intent: 'new'.`,
         );
       }
 
@@ -441,15 +444,9 @@ export function calculateDeliveryDispatch(
         targetBudgets.delivery_attempts_used = used + 1;
         deliveryAttempt = targetBudgets.delivery_attempts_used;
         attempt = deliveryAttempt;
-        if (targetItem) {
-          targetItem.landed = false;
-          delete targetItem.landed_attempt;
-          delete targetItem.land_receipt_path;
-          delete targetItem.land_dispatch_id;
-          targetItem.stage = stageDef.id;
-          targetItem.status = "pending";
-        } else if (targetIssueId === rootIssueId) {
-          delete nextDeliveryState.rootLandingEvidence;
+        resetTargetDelivery();
+        if (nextDeliveryState.sequence?.completed && stageDef.logical_task === "issue_work") {
+          nextDeliveryState.sequence.active_rework_issue_id = targetIssueId;
         }
       } else {
         deliveryAttempt = used;
@@ -666,6 +663,56 @@ export function applyDeliveryDecision(
     };
   }
 
+  if (decision.kind === "accept_no_change") {
+    if (workflow.completion_policy !== "issue_delivery") {
+      throw new Error("No-change acceptance requires the issue_delivery completion policy.");
+    }
+    const next = structuredClone(deliveryState);
+    const issueId = next.currentIssueId;
+    const sequence = next.sequence;
+    const item = sequence?.items.find((entry) => String(entry.issue_id) === issueId);
+    if (!sequence || (sequence.active_rework_issue_id
+      ? sequence.active_rework_issue_id !== issueId
+      : sequence.completed || sequence.items[sequence.current_index] !== item || !item)) {
+      throw new Error(`No-change acceptance requires the current delivery item or active rework issue, got '${issueId}'.`);
+    }
+    if (item?.landed || item?.no_change_evidence ||
+        (issueId === next.rootIssueId && (next.rootLandingEvidence || next.rootNoChangeEvidence))) {
+      throw new Error(`Issue '${issueId}' already has accepted delivery evidence.`);
+    }
+
+    const record = completedStages.findLast((entry) => {
+      if (entry.issue_id !== issueId) return false;
+      const stage = resolveCanonicalStage(workflow, entry.stage ?? "");
+      return !isAuxiliaryStage(stage);
+    });
+    const budgets = issueId === next.rootIssueId ? next.rootBudgets : item!.budgets;
+    const evidence = validateNoChangeWork(
+      workflow, record, issueId, budgets.delivery_attempts_used,
+      decision.workDispatchId, decision.reason,
+    );
+    if (item) {
+      item.no_change_evidence = evidence;
+      item.status = "no_change";
+      item.stage = "no_change";
+    } else {
+      next.rootNoChangeEvidence = evidence;
+    }
+
+    if (sequence.active_rework_issue_id) sequence.active_rework_issue_id = null;
+    const nextItem = sequence.items.find((entry) => !entry.landed && !entry.no_change_evidence);
+    return applyDeliveryDecision({
+      ...params,
+      deliveryState: next,
+      decision: {
+        kind: "update_delivery",
+        currentIssueId: nextItem?.issue_id ?? next.rootIssueId,
+        nextStage: nextItem ? "issue_work" : "issue_verify",
+        completeSequence: !nextItem,
+      },
+    });
+  }
+
   if (decision.kind === "update_delivery") {
     const rootIssueId = String(deliveryState.rootIssueId).trim();
     let currentIssueId = String(
@@ -740,6 +787,9 @@ export function applyDeliveryDecision(
         );
       }
 
+      if (item?.no_change_evidence || (isRoot && nextDeliveryState.rootNoChangeEvidence)) {
+        throw new Error(`Issue '${issue}' already has accepted no-change evidence.`);
+      }
       if (item) {
         if (item.landed) {
           if (item.land_dispatch_id !== dispatchId) {
@@ -818,25 +868,8 @@ export function applyDeliveryDecision(
         );
       }
 
-      const unlanded = sequence.items.filter(
-        (i) => !i.landed || !i.land_receipt_path || !i.land_dispatch_id,
-      );
-      if (unlanded.length > 0) {
-        throw new Error(
-          `Cannot complete delivery sequence: issues without landing evidence: ${unlanded.map((i) => i.issue_id).join(", ")}.`,
-        );
-      }
-
-      // Validate accepted landing references (Section 10.4, F17)
       for (const item of sequence.items) {
-        const rec = (completedStages ?? []).find(
-          (e) => e.dispatch_id === item.land_dispatch_id,
-        );
-        if (!rec) {
-          throw new WorkflowIntegrityError(
-            `Cannot complete delivery sequence: accepted landing dispatch '${item.land_dispatch_id}' for issue '${item.issue_id}' not found in completed stages.`,
-          );
-        }
+        validateItemDelivery(workflow, completedStages, item);
       }
 
       sequence.completed = true;

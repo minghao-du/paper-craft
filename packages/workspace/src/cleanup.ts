@@ -77,6 +77,84 @@ function defaultGhRunner(args: string[], cwd: string): string {
   return result.stdout.trim();
 }
 
+function branchDeliveryProof(
+  source: string,
+  task: TaskBranchCleanupCandidate,
+  deliveryTarget: string,
+  baseBranch: string,
+  commit: string,
+  ghRunner: NonNullable<CleanupOptions['ghRunner']>,
+): { integratedCommit: string; headRepository?: string } {
+  if (task.noChangeBase) {
+    const comparison = runGit(
+      source, 'diff', '--quiet', '--no-ext-diff', '--ignore-submodules=none', `${task.noChangeBase}...${commit}`, '--',
+    );
+    if (comparison.code !== 0) {
+      throw new Error('Task has changes against its recorded delivery base or the comparison failed.');
+    }
+    return { integratedCommit: task.noChangeBase, headRepository: task.ownershipEvidence?.pushedRepository };
+  }
+
+  const prVal = task.pr;
+  if (prVal === undefined || prVal === null) {
+    throw new Error('Candidate requires PR delivery evidence.');
+  }
+
+  const prId =
+    typeof prVal === 'object' && 'number' in prVal
+      ? String((prVal as PrDeliveryEvidence).number)
+      : String(prVal);
+
+  // Fetch PR evidence from GitHub
+  const prJsonRaw = ghRunner(
+    [
+      'pr',
+      'view',
+      prId,
+      '--repo',
+      deliveryTarget,
+      '--json',
+      'state,headRefName,headRefOid,baseRefName,mergeCommit,headRepository,headRepositoryOwner',
+    ],
+    source,
+  );
+
+  const prData: PrViewPayload = JSON.parse(prJsonRaw);
+
+  if (
+    prData.state !== 'MERGED' ||
+    prData.headRefName !== task.branch ||
+    prData.headRefOid !== commit ||
+    prData.baseRefName !== baseBranch
+  ) {
+    throw new Error('PR merge evidence does not match the delivered branch, base, and HEAD.');
+  }
+
+  const mergeCommitSha =
+    typeof prData.mergeCommit === 'object' && prData.mergeCommit !== null
+      ? prData.mergeCommit.oid
+      : typeof prData.mergeCommit === 'string'
+      ? prData.mergeCommit
+      : '';
+
+  if (!mergeCommitSha || !isValidCommitSha(mergeCommitSha)) {
+    throw new Error('PR merge commit is missing.');
+  }
+
+  const headOwner = prData.headRepositoryOwner?.login ?? '';
+  const headRepoName =
+    typeof prData.headRepository === 'object' && prData.headRepository !== null
+      ? prData.headRepository.name ?? ''
+      : typeof prData.headRepository === 'string'
+      ? prData.headRepository
+      : '';
+
+  const expectedRepo =
+    headOwner && headRepoName ? `${headOwner}/${headRepoName}` : headRepoName;
+
+  return { integratedCommit: mergeCommitSha, headRepository: expectedRepo };
+}
+
 /**
  * Validate explicit kind and strict boolean/structural types for a cleanup candidate.
  */
@@ -151,6 +229,7 @@ export function validateCleanupCandidate(
     const rootIssue = evRecord.rootIssueId ?? evRecord.root_issue_id;
     const issue = evRecord.issue ?? evRecord.issue_id ?? evRecord.issueId;
     const source = evRecord.source;
+    checkOptionalString(evRecord.pushedRepository, 'ownershipEvidence.pushedRepository');
 
     if (rootIssue !== undefined && typeof rootIssue !== 'string' && typeof rootIssue !== 'number') {
       throw new WorkspaceError(
@@ -170,6 +249,11 @@ export function validateCleanupCandidate(
         `Candidate at index ${idx} ownership evidence 'source' must be a string.`,
       );
     }
+  }
+
+  if (c.noChangeBase !== undefined &&
+      (c.kind !== 'task_branch' || typeof c.noChangeBase !== 'string' || !isValidCommitSha(c.noChangeBase) || c.pr != null)) {
+    throw new WorkspaceError('INVALID_INPUT', `Candidate at index ${idx} requires an exclusive full no-change base SHA on a task branch.`);
   }
 
   if (c.kind === 'task_branch') {
@@ -363,7 +447,7 @@ function verifyOwnershipAndCompletion(
         reason: `Detached worktree ownership_evidence identifies root_issue_id ${ownershipRoot}. Confirm ownership under cleanup root ${rootIssueId}.`,
       };
     }
-  } else if (!created && !(ownership?.issue && ownership?.source && matchesRoot)) {
+  } else if ((!created || candidate.noChangeBase) && !(ownership?.issue && ownership?.source?.trim() && matchesRoot)) {
     return {
       valid: false,
       reasonCode: 'OWNERSHIP_UNVERIFIED',
@@ -778,52 +862,6 @@ export function cleanup(
           throw new Error('Candidate requires deliveryTarget for branch verification.');
         }
 
-        const prVal = taskCand.pr;
-        if (prVal === undefined || prVal === null) {
-          throw new Error('Candidate requires PR delivery evidence.');
-        }
-
-        const prId =
-          typeof prVal === 'object' && 'number' in prVal
-            ? String((prVal as PrDeliveryEvidence).number)
-            : String(prVal);
-
-        // Fetch PR evidence from GitHub
-        const prJsonRaw = ghRunner(
-          [
-            'pr',
-            'view',
-            prId,
-            '--repo',
-            deliveryTarget,
-            '--json',
-            'state,headRefName,headRefOid,baseRefName,mergeCommit,headRepository,headRepositoryOwner',
-          ],
-          source,
-        );
-
-        const prData: PrViewPayload = JSON.parse(prJsonRaw);
-
-        if (
-          prData.state !== 'MERGED' ||
-          prData.headRefName !== branch ||
-          prData.headRefOid !== commit ||
-          prData.baseRefName !== baseBranch
-        ) {
-          throw new Error('PR merge evidence does not match the delivered branch, base, and HEAD.');
-        }
-
-        const mergeCommitSha =
-          typeof prData.mergeCommit === 'object' && prData.mergeCommit !== null
-            ? prData.mergeCommit.oid
-            : typeof prData.mergeCommit === 'string'
-            ? prData.mergeCommit
-            : '';
-
-        if (!mergeCommitSha || !isValidCommitSha(mergeCommitSha)) {
-          throw new Error('PR merge commit is missing.');
-        }
-
         const baseRemote = taskCand.baseRemote ?? (candAny.base_remote as string) ?? 'origin';
         const baseUrl = getRemoteUrl(source, baseRemote);
 
@@ -847,12 +885,17 @@ export function cleanup(
           `+refs/heads/${baseBranch}:refs/remotes/${baseRemote}/${baseBranch}`,
         );
 
-        if (!isAncestor(source, mergeCommitSha, `refs/remotes/${baseRemote}/${baseBranch}`)) {
-          throw new Error('PR merge commit is not an ancestor of base remote branch.');
+        const proof = branchDeliveryProof(source, taskCand, deliveryTarget, baseBranch, commit, ghRunner);
+        if (!isAncestor(source, proof.integratedCommit, `refs/remotes/${baseRemote}/${baseBranch}`)) {
+          throw new Error('Recorded delivery is not on the fetched base branch.');
         }
 
         const pushRemote = taskCand.pushRemote ?? (candAny.push_remote as string) ?? 'origin';
-        const remoteUrl = getRemoteUrl(source, pushRemote);
+        const pushUrls = runGit(source, 'remote', 'get-url', '--push', '--all', '--', pushRemote);
+        if (pushUrls.code !== 0 || !pushUrls.stdout || pushUrls.stdout.includes('\n')) {
+          throw new Error('Cleanup requires a single identifiable push destination.');
+        }
+        const remoteUrl = pushUrls.stdout;
 
         const remoteRepoRaw = ghRunner(
           ['repo', 'view', remoteUrl, '--json', 'nameWithOwner,defaultBranchRef'],
@@ -868,22 +911,11 @@ export function cleanup(
           throw new Error('Default branch must be retained.');
         }
 
-        const headOwner = prData.headRepositoryOwner?.login ?? '';
-        const headRepoName =
-          typeof prData.headRepository === 'object' && prData.headRepository !== null
-            ? prData.headRepository.name ?? ''
-            : typeof prData.headRepository === 'string'
-            ? prData.headRepository
-            : '';
-
-        const expectedRepo =
-          headOwner && headRepoName ? `${headOwner}/${headRepoName}` : headRepoName;
-
         if (
           !remoteRepo.nameWithOwner ||
-          (expectedRepo && remoteRepo.nameWithOwner.toLowerCase() !== expectedRepo.toLowerCase())
+          (proof.headRepository && remoteRepo.nameWithOwner.toLowerCase() !== proof.headRepository.toLowerCase())
         ) {
-          throw new Error('Push remote differs from the PR head repository.');
+          throw new Error('Push remote differs from the evidenced head repository.');
         }
 
         // Check remote branch existence via ls-remote
@@ -891,7 +923,7 @@ export function cleanup(
           source,
           'ls-remote',
           '--refs',
-          pushRemote,
+          remoteUrl,
           ref,
         );
 
@@ -900,6 +932,9 @@ export function cleanup(
         }
 
         if (lsStdout.trim()) {
+          if (taskCand.noChangeBase && !proof.headRepository) {
+            throw new Error('No-change delivery lacks push ownership evidence for the existing remote branch.');
+          }
           const remoteHeadSha = lsStdout.trim().split(/\s+/)[0];
           if (remoteHeadSha !== commit) {
             throw new Error('Remote branch has changed since delivery.');

@@ -12,6 +12,7 @@ export function toDeliveryState(state: RuntimeState): DeliveryState {
     rootBudgets: state.budgets,
     sequence: state.delivery_sequence,
     rootLandingEvidence: state.root_landing_evidence,
+    rootNoChangeEvidence: state.root_no_change_evidence,
   };
 }
 
@@ -20,12 +21,13 @@ export function applyNextDeliveryState(
   nextDeliveryState: DeliveryState,
 ): Pick<
   RuntimeState,
-  "current_issue_id" | "budgets" | "delivery_sequence" | "root_landing_evidence"
+  "current_issue_id" | "budgets" | "delivery_sequence" | "root_landing_evidence" | "root_no_change_evidence"
 > {
   return {
     current_issue_id: nextDeliveryState.currentIssueId,
     budgets: nextDeliveryState.rootBudgets,
     delivery_sequence: nextDeliveryState.sequence,
     root_landing_evidence: nextDeliveryState.rootLandingEvidence,
+    root_no_change_evidence: nextDeliveryState.rootNoChangeEvidence,
   };
 }

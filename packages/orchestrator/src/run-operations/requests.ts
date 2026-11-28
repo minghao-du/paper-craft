@@ -396,6 +396,8 @@ const RESOLVE_ALLOWED_FIELDS = [
   "next_stage",
   "plan_dispatch_id",
   "plan-dispatch-id",
+  "no_change_dispatch_id",
+  "no-change-dispatch-id",
   "current_issue",
   "current-issue",
   "mark_landed",
@@ -517,6 +519,17 @@ export function parseResolveOptions(
   }
 
   const currentIssue = raw.current_issue ?? raw["current-issue"];
+  const noChangeId = raw.no_change_dispatch_id ?? raw["no-change-dispatch-id"];
+  if (noChangeId !== undefined) {
+    if (typeof noChangeId !== "string" || !noChangeId.trim()) {
+      throw new Error("Field 'no_change_dispatch_id' must be a non-empty string.");
+    }
+    if (decision !== "continue" || planDispatchId || raw.next_stage != null ||
+        currentIssue != null || markLanded != null || landingDispatchId != null ||
+        completeSequence || raw.options !== undefined) {
+      throw new Error("No-change acceptance requires 'continue', a reason, and no other steering options.");
+    }
+  }
 
   return {
     receipt_root:
@@ -527,6 +540,7 @@ export function parseResolveOptions(
       ? { next_stage: (raw.next_stage as string).trim() }
       : {}),
     ...(planDispatchId ? { plan_dispatch_id: planDispatchId } : {}),
+    ...(typeof noChangeId === "string" ? { no_change_dispatch_id: noChangeId.trim() } : {}),
     ...(Array.isArray(raw.options) ? { options: raw.options as string[] } : {}),
     ...(currentIssue != null
       ? { current_issue: currentIssue as string | number }

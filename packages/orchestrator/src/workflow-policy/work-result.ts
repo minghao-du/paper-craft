@@ -1,7 +1,7 @@
-import { isObject, type CompactReport } from "../protocol/index.js";
+import { isNonEmptyString, isObject, type CompactReport } from "../protocol/index.js";
 import { isValidCommitSha } from "../../../workspace/src/git.js";
 import type { WorkflowStage } from "./types.js";
-import { isNonEmptyString } from "./evidence.js";
+
 
 const inFlightOutcomes = new Set(["submitted", "pending", "running", "in_flight"]);
 
@@ -14,7 +14,7 @@ function hasVerifiedJob(job: unknown): boolean {
 }
 
 /** Evidence required to settle a successful implementation delivery. Other conclusions route normally. */
-export function missingWorkEvidence(stage: WorkflowStage, report: CompactReport): string[] {
+export function missingWorkEvidence(stage: WorkflowStage, report: Pick<CompactReport, "result" | "execution_status">): string[] {
   const result = report.result;
   if (stage.logical_task !== "issue_work" || report.execution_status !== "succeeded"
       || result.outcome === "rework_needed" || result.outcome === "out_of_scope") return [];

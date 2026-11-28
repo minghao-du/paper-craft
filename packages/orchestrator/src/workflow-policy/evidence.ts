@@ -1,16 +1,18 @@
+import { isNonEmptyString } from "../protocol/index.js";
+import { isValidCommitSha } from "../../../workspace/src/git.js";
+import { missingWorkEvidence } from "./work-result.js";
 import type {
   CompletionRecordView,
+  DeliveryItem,
+  NoChangeEvidence,
   WorkflowDefinition,
 } from "./types.js";
+import { WorkflowIntegrityError } from "./types.js";
 import {
   invalidatesLanding,
   isLandingStage,
   resolveCanonicalStage,
 } from "./stage.js";
-
-export function isNonEmptyString(val: unknown): val is string {
-  return typeof val === "string" && val.trim() !== "";
-}
 
 export interface ValidatedLandingRecord {
   dispatchId: string;
@@ -193,4 +195,95 @@ export function parseFinalizationIssues(
     });
   }
   return { valid: true, issues };
+}
+
+/** Bind the orchestrator's no-change decision to a successful, current work receipt. */
+export function validateNoChangeWork(
+  workflow: WorkflowDefinition,
+  record: CompletionRecordView | undefined,
+  issueId: string,
+  attempt: number,
+  dispatchId: string,
+  reason: string,
+): NoChangeEvidence {
+  if (
+    !record || record.dispatch_id !== dispatchId || record.issue_id !== issueId ||
+    !Number.isInteger(attempt) || attempt < 1 || record.delivery_attempt !== attempt ||
+    !isNonEmptyString(record.receipt_path) || record.execution_status !== "succeeded"
+  ) {
+    throw new Error(`No-change work dispatch '${dispatchId}' is not a successful receipt for issue '${issueId}' delivery attempt ${attempt}.`);
+  }
+  const baseCommit = record.result?.no_change_base;
+  if (!isNonEmptyString(baseCommit) || !isValidCommitSha(baseCommit) || !isNonEmptyString(reason)) {
+    throw new Error("No-change acceptance requires a full target baseline SHA and an acceptance rationale.");
+  }
+  const stage = resolveCanonicalStage(workflow, record.stage ?? "");
+  const result = record.result ?? {};
+  if (stage.logical_task !== "issue_work" ||
+      ["rework_needed", "out_of_scope", "failed", "blocked"].includes(String(result.outcome)) ||
+      !isNonEmptyString(result.commit) ||
+      missingWorkEvidence(stage, { execution_status: "succeeded", result }).length > 0) {
+    throw new Error(`No-change work dispatch '${dispatchId}' lacks completed work evidence.`);
+  }
+  return {
+    dispatch_id: dispatchId,
+    receipt_path: record.receipt_path,
+    delivery_attempt: attempt,
+    base_commit: baseCommit.toLowerCase(),
+    work_commit: result.commit.toLowerCase(),
+    reason,
+  };
+}
+
+export function validateNoChangeEvidence(
+  workflow: WorkflowDefinition,
+  history: readonly CompletionRecordView[],
+  issueId: string,
+  evidence: NoChangeEvidence,
+): CompletionRecordView {
+  const record = history.find((entry) => entry.dispatch_id === evidence.dispatch_id);
+  if (!record) {
+    throw new WorkflowIntegrityError(`Issue '${issueId}' accepted no-change dispatch '${evidence.dispatch_id}' is missing from history.`);
+  }
+  const validated = validateNoChangeWork(
+    workflow, record, issueId, evidence.delivery_attempt, evidence.dispatch_id, evidence.reason,
+  );
+  if (validated.receipt_path !== evidence.receipt_path ||
+      validated.delivery_attempt !== evidence.delivery_attempt ||
+      validated.work_commit !== evidence.work_commit ||
+      validated.base_commit !== evidence.base_commit) {
+    throw new Error(`No-change evidence for issue '${issueId}' does not match its accepted work receipt.`);
+  }
+  const subsequentWork = history.some((entry) =>
+    entry.issue_id === issueId && (entry.step_index ?? -1) > (record.step_index ?? -1) &&
+    resolveCanonicalStage(workflow, entry.stage ?? "").logical_task === "issue_work"
+  );
+  if (subsequentWork) {
+    throw new Error(`No-change evidence for issue '${issueId}' was invalidated by subsequent work.`);
+  }
+  return record;
+}
+
+/** Resolve the accepted delivery reference, including runs saved before no-change delivery. */
+export function validateItemDelivery(
+  workflow: WorkflowDefinition,
+  history: readonly CompletionRecordView[],
+  item: DeliveryItem,
+): void {
+  const issue = String(item.issue_id).trim();
+  if (item.no_change_evidence) {
+    if (item.landed || item.land_dispatch_id || item.land_receipt_path || item.landed_attempt !== undefined) {
+      throw new Error(`Issue '${issue}' has conflicting no-change and landing evidence.`);
+    }
+    validateNoChangeEvidence(workflow, history, issue, item.no_change_evidence);
+    return;
+  }
+  if (!item.landed || !item.land_receipt_path || !item.land_dispatch_id) {
+    throw new Error(`Issue '${issue}' lacks valid landing evidence or an accepted no-change receipt.`);
+  }
+  const record = history.find((entry) => entry.dispatch_id === item.land_dispatch_id);
+  if (!record) {
+    throw new WorkflowIntegrityError(`Issue '${issue}' accepted landing dispatch '${item.land_dispatch_id}' is missing from history.`);
+  }
+  validateLandingRecord(workflow, record, issue, item.landed_attempt);
 }

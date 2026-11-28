@@ -20,3 +20,6 @@ export type JsonObject = Record<string, unknown>;
 
 export const isObject = (value: unknown): value is JsonObject =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+
+export const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim() !== "";

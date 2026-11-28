@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup } from '../src/cleanup.js';
 import { resolvePath } from '../src/git.js';
+import { mapToCleanupRequest } from '../src/task-io.js';
 import { CleanupCandidate, WorkspaceError } from '../src/types.js';
 
 interface TestContext {
@@ -71,6 +72,55 @@ describe('Workspace Cleanup (cleanup)', () => {
   afterEach(() => {
     ctx.cleanupEnv();
   });
+
+  it.each(['accepted', 'changed', 'remote exists', 'owned remote'] as const)(
+    'cleans only evidenced zero-diff resources (%s)',
+    (scenario) => {
+      const branch = 'issue-194';
+      const worktree = path.join(ctx.tempDir, branch);
+      runGit(ctx.repoDir, 'worktree', 'add', '-b', branch, worktree);
+      if (scenario === 'changed') {
+        fs.writeFileSync(path.join(worktree, 'README.md'), 'unintegrated work');
+        runGit(worktree, 'commit', '-am', 'Independent feature change');
+      }
+      const commit = runGit(worktree, 'rev-parse', 'HEAD');
+      // Fetching and pushing can target different repositories in a fork checkout.
+      const fork = path.join(ctx.tempDir, 'fork.git');
+      runGit(ctx.repoDir, 'init', '--bare', fork);
+      runGit(ctx.repoDir, 'remote', 'add', 'delivery', ctx.originBare);
+      runGit(ctx.repoDir, 'remote', 'set-url', '--push', 'delivery', fork);
+      if (scenario === 'remote exists' || scenario === 'owned remote') runGit(worktree, 'push', 'delivery', branch);
+
+      // A concurrent upstream change does not introduce a feature-side PR diff.
+      fs.writeFileSync(path.join(ctx.repoDir, 'upstream'), 'new base content');
+      runGit(ctx.repoDir, 'add', 'upstream');
+      runGit(ctx.repoDir, 'commit', '-m', 'Advance delivery base');
+      runGit(ctx.repoDir, 'push', 'origin', 'main');
+      const base = runGit(ctx.repoDir, 'rev-parse', 'HEAD');
+      const { request } = mapToCleanupRequest({
+        task: { root_issue_id: '190' },
+        inputs: { parameters: { candidates: [{
+          kind: 'task_branch', branch, worktree, commit,
+          delivery_target: 'owner/project', push_remote: 'delivery', no_change_base: base, consumers_finished: true,
+          ownership_evidence: {
+            root_issue_id: '190', issue: '194', source: 'accepted work receipt',
+            pushed_repository: scenario === 'owned remote' ? 'worker/fork' : undefined,
+          },
+        }] } },
+      }, { repoDir: ctx.repoDir });
+
+      const result = cleanup(request, { ghRunner(args) {
+        if (args[0] !== 'repo') throw new Error('No PR exists for this task');
+        return JSON.stringify({ nameWithOwner: args[2] === fork ? 'worker/fork' : 'owner/project', defaultBranchRef: { name: 'main' } });
+      } });
+      const accepted = scenario === 'accepted' || scenario === 'owned remote';
+      expect(result.outcome).toBe(accepted ? 'cleaned' : 'incomplete');
+      expect(fs.existsSync(worktree)).toBe(!accepted);
+      expect(runGit(ctx.repoDir, 'branch', '--list', branch).includes(branch)).toBe(!accepted);
+      expect(runGit(ctx.repoDir, 'ls-remote', '--refs', fork, `refs/heads/${branch}`).includes(commit))
+        .toBe(scenario === 'remote exists');
+    },
+  );
 
   it('should successfully clean delivered task branch, worktree, and remote branch', () => {
     const startTime = Date.now();

@@ -4,6 +4,7 @@
  */
 export {
   isObject,
+  isNonEmptyString,
   ProtocolError,
   type JsonObject,
   type ProtocolErrorOptions,

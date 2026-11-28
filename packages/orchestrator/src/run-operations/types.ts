@@ -11,6 +11,7 @@ import type {
   CleanupInspection,
   SkillProvider,
   LandingEvidence,
+  NoChangeEvidence,
 } from "../workflow-policy/types.js";
 
 export type { SkillProvider, LandingEvidence };
@@ -95,6 +96,8 @@ export interface DecisionRecord {
   options?: string[];
   next_stage?: string;
   plan_dispatch_id?: string;
+  no_change_dispatch_id?: string;
+  no_change_base?: string;
   current_issue?: string;
   mark_landed?: string;
   landing_dispatch_id?: string | null;
@@ -123,6 +126,7 @@ export interface RuntimeState {
     decision_index: number;
   };
   root_landing_evidence?: LandingEvidence;
+  root_no_change_evidence?: NoChangeEvidence;
   protocol_error?: ProtocolError | null;
   orchestrator_decision?: string;
   originating_stage_for_replan?: string | null;
@@ -199,6 +203,7 @@ export interface ResolveOptions {
   options?: string[];
   next_stage?: string | null;
   plan_dispatch_id?: string;
+  no_change_dispatch_id?: string;
   current_issue?: string | number | null;
   mark_landed?: string | number | null;
   /** Dispatch id of the completed pc-pr-land record that proves mark_landed. */

@@ -1509,3 +1509,64 @@ describe("F18: invalid sequence cursor validation", () => {
     ).toThrow(WorkflowIntegrityError);
   });
 });
+
+it("settles no-change child rework in an unfinished sequence and accepts a normal merge for the successor", () => {
+  const deliveryState = defaultDeliveryState();
+  deliveryState.sequence!.active_rework_issue_id = "1";
+  const result = {
+    commit: "a".repeat(40),
+    no_change_base: "b".repeat(40),
+    quality_gates: "passed",
+    self_review: "completed",
+    external_compute: "none",
+  };
+  const work: CompletionRecordView = {
+    dispatch_id: "w1",
+    stage: "stage_2_work",
+    issue_id: "1",
+    execution_status: "succeeded",
+    result,
+    receipt_path: "/r/w1.md",
+    delivery_attempt: 1,
+    step_index: 3,
+  };
+  const decision: DeliveryDecision = {
+    kind: "accept_no_change",
+    workDispatchId: "w1",
+    reason: "The clean worktree has an empty PR diff and the baseline passes child acceptance.",
+  };
+  expect(() => applyDeliveryDecision({
+    workflow, deliveryState, decision,
+    completedStages: [{ ...work, result: { ...result, no_change_base: "not-a-sha" } }],
+  })).toThrow(/full target baseline SHA/);
+  const accepted = applyDeliveryDecision({
+    workflow, deliveryState, decision, completedStages: [work],
+  });
+  expect(accepted.nextStage).toBe("stage_2_work");
+  expect(accepted.nextDeliveryState).toMatchObject({
+    currentIssueId: "2",
+    sequence: { active_rework_issue_id: null, current_index: 1, completed: false },
+  });
+
+  const otherLanding = { ...landed, dispatch_id: "d2", issue_id: "2", step_index: 4 };
+  const advanced = applyDeliveryDecision({
+    workflow, deliveryState: accepted.nextDeliveryState,
+    decision: {
+      kind: "update_delivery",
+      landing: { issueId: "2", dispatchId: "d2" },
+      completeSequence: true,
+      nextStage: "issue_verify",
+    },
+    completedStages: [work, otherLanding],
+  });
+  expect(advanced.nextDeliveryState).toMatchObject({
+    currentIssueId: "0",
+    sequence: {
+      completed: true,
+      items: [
+        { issue_id: "1", landed: false, no_change_evidence: { dispatch_id: "w1" } },
+        { issue_id: "2", landed: true, land_dispatch_id: "d2" },
+      ],
+    },
+  });
+});

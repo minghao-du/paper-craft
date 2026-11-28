@@ -564,6 +564,7 @@ function normalizeTransportCandidate(
     const rootIssue = ev.rootIssueId ?? ev.root_issue_id;
     const issue = ev.issue ?? ev.issue_id ?? ev.issueId;
     const source = ev.source;
+    const pushedRepository = ev.pushed_repository ?? ev.pushedRepository;
 
     if (rootIssue !== undefined && typeof rootIssue !== 'string' && typeof rootIssue !== 'number') {
       throw new WorkspaceError(
@@ -584,7 +585,11 @@ function normalizeTransportCandidate(
       );
     }
 
+    if (pushedRepository !== undefined && typeof pushedRepository !== 'string') {
+      throw new WorkspaceError('INVALID_INPUT', `Candidate at index ${idx} ownership evidence pushed_repository must be a string.`);
+    }
     ownershipEvidence = {
+      ...(pushedRepository === undefined ? {} : { pushedRepository }),
       rootIssueId: rootIssue !== undefined ? rootIssue : undefined,
       root_issue_id: rootIssue !== undefined ? rootIssue : undefined,
       issue: issue !== undefined ? issue : undefined,
@@ -705,6 +710,10 @@ function normalizeTransportCandidate(
     ? String(c.pushRemote ?? c.push_remote)
     : undefined;
 
+  const noChangeBase = c.no_change_base ?? c.noChangeBase;
+  if (noChangeBase !== undefined && (kind !== 'task_branch' || typeof noChangeBase !== 'string')) {
+    throw new WorkspaceError('INVALID_INPUT', `Candidate at index ${idx} requires a task branch and full SHA for no_change_base.`);
+  }
   let candidate: CleanupCandidate;
   if (kind === 'detached') {
     candidate = {
@@ -730,6 +739,7 @@ function normalizeTransportCandidate(
       baseRemote,
       pushRemote,
       pr,
+      ...(noChangeBase === undefined ? {} : { noChangeBase }),
       created,
       ownershipEvidence,
       consumersFinished,

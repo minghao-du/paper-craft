@@ -38,13 +38,13 @@ Before starting verification, ensure the necessary inputs are available via one 
 The caller provides a GitHub issue number or URL (e.g., `#123` or `https://github.com/.../issues/123`):
 1. Fetch issue details and comments via `gh issue view <issue> --comments`.
 2. Extract the original scientific objective, falsifiable acceptance criteria, and linked child issues/PRs.
-3. Identify child delivery records (merged commit SHAs, PR URLs, and delivery summaries).
+3. Identify accepted deliveries for the issue and its children. For each PR, gather the merge SHA and URL. For each zero-diff delivery, gather the accepted work receipt, work and base SHAs, acceptance rationale, and any durable artifact locations.
 
 ### Mode 2: Explicit Context Invocation
 The caller directly provides structured verification inputs in the prompt:
 1. **Original objective:** Parent issue objective and problem statement.
 2. **Acceptance criteria:** Explicit list of required scientific and engineering criteria.
-3. **Delivery evidence:** List of child delivery records (issue numbers, merged commits, PR URLs, worker summaries).
+3. **Delivery evidence:** The accepted delivery records described above for the issue and its children.
 4. **Target commit/tree:** The integrated Git HEAD to evaluate.
 
 ## Three-Tier Integrated Verification Protocol
@@ -61,7 +61,7 @@ fixed SHA as `evaluatedHead` throughout verification. Return environment conflic
 Verify repository integrity and automated checks on the integrated commit:
 - Inspect Git HEAD commit SHA (`git rev-parse HEAD`).
 - Run project build, lint, and core test suites (e.g., `npm run lint`, `npm run typecheck`, `npm test`, `pnpm docs:check`).
-- Confirm that all child delivery branches have merged cleanly without regressions.
+- Check that PR deliveries are integrated. For zero-diff deliveries, trace the accepted work evidence to its recorded revision and check that it still applies to the assigned integrated HEAD. Report stale or missing evidence as a verification gap.
 
 ### Tier 2: Scientific Artifact Authenticity & Non-Triviality
 Verify that the declared research artifacts exist in the named environment and represent legitimate computational work:
@@ -85,7 +85,7 @@ When all engineering checks pass, artifacts are authentic, and scientific goals 
 ```json
 {
   "outcome": "verified",
-  "summary": "All parent scientific objectives and engineering criteria satisfied by merged deliverables",
+  "summary": "All parent scientific objectives and engineering criteria satisfied by the integrated delivery",
   "evaluatedHead": "<commit SHA evaluated>",
   "evidence": "<Concrete verification commands executed, verified metric values, artifact paths, and test suite logs>"
 }
