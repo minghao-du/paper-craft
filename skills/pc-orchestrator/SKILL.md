@@ -153,10 +153,22 @@ Before routing, check the four required fields (`execution_status`, `result`, `r
 the execution-status enum, an object-valued `result`, the assigned absolute receipt path, and a one-sentence summary.
 Check routing fields and reported execution environment against the dispatched task requirements.
 
-#### Same-Conversation Continuation for Premature or In-Flight `stage_2_work` Returns
-1. Send the compact report to `complete`. For the `issue_work` role, an `action: "continue_same_dispatch"` response identifies the missing [delivery evidence](../pc-issue-work/SKILL.md#task-outputs) and leaves the active dispatch open. Return the missing fields to the existing worker. A progress message without a compact report can be continued directly in that conversation.
-2. **Resume the same subagent conversation via `send_message`** using the active `stage_2_work` subagent's `conversationId`, instructing it to stay in that conversation and continue timer-backed waiting (e.g. `schedule`) until the external job reaches verified terminal completion, output checks and configured quality gates pass, Step 4 self-review finishes, and Step 5 records the verified HEAD and any deliverable changes.
-3. **Unreachable-conversation fallback:** Only if the original `stage_2_work` `conversationId` is irrecoverably unreachable (e.g. lost across a hard process crash), record the interruption against the active dispatch and dispatch a takeover subagent with `attempt_intent: "same"` (preserving the delivery budget) and the prior monitoring snapshot / receipt so it monitors the existing `job_id` instead of submitting a duplicate run.
+#### Same-Conversation Continuation for Incomplete Evidence
+
+1. Send the compact report to `complete`. An `action: "continue_same_dispatch"` response
+   identifies evidence to correct and leaves the dispatch open. Send `missing_evidence` to the
+   original worker via `send_message` using its `conversationId`. Resubmit the corrected report
+   with the same dispatch ID and assigned receipt path.
+2. For `issue_work`, follow the [delivery evidence contract](../pc-issue-work/SKILL.md#task-outputs).
+   For in-flight compute, resume timer-backed monitoring (e.g. `schedule`) until the job reaches
+   verified terminal completion, evidence and quality gates pass, and self-review records the verified HEAD.
+   If the original conversation is irrecoverably unreachable, record the interruption against the active
+   dispatch and use the takeover procedure with `attempt_intent: "same"` and the prior monitoring snapshot
+   or receipt. The takeover worker monitors the existing `job_id`.
+3. For `issue_finalize`, follow the [closure contract](../pc-issue-verify/references/closure.md).
+   Ask the original worker to correct the receipt and report using the observed closure state and
+   supplied verification receipts. Reconcile live state before retrying outstanding operations.
+   If the original worker is unreachable, recover the active dispatch before routing onward.
 
 If a compact report is missing, unparseable, contradictory, or the referenced receipt file does not exist,
 the Orchestrator follows Constitution's **Fail Fast**:
@@ -199,7 +211,7 @@ For each stage defined in the loaded workflow:
    - If the response is lost or grants no launch, follow [Dispatch recovery](#dispatch-recovery).
 4. **Complete Dispatch & Verify Receipt**:
    - Execute `node --import "<paper-craft-root>/node_modules/tsx/dist/loader.mjs" "<paper-craft-root>/packages/orchestrator/src/cli.ts" complete --receipt-root "<receipt_root>" --report '<compact_json_report>'`.
-   - On `continue_same_dispatch`, follow the [same-conversation continuation](#same-conversation-continuation-for-premature-or-in-flight-stage_2_work-returns) before routing.
+   - On `continue_same_dispatch`, follow the [same-conversation continuation](#same-conversation-continuation-for-incomplete-evidence) before routing.
    - The kernel validates report integrity (the 4 required fields), tags completion with the active dispatch's `issue_id`, and physically verifies that the assigned receipt file exists on disk and is non-empty (`st_size > 0`). If malformed, missing, or empty, halt to the Decision Board.
    - Completing a task preserves any existing pause decision (`halt`/`wait_user`). If execution outcome is unknown or in flight, verify against original execution rather than guessing or restarting.
 5. **Evaluate Routing & Resolve Decision**:

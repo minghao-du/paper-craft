@@ -1,4 +1,3 @@
-import { isNonEmptyString } from "../protocol/index.js";
 import type {
   AssertCanFinishParams,
   CleanupInspection,
@@ -8,19 +7,15 @@ import type {
   InspectDeliveryParams,
   TaskBudgetView,
   WorkflowDefinition,
-  WorkflowStage,
 } from "./types.js";
 import { WorkflowIntegrityError } from "./types.js";
 import {
-  invalidatesVerification,
   isAuxiliaryStage,
   isCleanupStage,
   isFinalizationStage,
-  isVerificationStage,
-  resolveCanonicalStage,
+  tryResolveStage,
 } from "./stage.js";
 import {
-  parseFinalizationIssues,
   validateLandingRecord,
   validateItemDelivery,
   validateNoChangeEvidence,
@@ -28,17 +23,7 @@ import {
 
 import { assessCleanup } from "./cleanup.js";
 
-function tryResolveStage(
-  workflow: WorkflowDefinition,
-  stageRef?: string,
-): WorkflowStage | undefined {
-  if (!stageRef || !stageRef.trim()) return undefined;
-  try {
-    return resolveCanonicalStage(workflow, stageRef);
-  } catch {
-    return undefined;
-  }
-}
+import { checkRootVerification, missingClosureEvidence } from "./finalization.js";
 
 interface CompletionEvaluation {
   blockingReasons: string[];
@@ -180,39 +165,16 @@ export function evaluateCompletion(params: {
       }
     }
 
-    // 3. Root verification check (Section 10.5, F01)
-    // Verification records MUST be owned by root. Child-only verification cannot satisfy root completion!
-    const verifyRecords = completedStages.filter((e) => {
-      const def = tryResolveStage(workflow, e.stage);
-      if (!def || !isVerificationStage(def)) return false;
-      const recIssue = e.issue_id != null ? String(e.issue_id).trim() : root;
-      if (recIssue !== root) return false; // F01
-      return (
-        e.execution_status === "succeeded" &&
-        e.result?.outcome === "verified" &&
-        isNonEmptyString(e.result?.evaluatedHead) &&
-        isNonEmptyString(e.receipt_path)
-      );
-    });
-
-    const latestVerify = verifyRecords.at(-1);
-    if (!latestVerify) {
+    const verification = checkRootVerification(workflow, completedStages, root);
+    if (verification.status === "missing") {
       blockingReasons.push(
         "Cannot finish workflow: verified root-level acceptance evidence (issue_verify) is missing.",
       );
-    } else {
-      // Invalidation of verification: subsequent content-changing work or landing/redelivery
-      const verifyStep = latestVerify.step_index ?? -1;
-      const subsequentInvalidating = completedStages.find((e) => {
-        if ((e.step_index ?? -1) <= verifyStep) return false;
-        const def = tryResolveStage(workflow, e.stage);
-        return def ? invalidatesVerification(def) : false;
-      });
-      if (subsequentInvalidating) {
-        blockingReasons.push(
-          "Cannot finish workflow: intervening code changes or landing occurred after root verification; repeat verification is required.",
-        );
-      }
+    }
+    if (verification.status === "stale") {
+      blockingReasons.push(
+        "Cannot finish workflow: intervening code changes or landing occurred after root verification; repeat verification is required.",
+      );
     }
 
     // 4. Root finalization check (Section 10.5, F09)
@@ -232,74 +194,26 @@ export function evaluateCompletion(params: {
         "Cannot finish workflow: verified issue-tree closure evidence is missing.",
       );
     } else {
-      const closureBlockers = blockingReasons.length;
-      const evidence = (closure.result ?? {}) as Record<string, unknown>;
-      // F09: Safely parse finalization issues before querying
-      const parsedIssues = parseFinalizationIssues(evidence);
-
-      if (!parsedIssues.valid) {
+      const defects = missingClosureEvidence(
+        closure.result ?? {},
+        root,
+        sequence?.items ?? [],
+        verification,
+      );
+      for (const defect of defects) {
         blockingReasons.push(
-          `Cannot finish workflow: verified issue-tree closure evidence is missing or malformed: ${parsedIssues.reason}`,
+          `Cannot finish workflow: verified issue-tree closure evidence is missing or malformed: ${defect}`,
         );
-      } else {
-        const issues = parsedIssues.issues;
-        if (
-          evidence.outcome !== "finalized" ||
-          String(evidence.root_issue_id).trim() !== root ||
-          !issues.length ||
-          !issues.every(
-            (i) =>
-              i.state === "CLOSED" &&
-              isNonEmptyString(i.repository) &&
-              isNonEmptyString(i.acceptance_receipt),
-          ) ||
-          !issues.some((i) => i.number === root)
-        ) {
-          blockingReasons.push(
-            "Cannot finish workflow: verified issue-tree closure evidence is missing.",
-          );
-        }
-
-        // Check planned items coverage in finalization issues
-        if (sequence?.items) {
-          for (const item of sequence.items) {
-            if (!issues.some((i) => i.number === String(item.issue_id))) {
-              blockingReasons.push(
-                `Cannot finish workflow: finalization issues omit planned issue '${item.issue_id}'.`,
-              );
-            }
-          }
-        }
-
-        // Root acceptance receipt association check
-        if (latestVerify?.receipt_path) {
-          const rootClosureIssue = issues.find((i) => i.number === root);
-          if (
-            rootClosureIssue &&
-            rootClosureIssue.acceptance_receipt !== latestVerify.receipt_path
-          ) {
-            blockingReasons.push(
-              "Cannot finish workflow: root issue acceptance receipt does not match the latest valid acceptance record.",
-            );
-          }
-        }
-
-        if (blockingReasons.length === closureBlockers) {
-          const after = completedStages.slice(
-            completedStages.indexOf(closure) + 1,
-          );
-          const cleanups = after.filter((record) => {
-            const stage = tryResolveStage(workflow, record.stage);
-            return stage && isCleanupStage(stage);
-          });
-          const cleanup = assessCleanup(
-            closure,
-            cleanups,
-            cleanups.length !== after.length,
-          );
-          blockingReasons.push(...cleanup.blockingReasons);
-          return { blockingReasons, reworkNeeded, cleanup: cleanup.inspection };
-        }
+      }
+      if (defects.length === 0 && verification.status === "current") {
+        const after = completedStages.slice(completedStages.indexOf(closure) + 1);
+        const cleanups = after.filter((record) => {
+          const stage = tryResolveStage(workflow, record.stage);
+          return stage && isCleanupStage(stage);
+        });
+        const cleanup = assessCleanup(closure, cleanups, cleanups.length !== after.length);
+        blockingReasons.push(...cleanup.blockingReasons);
+        return { blockingReasons, reworkNeeded, cleanup: cleanup.inspection };
       }
     }
 

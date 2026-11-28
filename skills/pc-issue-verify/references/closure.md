@@ -5,8 +5,12 @@ When assigned issue finalization, use the supplied accepted verification receipt
 Use `inspect` from the [Issue tree helper](../../pc-issue-plan/references/issue-tree.md) to enumerate
 the assigned issue and its descendants, including closed descendants. Reconcile live hierarchy
 with planning and delivery records. A child-only assignment covers only its accepted subtree.
-Validate each issue's acceptance receipt. Parent acceptance also requires all descendants accepted
-and integrated verification. Root closure also requires research recording complete.
+Validate each issue's acceptance receipt. Parent acceptance requires acceptance for all descendants
+and integrated verification. Root closure also requires a completed research recording receipt.
+For the root issue, use the single assigned `receipt_path` from the latest valid root-level
+`issue_verify` completion for the current integrated revision. For a child, use the passing
+acceptance receipt that covers that child. Cite research recording separately in the finalization
+receipt. Keep each acceptance reference to one path.
 
 Use the helper's `close` with the exact accepted subtree and its receipt references. It verifies
 completed state and each corresponding parent checkbox. Use `reopen` for a prematurely closed
@@ -19,4 +23,40 @@ Reconcile PRs and workspace preparation, delivery, and acceptance receipts, incl
 - Include a resource in `unresolved` only if a specific PR, preparation, delivery, or acceptance receipt links it to the assigned scope and ownership evidence is missing or conflicting. Link that source and record the missing or conflicting fact.
 - Preserve default/base branches and confirmed out-of-scope resources. Omit them and resources without a specific link to the assigned scope from both lists. A shared workspace container, a branch name, or an upstream scan list without supporting evidence is insufficient.
 
-Return `outcome: finalized` only after live issue readback confirms the full assigned scope closed with passing acceptance evidence. Include `root_issue_id`, `scope` (`tree` or `issue`), `issues`, `candidates`, and `unresolved` with reasons. Preserve this inventory outside disposable worktrees. Cleanup failures do not reopen accepted issues. On retry, reconcile live state and process only outstanding operations.
+Return `outcome: finalized` only after live readback confirms that every issue in scope was closed
+as completed with passing acceptance evidence. Use `scope: "tree"` for root reconciliation and
+`scope: "issue"` for a child-only assignment. For each row in the helper's `verifiedClosed`
+readback, copy `repository` and `number`, map `state: "closed"` to `state: "CLOSED"`, and copy
+the helper's `receipt` into `acceptance_receipt`. Include the root and all planned issues in
+a tree result.
+
+Example `result` for a root and one child, with no cleanup candidates or unresolved ownership
+items:
+
+```json
+{
+  "outcome": "finalized",
+  "scope": "tree",
+  "root_issue_id": "100",
+  "issues": [
+    {
+      "repository": "OWNER/REPO",
+      "number": 100,
+      "state": "CLOSED",
+      "acceptance_receipt": "/receipts/08-stage_3_verify-issue-100-try-1.md"
+    },
+    {
+      "repository": "OWNER/REPO",
+      "number": 101,
+      "state": "CLOSED",
+      "acceptance_receipt": "/receipts/06-child-101-acceptance.md"
+    }
+  ],
+  "candidates": [],
+  "unresolved": []
+}
+```
+
+Preserve the inventory outside disposable worktrees. If completion requests corrections,
+use the assigned receipt and the same dispatch. Reconcile live state and process only outstanding
+operations. Cleanup failures do not reopen accepted issues.

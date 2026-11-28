@@ -44,6 +44,18 @@ export function resolveCanonicalStage(
   );
 }
 
+export function tryResolveStage(
+  workflow: WorkflowDefinition,
+  stageRef?: string,
+): WorkflowStage | undefined {
+  if (!stageRef || !stageRef.trim()) return undefined;
+  try {
+    return resolveCanonicalStage(workflow, stageRef);
+  } catch {
+    return undefined;
+  }
+}
+
 export const BUILTIN_AUXILIARY_ROLES = new Set<string>([
   "workspace_prepare",
   "workspace_cleanup",

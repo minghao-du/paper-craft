@@ -136,67 +136,6 @@ export function isLandingInvalidatedBySubsequentWork(
   });
 }
 
-export interface FinalizationIssueRecord {
-  number: string;
-  state?: string;
-  repository?: string;
-  acceptance_receipt?: string;
-  [key: string]: unknown;
-}
-
-/**
- * Safely parses the finalization evidence issues array (F09).
- */
-export function parseFinalizationIssues(
-  evidence: Record<string, unknown>,
-):
-  | { valid: true; issues: FinalizationIssueRecord[] }
-  | { valid: false; reason: string } {
-  const rawIssues = evidence.issues;
-  if (!Array.isArray(rawIssues)) {
-    return {
-      valid: false,
-      reason:
-        "verified issue-tree closure evidence is missing or malformed (issues is not an array).",
-    };
-  }
-
-  const issues: FinalizationIssueRecord[] = [];
-  for (let i = 0; i < rawIssues.length; i++) {
-    const item = rawIssues[i];
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      return {
-        valid: false,
-        reason: `finalization issue at index ${i} is not a valid object.`,
-      };
-    }
-    const rec = item as Record<string, unknown>;
-    const rawNumber = rec.number ?? rec.issue_id ?? rec.id;
-    if (
-      rawNumber === undefined ||
-      rawNumber === null ||
-      !isNonEmptyString(String(rawNumber))
-    ) {
-      return {
-        valid: false,
-        reason: `finalization issue at index ${i} is missing issue number.`,
-      };
-    }
-    issues.push({
-      ...rec,
-      number: String(rawNumber).trim(),
-      state: typeof rec.state === "string" ? rec.state : undefined,
-      repository:
-        typeof rec.repository === "string" ? rec.repository : undefined,
-      acceptance_receipt:
-        typeof rec.acceptance_receipt === "string"
-          ? rec.acceptance_receipt
-          : undefined,
-    });
-  }
-  return { valid: true, issues };
-}
-
 /** Bind the orchestrator's no-change decision to a successful, current work receipt. */
 export function validateNoChangeWork(
   workflow: WorkflowDefinition,

@@ -107,6 +107,25 @@ it("records direct zero-diff delivery after rework, replays without moving the r
       .toMatchObject({ next_stage: "stage_3_verify", no_change_base: "c".repeat(40) });
     expect(() => resolveDecision({ receipt_root, decision: "finish", reason: "Finish" }))
       .toThrow(/repeat verification is required/);
+
+    resolveDecision({
+      receipt_root, decision: "continue", next_stage: "issue_finalize",
+      reason: "Exercise a finalization report submitted after delivery changed.",
+    });
+    const finalize = start("issue_finalize", "finalize-with-stale-verification");
+    settle(finalize, {
+      outcome: "finalized", root_issue_id: "100", scope: "tree", candidates: [], unresolved: [],
+      issues: [{
+        repository: "OWNER/REPO", number: 100, state: "CLOSED",
+        acceptance_receipt: verify.receipt_path + "; previous research receipt",
+      }],
+    });
+    const stale = inspectState({ receipt_root });
+    expect(stale.active_dispatch).toBeNull();
+    expect(stale.cleanup).toBeUndefined();
+    expect(stale.finish_check.reasons).toEqual([
+      expect.stringContaining("repeat verification is required"),
+    ]);
   } finally {
     env.cleanup();
   }

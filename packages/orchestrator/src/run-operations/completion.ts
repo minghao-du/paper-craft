@@ -4,7 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { commitRun, loadRun } from "../run-store/index.js";
-import { missingWorkEvidence, resolveCanonicalStage } from "../workflow-policy/index.js";
+import {
+  missingFinalizationEvidence,
+  missingWorkEvidence,
+  resolveCanonicalStage,
+} from "../workflow-policy/index.js";
 import { compareCompleteReports } from "./requests.js";
 import { parseReportInput, ProtocolError } from "../protocol/index.js";
 import type {
@@ -155,6 +159,19 @@ export function completeDispatch(o: CompleteOptions): CompletedDispatch | Incomp
       "receipt_empty",
       `Receipt file at ${assignedReceipt} is empty (0 bytes).`,
     );
+  }
+
+  const missingFinalization = missingFinalizationEvidence({
+    workflow: state.workflow_snapshot,
+    stage,
+    deliveryState: { rootIssueId: state.root_issue_id, sequence: state.delivery_sequence },
+    history,
+    issueId: String(active.issue_id ?? state.root_issue_id),
+    assignedScope: (active.request?.scope ?? stage.scope)?.trim(),
+    report,
+  });
+  if (missingFinalization.length > 0) {
+    return { action: "continue_same_dispatch", dispatch_id: dispatchId, missing_evidence: missingFinalization };
   }
 
   const completedAt = new Date().toISOString();
